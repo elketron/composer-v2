@@ -45,7 +45,9 @@ export class PlanningOrchestrator {
   }
 
   start(): void {
-    this.unsubscribe = this.bus.subscribe((frame) => this.onFrame(frame));
+    this.unsubscribe = this.bus.subscribe((frame) => {
+      void this.onFrame(frame).catch((error) => console.error('planner:', error));
+    });
   }
 
   stop(): void {
@@ -53,11 +55,11 @@ export class PlanningOrchestrator {
     this.unsubscribe = null;
   }
 
-  private onFrame(frame: EventFrame): void {
-    if (frame.eventType !== 'userMessageReceived') return;
+  private onFrame(frame: EventFrame): Promise<void> {
+    if (frame.eventType !== 'userMessageReceived') return Promise.resolve();
     const body = frame.body as { sessionId?: string; message?: { text?: string } };
-    if (frame.projectId === undefined || body.sessionId === undefined) return;
-    void this.onUserMessage(frame.projectId, body.sessionId, body.message?.text ?? '');
+    if (frame.projectId === undefined || body.sessionId === undefined) return Promise.resolve();
+    return this.onUserMessage(frame.projectId, body.sessionId, body.message?.text ?? '');
   }
 
   private async onUserMessage(projectId: string, sessionId: string, text: string): Promise<void> {

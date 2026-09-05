@@ -85,7 +85,11 @@ describe('project commands', () => {
 
   it('create_project_emits_created_then_activated', async () => {
     await processor.execute(undefined, { type: 'requestProjectCreate', name: 'alpha' });
-    expect(recorded.map((frame) => frame.eventType)).toEqual([ProjectCreated, 'projectActivated']);
+    expect(recorded.map((frame) => frame.eventType)).toEqual([
+      ProjectCreated,
+      'projectActivated',
+      'pipelineSaved',
+    ]);
     const project = (recorded[0]?.body as { project: { id: string } }).project;
     expect(project.id).toBe('P-1');
   });

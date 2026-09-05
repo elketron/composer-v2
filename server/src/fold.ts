@@ -77,6 +77,18 @@ export function newState(): State {
   return { projects: new Map(), byProject: new Map() };
 }
 
+/** The card sub-state stage a pipeline step kind works in (v1, M3). */
+export function stepStageOf(kind: 'agent' | 'command' | 'human'): string {
+  switch (kind) {
+    case 'agent':
+      return 'implement';
+    case 'command':
+      return 'runValidation';
+    case 'human':
+      return 'humanReview';
+  }
+}
+
 function projectStateOf(state: State, projectId: string): ProjectState {
   let project = state.byProject.get(projectId);
   if (!project) {
@@ -185,7 +197,17 @@ export function apply(state: State, envelope: EventEnvelope): void {
     case 'userMessageReceived':
     case 'agentMessageComplete': {
       const body = envelope.body as EventBodyMap['userMessageReceived' | 'agentMessageComplete'];
-      const session = projectStateOf(state, projectId).planningSessions.get(body.sessionId);
+      const project = projectStateOf(state, projectId);
+      // An agent session's id claims the message first (the coder's
+      // transcript); planning sessions share the event type (v1 rule).
+      const agentSession = project.agentSessions.get(body.sessionId);
+      if (agentSession !== undefined) {
+        agentSession.transcript = agentSession.transcript
+          .filter((entry) => !(entry.kind === 'message' && entry.message.index === body.message.index))
+          .concat({ kind: 'message', message: structuredClone(body.message) });
+        break;
+      }
+      const session = project.planningSessions.get(body.sessionId);
       if (!session) break;
       session.messages = session.messages
         .filter((message) => message.index !== body.message.index)
@@ -211,6 +233,115 @@ export function apply(state: State, envelope: EventEnvelope): void {
       for (const card of body.cards) {
         cards.set(card.id, structuredClone(card));
       }
+      break;
+    }
+
+    // ---- Pipelines ----
+
+    case 'pipelineSaved': {
+      const body = envelope.body as EventBodyMap['pipelineSaved'];
+      const project = projectStateOf(state, projectId);
+      project.pipelines.set(body.pipeline.id, structuredClone(body.pipeline));
+      project.deletedPipelines.delete(body.pipeline.id);
+      break;
+    }
+    case 'pipelineDeleted': {
+      const body = envelope.body as EventBodyMap['pipelineDeleted'];
+      const project = projectStateOf(state, projectId);
+      project.pipelines.delete(body.pipelineId);
+      // The tombstone keeps the boot seed from resurrecting the default.
+      project.deletedPipelines.add(body.pipelineId);
+      break;
+    }
+    case 'pipelineRunStarted': {
+      const body = envelope.body as EventBodyMap['pipelineRunStarted'];
+      projectStateOf(state, projectId).pipelineRuns.set(body.cardId, {
+        pipelineId: body.pipelineId,
+        status: 'running',
+      });
+      break;
+    }
+    case 'pipelineStepStarted': {
+      const body = envelope.body as EventBodyMap['pipelineStepStarted'];
+      const run = projectStateOf(state, projectId).pipelineRuns.get(body.cardId);
+      if (!run) break;
+      run.stepId = body.stepId;
+      run.stepKind = body.kind;
+      // Only a gate waits; an agent or command step runs.
+      run.status = body.kind === 'human' ? 'waiting' : 'running';
+      break;
+    }
+    case 'pipelineStepFinished': {
+      const body = envelope.body as EventBodyMap['pipelineStepFinished'];
+      const project = projectStateOf(state, projectId);
+      if (body.ok) break;
+      const card = project.cards.get(body.cardId);
+      if (!card) break;
+      // Every failed attempt is recorded on the card's retries, keyed by
+      // the stage the step works in (v1 fold, M3).
+      const kind = project.pipelineRuns.get(body.cardId)?.stepKind ?? 'agent';
+      const stage = stepStageOf(kind);
+      card.retries[stage] = (card.retries[stage] ?? 0) + 1;
+      card.updatedAt = envelope.occurredAt;
+      break;
+    }
+    case 'pipelineRunEnded': {
+      const body = envelope.body as EventBodyMap['pipelineRunEnded'];
+      projectStateOf(state, projectId).pipelineRuns.delete(body.cardId);
+      break;
+    }
+    case 'pipelineGateResponded': {
+      const body = envelope.body as EventBodyMap['pipelineGateResponded'];
+      const run = projectStateOf(state, projectId).pipelineRuns.get(body.cardId);
+      if (run) run.status = 'running';
+      break;
+    }
+
+    // ---- Agent sessions (the coder's card-bound sessions) ----
+
+    case 'agentSessionStarted': {
+      const body = envelope.body as EventBodyMap['agentSessionStarted'];
+      projectStateOf(state, projectId).agentSessions.set(body.sessionId, {
+        id: body.sessionId,
+        projectId,
+        cardId: body.cardId,
+        status: 'running',
+        startedAt: body.startedAt,
+        transcript: [],
+      });
+      break;
+    }
+    case 'agentSessionEnded': {
+      const body = envelope.body as EventBodyMap['agentSessionEnded'];
+      const session = projectStateOf(state, projectId).agentSessions.get(body.sessionId);
+      if (!session) break;
+      session.status = body.status;
+      session.endedAt = body.endedAt;
+      if (body.error !== undefined) session.error = body.error;
+      break;
+    }
+    case 'agentToolCall': {
+      const body = envelope.body as EventBodyMap['agentToolCall'];
+      const session = projectStateOf(state, projectId).agentSessions.get(body.sessionId);
+      if (!session) break;
+      session.transcript.push({
+        kind: 'toolCall',
+        toolCallId: body.toolCallId,
+        toolName: body.toolName,
+        args: body.args,
+      });
+      break;
+    }
+    case 'agentToolResult': {
+      const body = envelope.body as EventBodyMap['agentToolResult'];
+      const session = projectStateOf(state, projectId).agentSessions.get(body.sessionId);
+      if (!session) break;
+      session.transcript.push({
+        kind: 'toolResult',
+        toolCallId: body.toolCallId,
+        content: body.content,
+        isError: body.isError,
+      });
       break;
     }
     default:

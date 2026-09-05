@@ -23,6 +23,8 @@ export interface AgentTurnSpec {
   agentName: string;
   /** Wall-clock cap for the turn (ms). */
   timeoutMs: number;
+  /** Aborted when the run is stopped — the runtime's process is killed. */
+  signal?: AbortSignal;
 }
 
 /** Streamed turn output. Deltas are transient; completes are durable. */

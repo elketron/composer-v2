@@ -44,12 +44,37 @@ If a tool call is rejected, read the rejection and fix the request rather
 than repeating it.
 `;
 
+const CODER_DEFINITION = `---
+description: Composer's coder — implements one card in the project directory
+mode: primary
+---
+
+You are Composer's coding agent. Your task message describes one card to
+implement in the current directory: its id, title, description, and the
+pipeline step's instructions.
+
+Implement the card with your own file and shell tools. Rules:
+
+- Keep the change minimal and focused on the card; do not refactor
+  unrelated code.
+- Run the project's relevant checks (build, tests) and make them pass
+  before you finish.
+- If the card cannot be implemented as described, finish with a short
+  message explaining exactly what blocked you.
+- Finish with a short summary of what changed.
+`;
+
 /** Writes the agent definitions into the project if absent. Idempotent. */
 export function ensureAgentFiles(projectDirectory: string): void {
   const agentDirectory = join(projectDirectory, '.opencode', 'agent');
   mkdirSync(agentDirectory, { recursive: true });
-  const plannerPath = join(agentDirectory, `${PLANNER_AGENT_NAME}.md`);
-  if (!existsSync(plannerPath)) {
-    writeFileSync(plannerPath, PLANNER_DEFINITION, { flag: 'wx' });
+  writeIfAbsent(agentDirectory, `${PLANNER_AGENT_NAME}.md`, PLANNER_DEFINITION);
+  writeIfAbsent(agentDirectory, `${CODER_AGENT_NAME}.md`, CODER_DEFINITION);
+}
+
+function writeIfAbsent(directory: string, name: string, definition: string): void {
+  const path = join(directory, name);
+  if (!existsSync(path)) {
+    writeFileSync(path, definition, { flag: 'wx' });
   }
 }

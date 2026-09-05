@@ -9,7 +9,7 @@ import { streamSSE } from 'hono/streaming';
 import type { Bus } from './bus.js';
 import type { Processor } from './processor.js';
 import type { Command } from './wire/commands.js';
-import type { Card, CardType, Stage, SubStateStatus } from './wire/models.js';
+import type { Card, CardType, Pipeline, PipelineStep, Stage, SubStateStatus } from './wire/models.js';
 import { ALL_STAGES } from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
 
@@ -199,6 +199,25 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
         sessionId: str('sessionId') ?? '',
         text: str('text') ?? '',
       };
+    case 'create:pipeline':
+      return { type: 'requestPipelineSave', pipeline: readPipeline(body, scopeProjectId) };
+    case 'delete:pipeline':
+      return { type: 'requestPipelineDelete', pipelineId: str('id') ?? '' };
+    case 'start:pipeline':
+      return {
+        type: 'requestPipelineRun',
+        pipelineId: str('pipelineId') ?? '',
+        cardId: str('cardId') ?? '',
+      };
+    case 'stop:pipeline':
+      return { type: 'requestPipelineStop', cardId: str('cardId') ?? '' };
+    case 'update:pipelineGate':
+      return {
+        type: 'requestPipelineGateRespond',
+        cardId: str('cardId') ?? '',
+        approved: bool('approved') ?? false,
+        ...(str('comment') !== undefined ? { comment: str('comment') } : {}),
+      };
     default:
       return null;
   }
@@ -292,6 +311,36 @@ function readStringArray(record: Record<string, unknown>, key: string): string[]
   const value = record[key];
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === 'string' && entry !== '');
+}
+
+/** The pipeline the client meant — steps lenient, per-kind fields as found. */
+function readPipeline(json: unknown, scopeProjectId: string | undefined): Pipeline {
+  const record = typeof json === 'object' && json !== null ? (json as Record<string, unknown>) : {};
+  const steps = Array.isArray(record['steps']) ? record['steps'] : [];
+  const updatedAt = readString(record, 'updatedAt');
+  return {
+    id: readString(record, 'id') ?? '',
+    projectId: readString(record, 'projectId') ?? scopeProjectId ?? '',
+    name: readString(record, 'name') ?? '',
+    steps: steps.map((step) => readPipelineStep(step)),
+    updatedAt: updatedAt !== undefined && Date.parse(updatedAt) > 0 ? updatedAt : '',
+  };
+}
+
+function readPipelineStep(json: unknown): PipelineStep {
+  const record = typeof json === 'object' && json !== null ? (json as Record<string, unknown>) : {};
+  const str = (key: string): string | undefined => readString(record, key);
+  const kind = str('kind');
+  const retries = record['retries'];
+  return {
+    id: str('id') ?? '',
+    kind: kind === 'command' || kind === 'human' ? kind : 'agent',
+    ...(str('agentKind') !== undefined ? { agentKind: str('agentKind') } : {}),
+    ...(str('instructions') !== undefined ? { instructions: str('instructions') } : {}),
+    ...(str('command') !== undefined ? { command: str('command') } : {}),
+    ...(str('description') !== undefined ? { description: str('description') } : {}),
+    ...(typeof retries === 'number' && Number.isFinite(retries) ? { retries } : {}),
+  };
 }
 
 function readNumber(record: Record<string, unknown>, key: string): number {

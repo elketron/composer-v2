@@ -192,38 +192,68 @@ Research notes for later slices:
   `COMPOSER_FAKE_ENGINE=1` (scripted engine in dev boots);
   `COMPOSER_MCP_SCRIPT` overrides the MCP child path for tsx/dev runs.
 
-## S3 — Pipelines  ·  planned
+## S3 — Pipelines  ·  done (2026-09-05)
 
 Authoring + the sequential runner + the coder.
 
 - Authoring: `requestPipelineSave` / `requestPipelineDelete` (fresh ids
   `PL-N`, known ids upsert; step validation: unique ids, per-kind
-  required fields); the default coding pipeline seeds each project
-  (`coder → build → test → approval`), deletion tombstones keep it
-  dead; `requestPipelineRun` / `requestPipelineStop` /
-  `requestPipelineGateRespond`.
-- Runner: one in-process task per run; steps execute in order —
-  `command` (child process in the project directory, output captured,
-  wall-clock cap), `human` (run parks `waiting`; the gate command
-  resumes or rejects — rejection routes the card back to its implement
-  lane with the comment, approval routes to Done when the gate is the
-  last step), `agent` (the engine; `agentKind` names the shipped
-  agent). Progress events per step; lane + sub-state as the projection;
-  failures recorded on the card's `retries`; stop kills the current
-  child; boot cancels interrupted runs (D5).
-- The `composer-coder` agent definition: implement the card through
-  opencode's own file/bash tools in the project directory (no workspace
-  buffer — the runtime's tools are the surface).
-- First task: the `opencode run --format json` schema spike is already
-  done (captured during S2 — see the S2 research notes; the parser in
-  `engine/opencode.ts` handles it). What remains: reuse the parser for
-  `agent` steps, verify the agent file exists before spawning, and pin
-  `PWD` (the S2 bug applies to coder spawns too).
+  required fields — v1's messages; 64-step cap); the default coding
+  pipeline (`PL-1`, `coder → build → test → approval`) seeds each
+  project **inside `requestProjectCreate`** — deterministic log order
+  (an async seed raced the snapshot in tests); deletion tombstones keep
+  it dead; `requestPipelineRun` (directory, card, already-running, and
+  agent-kind checks) / `requestPipelineStop` / `requestPipelineGateRespond`.
+- Runner (`server/src/runner.ts`): one in-process task per run (D5). Steps
+  in order — `command` (`/bin/sh -c` in the project directory, output
+  captured, 10-min cap), `agent` (the engine; `agentKind` names the
+  shipped agent, an `A-N` agent session wraps the attempt), `human` (the
+  run parks `waiting`; the gate command resolves it). Lane + sub-state
+  are the projection (v1 on_step_started/finished): agent → implement
+  lane, command → validation, human → approval, override moves; failures
+  land on the card's `retries` (fold) and fail the run; a rejected gate
+  completes the run and routes the card back to its implement lane with
+  the comment; approval routes to Done when the gate is the last step;
+  stop kills the current child and the task exits silently (the cancelled
+  `pipelineRunEnded` is already on the stream); boot cancels interrupted
+  runs.
+- The `composer-coder` agent definition ships beside the planner's:
+  implement the card through opencode's own file/bash tools, keep it
+  minimal, make the checks pass.
+- Action mapping: `create`/`delete` on `pipeline`, `start`/`stop` on
+  `pipeline`, `update` on `pipelineGate`.
 
-Exit criteria: fake-engine runner e2e (walk hands-off, park at the gate,
-gate resumes/rejects, stop, boot-cancel); the real smoke — the sum.js
-repo fixed end to end through opencode (coder → build → test → approval
-→ Done); board progress visible at every step.
+Exit criteria (met): the FakeEngine runner e2e covers walk hands-off →
+gate → approve/reject, stop-kill, boot-cancel, failure retries, and the
+snapshot round-trip (`pnpm verify`: server 65, desktop 131). The real
+smoke ran 2026-09-05: the sum.js repo (sum.js missing, test + scripts
+present) fixed end to end through real opencode — the coder implemented
+(~25s), build + `node --test` passed, the run parked at the approval
+gate, `update:pipelineGate approved` → card `done`, `sum(2,3) = 5`,
+`retries: {}`, sub-states implement/runValidation/humanReview all `ok`;
+lane + sub-state progress visible at every step via the event stream.
+
+Research notes for later slices:
+
+- **Gate ordering**: the gate's resolver is armed *before* the
+  `pipelineStepStarted(human)` publish. The fold flips the run to
+  `waiting` mid-publish; a gate answer arriving from then on must find
+  the resolver in place (the flake that motivated this: ~1 in 6 runs
+  parked forever). This replaces v1's GATE_WAKE_ATTEMPTS retry loop.
+- The snapshot replays an active run as `pipelineRunStarted` + only the
+  **current** `pipelineStepStarted` (the fold lands on the same run
+  status); history rides the log.
+- Fire-and-forget publishes (the runner's/planner's stream events) must
+  carry `.catch` — a publish in flight when a test closes the store
+  otherwise surfaces as an unhandled rejection.
+- A killed child (stop) resolves the command step with
+  `the run was stopped` so the awaiting drive unwinds; the drive then
+  checks `task.stopped` and exits without publishing.
+- The engine gained `spec.signal` (AbortSignal): stop aborts the
+  controller, opencode's process gets SIGKILL. The planner can adopt
+  this later if turns ever need cancelling.
+- `Set.add` returns the set — v1's `!seen.insert(..)` duplicate-check
+  idiom does not transliterate (caught by the validation suite).
 
 ## S4 — Desktop completion  ·  planned
 

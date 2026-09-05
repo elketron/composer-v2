@@ -13,6 +13,8 @@ import { EventStore } from './store.js';
 import { Processor } from './processor.js';
 import { router } from './http.js';
 import { PlanningOrchestrator } from './planning.js';
+import { PipelineRunner } from './runner.js';
+import { cancelInterruptedRuns, seedDefaultPipelines } from './pipelines.js';
 import { OpenCodeEngine } from './engine/opencode.js';
 import { FakeEngine } from './engine/fake.js';
 import type { AgentEngine } from './engine/types.js';
@@ -45,6 +47,12 @@ export async function boot(config: Config): Promise<{
   const rehydrated = await bus.rehydrate();
   const processor = new Processor(bus);
 
+  // D5: a restart ends non-terminal runs `cancelled`; the default coding
+  // pipeline seeds every project that has neither it nor its tombstone
+  // (including projects created while the server runs).
+  const cancelled = await cancelInterruptedRuns(bus);
+  await seedDefaultPipelines(bus.state, bus);
+
   const [hostname, port] = config.addr.includes(':')
     ? (config.addr.split(':') as [string, string])
     : ['127.0.0.1', config.addr];
@@ -57,10 +65,10 @@ export async function boot(config: Config): Promise<{
   const boundPort = typeof address === 'object' && address !== null ? address.port : Number(port);
   const url = `http://${hostname === '0.0.0.0' ? '127.0.0.1' : hostname}:${boundPort}`;
 
-  // The planning turn (S2): user messages → agent turns → streamed replies.
-  // The kill switch and the fake engine keep the boot no-LLM when asked.
+  // The planning turn (S2) and the pipeline runner (S3) share the engine.
   const plannerEnabled = config.plannerEnabled ?? process.env['COMPOSER_PLANNER_ENABLED'] !== '0';
   let stopPlanning: () => void = () => undefined;
+  let stopRunner: () => void = () => undefined;
   if (plannerEnabled) {
     const engine =
       config.engineFactory?.(processor) ??
@@ -73,16 +81,24 @@ export async function boot(config: Config): Promise<{
     });
     orchestrator.start();
     stopPlanning = () => orchestrator.stop();
+    const runner = new PipelineRunner(bus, processor, engine, {
+      serverUrl: url,
+      mcpScriptPath: mcpScriptPath(),
+    });
+    runner.start();
+    stopRunner = () => runner.stop();
   }
 
   console.log(
     `composer v2 listening on ${url}` +
-      ` (replayed ${rehydrated} events, ${bus.state.projects.size} projects)` +
+      ` (replayed ${rehydrated} events, ${bus.state.projects.size} projects` +
+      `${cancelled > 0 ? `, cancelled ${cancelled} interrupted run${cancelled === 1 ? '' : 's'}` : ''})` +
       (plannerEnabled ? ' [planner: on]' : ' [planner: off]'),
   );
   return {
     url,
     close: async () => {
+      stopRunner();
       stopPlanning();
       // Open SSE streams count as connections; drop them so close resolves.
       (server as { closeAllConnections?: () => void }).closeAllConnections?.();

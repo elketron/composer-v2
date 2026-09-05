@@ -16,11 +16,21 @@ import {
   type Card,
   type CardType,
   type ChatMessage,
+  type Pipeline,
+  type PipelineStep,
   type PlanningSession,
   type Project,
   type Stage,
   type SubStateStatus,
 } from './wire/models.js';
+import type { PipelineRunProgress } from './fold.js';
+import { defaultPipeline } from './pipelines.js';
+
+/** Ceiling on steps one pipeline may carry (v1 M3). */
+const MAX_PIPELINE_STEPS = 64;
+
+/** The agent kinds the runner implements (v1 M3: the coder). */
+const IMPLEMENTED_AGENT_KINDS = ['coder'];
 
 export class Processor {
   private bus: Bus;
@@ -64,8 +74,20 @@ export class Processor {
         return this.updatePlanDocument(projectId, command.sessionId, command.document);
       case 'requestTicketsCreate':
         return this.createTickets(projectId, command.sessionId, command.tickets);
-      default:
-        return rejected('invalidCommand', `${command.type} is not implemented yet`);
+      case 'requestPipelineSave':
+        return this.savePipeline(projectId, command.pipeline);
+      case 'requestPipelineDelete':
+        return this.deletePipeline(projectId, command.pipelineId);
+      case 'requestPipelineRun':
+        return this.runPipeline(projectId, command.pipelineId, command.cardId);
+      case 'requestPipelineStop':
+        return this.stopPipeline(projectId, command.cardId);
+      case 'requestPipelineGateRespond':
+        return this.gateRespond(projectId, command.cardId, command.approved, command.comment);
+      default: {
+        const unknown = command as { type: string };
+        return rejected('invalidCommand', `${unknown.type} is not implemented yet`);
+      }
     }
   }
 
@@ -102,6 +124,9 @@ export class Processor {
     };
     await this.bus.publish(project.id, 'projectCreated', { project });
     await this.bus.publish(project.id, 'projectActivated', { projectId: project.id });
+    // The default coding pipeline rides the project's creation (deterministic
+    // log order; the boot seed only covers logs that predate it).
+    await this.bus.publish(project.id, 'pipelineSaved', { pipeline: defaultPipeline(project.id) });
     return ok();
   }
 
@@ -515,6 +540,166 @@ export class Processor {
       }
     }
   }
+
+  // ---- Pipelines ----
+
+  /**
+   * Saves a user-authored pipeline (v1 `save_pipeline`): an empty id
+   * allocates the next `PL-N`, a known id upserts. A pipeline that can
+   * never run is rejected here, before any event exists.
+   */
+  private async savePipeline(scope: string | undefined, pipeline: Pipeline): Promise<CommandOutcome> {
+    if (scope === undefined || !this.bus.state.projects.has(scope)) {
+      return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
+    }
+    const rejection = (message: string): CommandOutcome => rejected('invalidCommand', message);
+    const name = pipeline.name.trim();
+    if (name === '') {
+      return rejection('Pipeline name is required');
+    }
+    if (pipeline.steps.length === 0) {
+      return rejection('A pipeline needs at least one step');
+    }
+    if (pipeline.steps.length > MAX_PIPELINE_STEPS) {
+      return rejection(`Pipeline has ${pipeline.steps.length} steps; the limit is ${MAX_PIPELINE_STEPS}`);
+    }
+    const seen = new Set<string>();
+    for (const [index, step] of pipeline.steps.entries()) {
+      const label = `Step ${index + 1}`;
+      const id = step.id.trim();
+      if (id === '') {
+        return rejection(`${label} needs an id`);
+      }
+      if (seen.has(id)) {
+        return rejection(`Step id '${id}' appears twice`);
+      }
+      seen.add(id);
+      const message = validatePipelineStep(step);
+      if (message !== null) {
+        return rejection(`${label}: ${message}`);
+      }
+    }
+    const id = pipeline.id.trim() !== '' ? pipeline.id.trim() : allocateId(this.pipelinesOf(scope).keys(), 'PL');
+    const saved: Pipeline = {
+      id,
+      projectId: scope,
+      name,
+      steps: pipeline.steps,
+      updatedAt: nowIso(),
+    };
+    await this.bus.publish(scope, 'pipelineSaved', { pipeline: saved });
+    return ok();
+  }
+
+  /**
+   * Deletes a user-authored pipeline (v1 `delete_pipeline`): the
+   * tombstone keeps the boot seed from resurrecting the default.
+   */
+  private async deletePipeline(scope: string | undefined, pipelineId: string): Promise<CommandOutcome> {
+    if (scope === undefined || !this.pipelinesOf(scope).has(pipelineId)) {
+      return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
+    }
+    await this.bus.publish(scope, 'pipelineDeleted', { pipelineId });
+    return ok();
+  }
+
+  /**
+   * Runs a pipeline on a card (v1 `run_pipeline`): the validated event is
+   * the runner's trigger.
+   */
+  private async runPipeline(
+    scope: string | undefined,
+    pipelineId: string,
+    cardId: string,
+  ): Promise<CommandOutcome> {
+    if (scope === undefined || !this.bus.state.projects.has(scope)) {
+      return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
+    }
+    if (!this.pipelinesOf(scope).has(pipelineId)) {
+      return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
+    }
+    if (!this.cardsOf(scope).has(cardId)) {
+      return rejected('unknownCard', `Unknown card ${cardId}`);
+    }
+    if (this.bus.state.projects.get(scope)?.directory === undefined) {
+      return rejected('invalidCommand', `Project ${scope} has no directory set`);
+    }
+    if (this.bus.state.byProject.get(scope)?.pipelineRuns.has(cardId)) {
+      return rejected('pipelineAlreadyRunning', `Card ${cardId} already has a running pipeline`);
+    }
+    const pipeline = this.pipelinesOf(scope).get(pipelineId)!;
+    const kind = pipeline.steps.find((step) => step.kind === 'agent')?.agentKind;
+    if (kind !== undefined && !IMPLEMENTED_AGENT_KINDS.includes(kind)) {
+      return rejected('unknownAgentKind', `Agent kind '${kind}' has no implementation yet`);
+    }
+
+    await this.bus.publish(scope, 'pipelineRunStarted', { cardId, pipelineId });
+    return ok();
+  }
+
+  /**
+   * Stops a card's active run (v1 `stop_pipeline`): the event is the
+   * canonical record and the runner's kill trigger.
+   */
+  private async stopPipeline(scope: string | undefined, cardId: string): Promise<CommandOutcome> {
+    const run = this.runOf(scope, cardId);
+    if (run === null) {
+      return rejected(
+        this.findCard(scope, cardId) === null ? 'unknownCard' : 'pipelineNotRunning',
+        this.findCard(scope, cardId) === null ? `Unknown card ${cardId}` : `Card ${cardId} has no running pipeline`,
+      );
+    }
+    await this.bus.publish(scope!, 'pipelineRunEnded', {
+      cardId,
+      pipelineId: run.pipelineId,
+      status: 'cancelled',
+    });
+    return ok();
+  }
+
+  /**
+   * Answers a parked approval gate (v1 `gate_respond`): the run must be
+   * waiting at a `human` step; the runner wakes with the decision.
+   */
+  private async gateRespond(
+    scope: string | undefined,
+    cardId: string,
+    approved: boolean,
+    comment: string | undefined,
+  ): Promise<CommandOutcome> {
+    const run = this.runOf(scope, cardId);
+    if (run === null) {
+      const unknown = this.findCard(scope, cardId) === null;
+      return rejected(
+        unknown ? 'unknownCard' : 'pipelineNotRunning',
+        unknown ? `Unknown card ${cardId}` : `Card ${cardId} has no running pipeline`,
+      );
+    }
+    if (run.status !== 'waiting') {
+      return rejected('pipelineNotRunning', `Card ${cardId}'s pipeline is not waiting at a gate`);
+    }
+    await this.bus.publish(scope!, 'pipelineGateResponded', {
+      cardId,
+      approved,
+      ...(comment !== undefined ? { comment } : {}),
+    });
+    return ok();
+  }
+
+  // ---- Pipeline helpers ----
+
+  private pipelinesOf(projectId: string): Map<string, Pipeline> {
+    return this.bus.state.byProject.get(projectId)?.pipelines ?? new Map();
+  }
+
+  private runOf(
+    scope: string | undefined,
+    cardId: string,
+  ): PipelineRunProgress | null {
+    if (scope === undefined) return null;
+    const run = this.bus.state.byProject.get(scope)?.pipelineRuns.get(cardId);
+    return run ?? null;
+  }
 }
 
 function ok(): CommandOutcome {
@@ -543,8 +728,32 @@ function nextMessageIndex(session: PlanningSession): number {
   return session.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
 }
 
+/** The per-kind fields a pipeline step must carry (v1 M3). */
+function validatePipelineStep(step: PipelineStep): string | null {
+  switch (step.kind) {
+    case 'agent':
+      if (step.agentKind === undefined || step.agentKind === '') {
+        return 'an agent step needs an agentKind';
+      }
+      if (step.instructions === undefined || step.instructions.trim() === '') {
+        return 'an agent step needs instructions';
+      }
+      return null;
+    case 'command':
+      if (step.command === undefined || step.command.trim() === '') {
+        return 'a command step needs a command';
+      }
+      return null;
+    case 'human':
+      if (step.description === undefined || step.description.trim() === '') {
+        return 'a human step needs a description (the approval prompt)';
+      }
+      return null;
+  }
+}
+
 /** One past the highest numeric suffix in use ("P-3" → "P-4"). */
-function allocateId(ids: Iterable<string>, prefix: string): string {
+export function allocateId(ids: Iterable<string>, prefix: string): string {
   let max = 0;
   for (const id of ids) {
     const match = /^[A-Z]+-(\d+)$/.exec(id);

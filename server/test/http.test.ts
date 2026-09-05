@@ -104,10 +104,11 @@ describe('the boot contract', () => {
     expect(card.status).toBe(400);
 
     // The session folded the message and the document: the snapshot's
-    // planningSessionCreated carries the current record.
-    const frames = await collectFrames(server.url, 2);
+    // planningSessionCreated carries the current record, its messages
+    // replay after it, and the seeded pipeline rides last.
+    const frames = await collectFrames(server.url, 4);
     const kinds = frames.map((frame) => frame['eventType']);
-    expect(kinds).toEqual(['projectCreated', 'planningSessionCreated']);
+    expect(kinds).toEqual(['projectCreated', 'planningSessionCreated', 'userMessageReceived', 'pipelineSaved']);
     const session = (frames[1]?.body as { session: { planDocument: string; messages: { text: string }[] } }).session;
     expect(session.planDocument).toBe('<plan>v1</plan>');
     expect(session.messages).toEqual([expect.objectContaining({ role: 'user', text: 'plan the board' })]);
@@ -116,7 +117,7 @@ describe('the boot contract', () => {
   it('card_actions_drive_the_board_end_to_end', async () => {
     // Subscribe before anything happens: the empty snapshot is 0 frames,
     // then every action's live event arrives in order.
-    const framesPromise = collectFrames(server.url, 10);
+    const framesPromise = collectFrames(server.url, 11);
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     await action({ type: 'create', on: 'project', body: { name: 'alpha' } });
@@ -197,6 +198,7 @@ describe('the boot contract', () => {
     expect(frames.map((frame) => frame['eventType'])).toEqual([
       'projectCreated',
       'projectActivated',
+      'pipelineSaved',
       'cardCreated',
       'cardCreated',
       'dependencyStateChanged',
@@ -206,7 +208,7 @@ describe('the boot contract', () => {
       'cardTypeChanged',
       'cardArchived',
     ]);
-    const dependent = frames[3]?.body as { card: { id: string; blockedBy: string[]; subState: Record<string, string> } };
+    const dependent = frames[4]?.body as { card: { id: string; blockedBy: string[]; subState: Record<string, string> } };
     expect(dependent.card).toMatchObject({ id: 'T-2', blockedBy: ['T-1'] });
     expect(dependent.card.subState).toEqual(subStateFor('coding'));
   }, 15_000);
@@ -220,9 +222,10 @@ describe('the boot contract', () => {
     expect(created.status).toBe(200);
     expect(created.json).toEqual({ ok: true });
 
-    // The snapshot carries the project; a live event arrives afterwards.
+    // The snapshot carries the project and its seeded pipeline; a live
+    // event arrives afterwards.
     const frames = await Promise.race([
-      collectFrames(server.url, 2),
+      collectFrames(server.url, 3),
       (async () => {
         // A live event 300ms in: the subscriber is active before this.
         await new Promise((resolve) => setTimeout(resolve, 300));

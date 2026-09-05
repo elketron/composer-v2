@@ -102,6 +102,16 @@ export class OpenCodeEngine implements AgentEngine {
         child.kill('SIGKILL');
       }, spec.timeoutMs > 0 ? spec.timeoutMs : this.defaultTimeoutMs);
       timeout.unref?.();
+      const onAbort = (): void => {
+        clearTimeout(timeout);
+        child.kill('SIGKILL');
+      };
+      spec.signal?.addEventListener('abort', onAbort, { once: true });
+      const settle = (outcome: AgentTurnOutcome): void => {
+        clearTimeout(timeout);
+        spec.signal?.removeEventListener('abort', onAbort);
+        resolve(outcome);
+      };
 
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => {
@@ -121,23 +131,21 @@ export class OpenCodeEngine implements AgentEngine {
         if (stderr.length > 8_000) stderr = stderr.slice(-8_000);
       });
       child.on('error', (error) => {
-        clearTimeout(timeout);
-        resolve({ ok: false, error: `opencode spawn failed: ${String(error)}`, engineSessionId });
+        settle({ ok: false, error: `opencode spawn failed: ${String(error)}`, engineSessionId });
       });
       child.on('close', (code) => {
-        clearTimeout(timeout);
         // Flush any part whose complete was never superseded.
         for (const [id, part] of parts) {
           if (part.text !== '') onEvent({ kind: 'messageComplete', messageId: id, text: part.text });
         }
         if (code === 0) {
-          resolve({ ok: true, engineSessionId });
+          settle({ ok: true, engineSessionId });
           return;
         }
         // Diagnostics first: the run's own error output, else its last
         // unparsed stdout line (opencode reports some crashes there).
         const detail = tail(stderr) !== '' ? tail(stderr) : tail(stdoutTail);
-        resolve({
+        settle({
           ok: false,
           error:
             detail !== ''

@@ -62,6 +62,93 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       }
     }
 
+    // Agent sessions replay as start → transcript → end (v1 order).
+    const agentSessions = [...projectState.agentSessions.values()].sort(
+      (a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id),
+    );
+    for (const session of agentSessions) {
+      events.push(
+        frame(
+          project.id,
+          'agentSessionStarted',
+          { cardId: session.cardId, sessionId: session.id, agentKind: 'coder', startedAt: session.startedAt },
+          index++,
+        ),
+      );
+      for (const entry of session.transcript) {
+        if (entry.kind === 'message') {
+          events.push(
+            frame(
+              project.id,
+              'agentMessageComplete',
+              { sessionId: session.id, message: structuredClone(entry.message) },
+              index++,
+            ),
+          );
+        } else if (entry.kind === 'toolCall') {
+          events.push(
+            frame(
+              project.id,
+              'agentToolCall',
+              { sessionId: session.id, toolCallId: entry.toolCallId, toolName: entry.toolName, args: entry.args },
+              index++,
+            ),
+          );
+        } else {
+          events.push(
+            frame(
+              project.id,
+              'agentToolResult',
+              { sessionId: session.id, toolCallId: entry.toolCallId, content: entry.content, isError: entry.isError },
+              index++,
+            ),
+          );
+        }
+      }
+      if (session.status !== 'running') {
+        events.push(
+          frame(
+            project.id,
+            'agentSessionEnded',
+            {
+              cardId: session.cardId,
+              sessionId: session.id,
+              status: session.status,
+              ...(session.error !== undefined ? { error: session.error } : {}),
+              endedAt: session.endedAt ?? session.startedAt,
+            },
+            index++,
+          ),
+        );
+      }
+    }
+
+    const pipelines = [...projectState.pipelines.values()].sort(
+      (a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id),
+    );
+    for (const pipeline of pipelines) {
+      events.push(frame(project.id, 'pipelineSaved', { pipeline: structuredClone(pipeline) }, index++));
+    }
+
+    // Active pipeline runs replay as runStarted (+ the current step, so
+    // the fold lands on the same run status).
+    const runs = [...projectState.pipelineRuns.entries()].sort(([a], [b]) => a.localeCompare(b));
+    for (const [cardId, run] of runs) {
+      events.push(
+        frame(project.id, 'pipelineRunStarted', { cardId, pipelineId: run.pipelineId }, index++),
+      );
+      if (run.stepId !== undefined && run.stepKind !== undefined) {
+        events.push(
+          frame(
+            project.id,
+            'pipelineStepStarted',
+            { cardId, pipelineId: run.pipelineId, stepId: run.stepId, kind: run.stepKind },
+            index++,
+          ),
+        );
+      }
+    }
+
     for (const card of [...projectState.cards.values()].sort(
       (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
     )) {
