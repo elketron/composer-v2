@@ -1,0 +1,52 @@
+:host {
+  display: block;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: var(--rail-width);
+  height: 100%;
+  padding: 6px 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border-strong);
+}
+
+.entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.entry:hover {
+  color: var(--text);
+}
+
+.entry.active {
+  background: var(--rail-active-fill);
+  color: var(--accent-soft);
+}
+
+.entry.disabled {
+  color: var(--text-faint);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.entry.disabled:hover {
+  color: var(--text-faint);
+}
+
+.separator {
+  width: 20px;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--border-strong);
+}

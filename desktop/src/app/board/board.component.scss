@@ -1,0 +1,82 @@
+:host {
+  display: block;
+  height: 100%;
+}
+
+.board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  position: relative;
+}
+
+.board-header {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.columns {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  overflow-x: auto;
+}
+
+.rejection-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.rejection-bar .label {
+  color: var(--warn);
+  flex: none;
+}
+
+.rejection-bar .input {
+  font: inherit;
+  font-size: 14px;
+  width: 260px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 3px 6px;
+  outline: none;
+}
+
+.rejection-bar .input:focus {
+  border-color: var(--warn);
+}
+
+.rejection-bar .action {
+  font: inherit;
+  font-size: 14px;
+  background: none;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.rejection-bar .action:hover {
+  color: var(--text);
+}
+
+.rejection-bar .action.subtle {
+  border-color: transparent;
+  color: var(--text-faint);
+}

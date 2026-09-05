@@ -1,0 +1,64 @@
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+.plan {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.plan-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.session-title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.session-title .label {
+  color: var(--text-dim);
+}
+
+.session-id,
+.session-status {
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+.session-status {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.plan-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-pane {
+  flex: 3;
+  min-width: 0;
+  min-height: 0;
+}
+
+.doc-pane {
+  flex: 2;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+}

@@ -1,0 +1,39 @@
+<nav class="rail" aria-label="views">
+  @for (entry of viewEntries; track entry.id) {
+    @if (entry.route; as route) {
+      <a
+        class="entry"
+        [routerLink]="route"
+        routerLinkActive="active"
+        [attr.aria-label]="entry.label"
+        [title]="entry.label"
+      >
+        <lucide-icon [img]="entry.icon" [size]="16" [strokeWidth]="1.5" />
+      </a>
+    } @else {
+      <span class="entry disabled" aria-disabled="true" [title]="entry.label + ' · lands in M2'">
+        <lucide-icon [img]="entry.icon" [size]="16" [strokeWidth]="1.5" />
+      </span>
+    }
+  }
+
+  <div class="separator" role="separator"></div>
+
+  @for (entry of bottomEntries; track entry.id) {
+    @if (entry.route; as route) {
+      <a
+        class="entry"
+        [routerLink]="route"
+        routerLinkActive="active"
+        [attr.aria-label]="entry.label"
+        [title]="entry.label"
+      >
+        <lucide-icon [img]="entry.icon" [size]="16" [strokeWidth]="1.5" />
+      </a>
+    } @else {
+      <span class="entry disabled" aria-disabled="true" [title]="entry.label + ' · lands in M2'">
+        <lucide-icon [img]="entry.icon" [size]="16" [strokeWidth]="1.5" />
+      </span>
+    }
+  }
+</nav>

@@ -1,0 +1,167 @@
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0 18px;
+}
+
+.transcript {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 12px 24px;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding-top: 20vh;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.empty .label {
+  color: var(--accent-soft);
+}
+
+.message {
+  position: relative;
+  max-width: 760px;
+  padding: 0 0 22px 14px;
+  border-left: 1px solid var(--border-strong);
+}
+
+.message + .message {
+  margin-top: 4px;
+}
+
+.message.user {
+  border-left-color: var(--accent);
+}
+
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 5px;
+}
+
+.role {
+  color: var(--text-dim);
+  font-size: 14px;
+  letter-spacing: 0.14em;
+}
+
+.user .role {
+  color: var(--accent-soft);
+}
+
+.message-index {
+  color: var(--text-faint);
+  font-size: 14px;
+}
+
+.message-text {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.agent .message-text {
+  color: var(--text-dim);
+}
+
+.streaming {
+  opacity: 0.8;
+}
+
+.stream-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: var(--run);
+}
+
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 7px 0 9px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.composer-tools {
+  display: flex;
+  gap: 2px;
+}
+
+.composer-tools button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.composer-tools button:hover {
+  color: var(--text-dim);
+}
+
+.composer input {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 7px;
+  border: 1px solid var(--border-strong);
+  outline: none;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.composer input:focus {
+  border-color: var(--accent);
+}
+
+.hint {
+  color: var(--text-faint);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.send {
+  padding: 5px 11px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.send:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.send:disabled {
+  cursor: default;
+  opacity: 0.4;
+}

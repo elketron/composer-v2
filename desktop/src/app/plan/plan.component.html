@@ -1,0 +1,18 @@
+<div class="plan">
+  <header class="plan-header">
+    <div class="session-title">
+      <span class="label">planning session</span>
+      <span class="session-id">{{ session()?.id ?? 'new' }}</span>
+      <span class="session-status">{{ status().toLowerCase() }}</span>
+    </div>
+  </header>
+
+  <div class="plan-body">
+    <main class="chat-pane">
+      <app-plan-chat />
+    </main>
+    <section class="doc-pane">
+      <app-plan-document />
+    </section>
+  </div>
+</div>

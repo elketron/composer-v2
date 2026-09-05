@@ -1,0 +1,34 @@
+<div class="board">
+  <header class="board-header">
+    <app-type-selector [(selected)]="filter" />
+  </header>
+
+  @if (selectedCard(); as card) {
+    <app-card-panel [card]="card" />
+  } @else {
+    @if (filter() === 'all') {
+      <app-board-swimlane [cards]="cards()" [blockedIds]="blockedIds()" />
+    } @else {
+      <div class="columns" cdkDropListGroup>
+        @for (lane of lanes(); track lane) {
+          <app-board-column [lane]="lane" [cards]="cardsFor(lane)" [blockedIds]="blockedIds()" />
+        }
+      </div>
+    }
+  }
+
+  @if (rejectionPrompt(); as prompt) {
+    <div class="rejection-bar">
+      <span class="label">rejected {{ prompt.cardId }} — comment (optional)</span>
+      <input
+        #comment
+        class="input"
+        placeholder="why is it going back?"
+        (keydown.enter)="recordRejection(comment.value)"
+        (keydown.escape)="skipRejection()"
+      />
+      <button class="action" (click)="recordRejection(comment.value)">record</button>
+      <button class="action subtle" (click)="skipRejection()">skip</button>
+    </div>
+  }
+</div>

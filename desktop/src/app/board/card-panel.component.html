@@ -1,0 +1,144 @@
+<div class="panel" [style.--type-accent]="meta().accentVar">
+  <header class="panel-header">
+    <button class="back" (click)="close()">
+      <lucide-icon [img]="icons.back" [size]="12" />
+      back
+    </button>
+    <span class="accent-bar" aria-hidden="true"></span>
+    <lucide-icon class="type-icon" [img]="meta().icon" [size]="12" />
+    <span class="id">{{ card().id }}</span>
+    <span class="title">{{ card().title }}</span>
+    <span class="age">{{ card().createdAt | age }}</span>
+  </header>
+
+  <div class="body">
+    <section class="main">
+      <div class="field">
+        <span class="label">type</span>
+        <div class="type-picker">
+          @for (type of typeOptions; track type) {
+            <button
+              class="type-option"
+              [class.active]="type === card().type"
+              [style.--option-accent]="typeMeta[type].accentVar"
+              (click)="changeType(type)"
+            >
+              <lucide-icon [img]="typeMeta[type].icon" [size]="11" />
+              {{ typeMeta[type].label }}
+            </button>
+          }
+        </div>
+        <span class="hint">changing type resets the pipeline checklist</span>
+      </div>
+
+      <div class="field">
+        <span class="label">description</span>
+        <p class="description">{{ card().description }}</p>
+      </div>
+
+      <div class="field">
+        <span class="label">dependencies</span>
+        <div class="dep-row">
+          <span class="dep-label">blocked by</span>
+          @if (blockers().length) {
+            @for (dep of blockers(); track dep.id) {
+              <button class="dep-chip" (click)="openRelated(dep.id)">
+                {{ dep.id }} · {{ dep.title }}
+              </button>
+            }
+          } @else {
+            <span class="none">nothing</span>
+          }
+        </div>
+        <div class="dep-row">
+          <span class="dep-label">blocking</span>
+          @if (blocking().length) {
+            @for (dep of blocking(); track dep.id) {
+              <button class="dep-chip" (click)="openRelated(dep.id)">
+                {{ dep.id }} · {{ dep.title }}
+              </button>
+            }
+          } @else {
+            <span class="none">nothing</span>
+          }
+        </div>
+      </div>
+
+      @if (card().rejectionComment; as comment) {
+        <div class="field">
+          <span class="label">last rejection comment</span>
+          <p class="rejection">{{ comment }}</p>
+        </div>
+      }
+
+      <div class="field">
+        <span class="label">session</span>
+        <div class="meta-rows">
+          <div class="meta-row">
+            <span class="meta-key">assignee</span>
+            @if (card().assignee; as assignee) {
+              <span>{{ assignee.isHuman ? 'you' : assignee.role + ' · ' + assignee.label }}</span>
+            } @else {
+              <span class="none">unassigned</span>
+            }
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">session</span>
+            @if (card().sessionId; as sessionId) {
+              <span class="session">
+                <lucide-icon [img]="icons.session" [size]="10" />
+                {{ sessionId }}
+              </span>
+            } @else {
+              <span class="none">—</span>
+            }
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">branch</span>
+            <span [class.none]="!card().branch">{{ card().branch ?? '—' }}</span>
+          </div>
+          @if (card().fileStats; as stats) {
+            <div class="meta-row">
+              <span class="meta-key">files</span>
+              <span>
+                <span class="add">+{{ stats.added }}</span>
+                <span class="del">−{{ stats.removed }}</span>
+                <span class="none">across {{ stats.files }} files</span>
+              </span>
+            </div>
+          }
+        </div>
+      </div>
+    </section>
+
+    <aside class="checklist">
+      <span class="label">pipeline · {{ meta().label }}</span>
+      @for (entry of checklist(); track entry.stage) {
+        <div class="check-row {{ entry.status }}">
+          <span class="status-dot" [class.pulse]="entry.status === 'running'"></span>
+          <span class="check-label">{{ entry.label }}</span>
+          @if (entry.retries > 0) {
+            <span class="retries" title="retries">↻ {{ entry.retries }}</span>
+          }
+          <span class="check-status">{{ entry.status }}</span>
+        </div>
+      }
+    </aside>
+  </div>
+
+  <footer class="actions">
+    <button class="action" (click)="assignToMe()">assign to me</button>
+    <button class="action" [disabled]="!card().assignee" (click)="unassign()">unassign</button>
+    <label class="force-move">
+      force move to
+      <select #lane (change)="forceMove(lane.value); lane.value = ''">
+        <option value="" selected>…</option>
+        @for (target of moveTargets(); track target) {
+          <option [value]="target">{{ laneLabel(target) }}</option>
+        }
+      </select>
+    </label>
+    <span class="spacer"></span>
+    <button class="action danger" (click)="archive()">archive</button>
+  </footer>
+</div>

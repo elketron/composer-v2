@@ -1,0 +1,30 @@
+.type-selector {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.option:hover {
+  color: var(--text);
+}
+
+.option.active {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--panel);
+}

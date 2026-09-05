@@ -1,0 +1,53 @@
+<section class="chat">
+  <div class="transcript">
+    @if (messages().length === 0 && !streamingMessage()) {
+      <div class="empty">
+        <span class="label">planner</span>
+        <span>share a direction to start a planning session</span>
+      </div>
+    }
+
+    @for (message of messages(); track message.role + '-' + message.index) {
+      <article class="message" [class.user]="message.isUser" [class.agent]="message.isAgent">
+        <header class="message-meta">
+          <span class="role">{{ message.isUser ? 'YOU' : 'AGENT' }}</span>
+          <span class="message-index">m{{ message.index }}</span>
+        </header>
+        <div class="message-text">{{ message.text }}</div>
+      </article>
+    }
+
+    @if (streamingMessage(); as message) {
+      <article class="message agent streaming">
+        <header class="message-meta">
+          <span class="role">AGENT</span>
+          <span class="message-index">m{{ message.index }}</span>
+        </header>
+        @if (message.text) {
+          <div class="message-text">{{ message.text }}</div>
+        } @else {
+          <div class="message-text thinking">thinking…</div>
+        }
+        <span class="stream-dot pulse" aria-label="planner responding"></span>
+      </article>
+    }
+  </div>
+
+  <form class="composer" (submit)="$event.preventDefault(); send()">
+    <div class="composer-tools" aria-label="message tools">
+      <button type="button" title="attach">+</button>
+      <button type="button" title="format">T</button>
+      <button type="button" title="comment">#</button>
+    </div>
+    <input
+      name="message"
+      autocomplete="off"
+      [(ngModel)]="draft"
+      (keydown)="keydown($event)"
+      placeholder="share a direction, ask a question, refine the plan…"
+      [disabled]="sending()"
+    />
+    <span class="hint">enter to send</span>
+    <button type="submit" class="send" [disabled]="sending() || !draft.trim()">send</button>
+  </form>
+</section>

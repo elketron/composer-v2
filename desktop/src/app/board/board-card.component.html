@@ -1,0 +1,60 @@
+<article
+  class="card"
+  [class.blocked]="blocked()"
+  [class.working]="working()"
+  [style.--type-accent]="meta().accentVar"
+>
+  <span class="accent-bar" aria-hidden="true"></span>
+
+  <div class="row top">
+    <lucide-icon class="type-icon" [img]="meta().icon" [size]="12" />
+    <span class="id">{{ card().id }}</span>
+    <span class="tags">
+      @for (tag of card().tags; track tag) {
+        <span class="tag">{{ tag }}</span>
+      }
+    </span>
+    @if (blocked()) {
+      <span class="lock" [title]="lockTooltip()">
+        <lucide-icon [img]="icons.lock" [size]="10" />
+        {{ card().blockedBy.length }}
+      </span>
+    }
+  </div>
+
+  <div class="title">{{ card().title }}</div>
+  <div class="snippet">{{ card().description }}</div>
+
+  <div class="divider"></div>
+
+  <div class="row meta">
+    @if (card().assignee; as assignee) {
+      <span class="assignee">
+        <span class="dot" [class.pulse]="working()"></span>
+        {{ assignee.label }}
+      </span>
+    } @else {
+      <span class="assignee none"><span class="dot"></span>unassigned</span>
+    }
+    <span class="age">{{ card().createdAt | age }}</span>
+  </div>
+
+  <div class="row stats">
+    @if (card().sessionId; as sessionId) {
+      <span class="session" title="agent session">
+        <lucide-icon [img]="icons.session" [size]="10" />
+        {{ sessionId }}
+      </span>
+    } @else {
+      <span class="session none">—</span>
+    }
+    @if (hasStats()) {
+      <span class="files">
+        <span class="add">+{{ card().fileStats!.added }}</span>
+        <span class="del">−{{ card().fileStats!.removed }}</span>
+      </span>
+    } @else {
+      <span class="files none">no changes</span>
+    }
+  </div>
+</article>

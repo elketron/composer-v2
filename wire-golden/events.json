@@ -1,0 +1,398 @@
+[
+  {
+    "id": "e-01",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "cardCreated",
+    "body": {
+      "card": {
+        "id": "T-1",
+        "projectId": "P-1",
+        "type": "coding",
+        "title": "Board drag & drop",
+        "description": "",
+        "tags": [
+          "ui"
+        ],
+        "stage": "coding",
+        "blockedBy": [],
+        "assignee": {
+          "role": "coder",
+          "model": "qwen3.6",
+          "effort": "high"
+        },
+        "branch": "feat/board-drag",
+        "fileStats": {
+          "added": 120,
+          "removed": 12,
+          "files": 3
+        },
+        "subState": {
+          "retrieveContext": "ok",
+          "implement": "running"
+        },
+        "retries": {
+          "review": 1
+        },
+        "rejectionComment": "needs tests",
+        "createdAt": "2026-09-04T12:00:00.123456Z",
+        "updatedAt": "2026-09-04T12:00:00.123456Z"
+      }
+    }
+  },
+  {
+    "id": "e-02",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "cardMoved",
+    "body": {
+      "cardId": "T-1",
+      "from": "new",
+      "to": "coding",
+      "comment": "needs tests"
+    }
+  },
+  {
+    "id": "e-03",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "cardTypeChanged",
+    "body": {
+      "cardId": "T-1",
+      "from": "coding",
+      "to": "design"
+    }
+  },
+  {
+    "id": "e-04",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "cardArchived",
+    "body": {
+      "cardId": "T-2"
+    }
+  },
+  {
+    "id": "e-05",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "subStateUpdated",
+    "body": {
+      "cardId": "T-1",
+      "stage": "implement",
+      "status": "running"
+    }
+  },
+  {
+    "id": "e-06",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "dependencyStateChanged",
+    "body": {
+      "cardId": "T-2",
+      "blocked": true,
+      "blockedBy": [
+        "T-1"
+      ]
+    }
+  },
+  {
+    "id": "e-07",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "automationToggled",
+    "body": {
+      "lane": "coding",
+      "on": true
+    }
+  },
+  {
+    "id": "e-08",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "planningSessionCreated",
+    "body": {
+      "session": {
+        "id": "S-1",
+        "projectId": "P-1",
+        "createdAt": "2026-09-04T12:00:00.123456Z",
+        "status": "drafting",
+        "messages": [],
+        "planDocument": ""
+      }
+    }
+  },
+  {
+    "id": "e-09",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "userMessageReceived",
+    "body": {
+      "sessionId": "S-1",
+      "message": {
+        "index": 1,
+        "role": "user",
+        "text": "plan the board",
+        "at": "2026-09-04T12:00:00.123456Z"
+      }
+    }
+  },
+  {
+    "id": "e-10",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "agentMessageDelta",
+    "body": {
+      "sessionId": "S-1",
+      "messageIndex": 2,
+      "delta": "Here is"
+    }
+  },
+  {
+    "id": "e-11",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "agentMessageComplete",
+    "body": {
+      "sessionId": "S-1",
+      "message": {
+        "index": 2,
+        "role": "agent",
+        "text": "Here is the plan.",
+        "at": "2026-09-04T12:00:00.123456Z"
+      }
+    }
+  },
+  {
+    "id": "e-12",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "planDocumentUpdated",
+    "body": {
+      "sessionId": "S-1",
+      "document": "<plan>\n<goal>Board drag and drop</goal>\n<tasks>\n<task key=\"t1\">Implement drag handlers</task>\n</tasks>\n</plan>"
+    }
+  },
+  {
+    "id": "e-13",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "planningSessionCompleted",
+    "body": {
+      "sessionId": "S-1"
+    }
+  },
+  {
+    "id": "e-14",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "cardsCommitted",
+    "body": {
+      "cards": [
+        {
+          "id": "T-3",
+          "projectId": "P-1",
+          "type": "docs",
+          "title": "Write the onboarding doc",
+          "description": "",
+          "tags": [],
+          "stage": "new",
+          "blockedBy": [],
+          "subState": {
+            "draft": "pending",
+            "implement": "pending",
+            "runValidation": "pending",
+            "reviewChanges": "pending",
+            "humanReview": "pending"
+          },
+          "retries": {},
+          "createdAt": "2026-09-04T12:00:00.123456Z",
+          "updatedAt": "2026-09-04T12:00:00.123456Z"
+        }
+      ]
+    }
+  },
+  {
+    "id": "e-15",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "projectCreated",
+    "body": {
+      "project": {
+        "id": "P-1",
+        "name": "alpha",
+        "directory": "/home/odmar/Projects/composer-v2",
+        "createdAt": "2026-09-04T12:00:00.123456Z"
+      }
+    }
+  },
+  {
+    "id": "e-16",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "projectDirectoryChanged",
+    "body": {
+      "projectId": "P-1",
+      "directory": "/home/odmar/Projects/composer-v2"
+    }
+  },
+  {
+    "id": "e-17",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "projectActivated",
+    "body": {
+      "projectId": "P-1"
+    }
+  },
+  {
+    "id": "e-18",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "agentSessionStarted",
+    "body": {
+      "cardId": "T-1",
+      "sessionId": "A-1",
+      "agentKind": "coder",
+      "startedAt": "2026-09-04T12:00:00.123456Z"
+    }
+  },
+  {
+    "id": "e-19",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "agentSessionEnded",
+    "body": {
+      "cardId": "T-1",
+      "sessionId": "A-1",
+      "status": "ended",
+      "endedAt": "2026-09-04T12:00:00.123456Z"
+    }
+  },
+  {
+    "id": "e-20",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "agentToolCall",
+    "body": {
+      "sessionId": "A-1",
+      "toolCallId": "call-1",
+      "toolName": "write",
+      "args": {
+        "path": "src/main.ts",
+        "content": "fn main() {}"
+      }
+    }
+  },
+  {
+    "id": "e-21",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "agentToolResult",
+    "body": {
+      "sessionId": "A-1",
+      "toolCallId": "call-1",
+      "content": "written",
+      "isError": false
+    }
+  },
+  {
+    "id": "e-22",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineSaved",
+    "body": {
+      "pipeline": {
+        "id": "PL-1",
+        "projectId": "P-1",
+        "name": "Standard coding card",
+        "updatedAt": "2026-09-04T12:00:00.123456Z",
+        "steps": [
+          {
+            "id": "st-1",
+            "kind": "agent",
+            "agentKind": "coder",
+            "instructions": "Implement the card per its description."
+          },
+          {
+            "id": "st-2",
+            "kind": "command",
+            "command": "npm test",
+            "description": "Run tests",
+            "retries": 1
+          },
+          {
+            "id": "st-3",
+            "kind": "human",
+            "description": "Approval"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "e-23",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineDeleted",
+    "body": {
+      "pipelineId": "PL-2"
+    }
+  },
+  {
+    "id": "e-24",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineRunStarted",
+    "body": {
+      "cardId": "T-1",
+      "pipelineId": "PL-1"
+    }
+  },
+  {
+    "id": "e-25",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineStepStarted",
+    "body": {
+      "cardId": "T-1",
+      "pipelineId": "PL-1",
+      "stepId": "st-1",
+      "kind": "agent"
+    }
+  },
+  {
+    "id": "e-26",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineStepFinished",
+    "body": {
+      "cardId": "T-1",
+      "pipelineId": "PL-1",
+      "stepId": "st-1",
+      "ok": true
+    }
+  },
+  {
+    "id": "e-27",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineRunEnded",
+    "body": {
+      "cardId": "T-1",
+      "pipelineId": "PL-1",
+      "status": "completed"
+    }
+  },
+  {
+    "id": "e-28",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineGateResponded",
+    "body": {
+      "cardId": "T-1",
+      "approved": true,
+      "comment": "ship it"
+    }
+  }
+]

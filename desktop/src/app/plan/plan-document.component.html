@@ -1,0 +1,21 @@
+<section class="document">
+  <header class="document-header">
+    <span class="label">plan document</span>
+    @if (isDone()) {
+      <span class="done">committed to board</span>
+    } @else if (document()) {
+      <span class="draft">draft</span>
+    }
+  </header>
+
+  @if (document()) {
+    <div class="document-body">
+      <pre class="document-text">{{ document() }}</pre>
+    </div>
+  } @else {
+    <div class="empty">
+      <span class="label">plan</span>
+      <span>the planner writes the plan here as you talk</span>
+    </div>
+  }
+</section>

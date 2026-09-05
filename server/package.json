@@ -1,0 +1,29 @@
+{
+  "name": "@composer/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Composer v2 server: the event backbone, domain validation, and the pipeline runner over the opencode agent runtime.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "golden": "tsx scripts/write-golden.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@surrealdb/node": "^3.0.3",
+    "hono": "^4.13.7",
+    "surrealdb": "^2.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "~5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

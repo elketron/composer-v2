@@ -1,0 +1,17 @@
+minimumReleaseAge: 0
+
+packages:
+  - server
+  - desktop
+
+onlyBuiltDependencies:
+  - esbuild
+  - "@surrealdb/node"
+  - "@parcel/watcher"
+  - lmdb
+  - msgpackr-extract
+
+allowBuilds:
+  '@parcel/watcher': set this to true or false
+  lmdb: set this to true or false
+  msgpackr-extract: set this to true or false

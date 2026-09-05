@@ -1,0 +1,125 @@
+:host {
+  display: block;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  height: var(--topbar-height);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-strong);
+  overflow: hidden;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rail-width);
+  height: 100%;
+  flex: none;
+  color: var(--accent-soft);
+  border-right: 1px solid var(--border);
+}
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+.tab .directory {
+  display: flex;
+  color: var(--text-faint);
+  line-height: 1;
+}
+
+.tab .directory:hover {
+  color: var(--accent-soft);
+}
+
+.tab .close {
+  color: var(--text-faint);
+  visibility: hidden;
+  line-height: 1;
+}
+
+.tab:hover .close,
+.tab.active .close {
+  visibility: visible;
+}
+
+.tab .close:hover {
+  color: var(--err);
+}
+
+.add {
+  border: none;
+  border-right: 1px solid var(--border);
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.add:hover {
+  color: var(--accent-soft);
+}
+
+.breadcrumb {
+  margin-left: 14px;
+  font-size: 14px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.badge {
+  font-size: 14px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.badge.model {
+  color: var(--accent-soft);
+}

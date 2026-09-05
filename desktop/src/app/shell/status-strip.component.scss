@@ -1,0 +1,51 @@
+:host {
+  display: block;
+}
+
+.status-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: var(--status-strip-height);
+  padding: 0 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border-strong);
+  font-size: 14px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.agents {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hint.model {
+  color: var(--text-dim);
+}
+
+kbd {
+  font: inherit;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 0 4px;
+}

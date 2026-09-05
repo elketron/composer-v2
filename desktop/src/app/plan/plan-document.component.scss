@@ -1,0 +1,71 @@
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+.document {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--panel);
+}
+
+.document-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 31px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.document-header .label {
+  color: var(--text-dim);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.draft {
+  color: var(--text-faint);
+  font-size: 14px;
+}
+
+.done {
+  color: var(--accent-soft);
+  font-size: 14px;
+}
+
+.document-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px 24px;
+}
+
+.document-text {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding-top: 16vh;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.empty .label {
+  color: var(--accent-soft);
+}

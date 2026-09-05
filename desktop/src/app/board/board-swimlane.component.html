@@ -1,0 +1,54 @@
+<div class="swimlane">
+  <div class="lane-row header-row">
+    <div class="row-label"></div>
+    @for (lane of lanes; track lane) {
+      <div class="col-label label">
+        <span>{{ laneLabel(lane) }}</span>
+        @if (agentOwned(lane)) {
+          <button
+            class="auto"
+            [class.on]="automationOn(lane)"
+            title="agent automation for this lane"
+            (click)="toggleAutomation(lane)"
+          >
+            {{ automationOn(lane) ? 'auto · on' : 'auto · off' }}
+          </button>
+        }
+      </div>
+    }
+  </div>
+
+  @for (row of rows; track row.type) {
+    <div class="lane-row" cdkDropListGroup>
+      <div class="row-label">
+        <lucide-icon [img]="row.meta.icon" [size]="12" [style.color]="row.meta.accentVar" />
+        <span class="type-name" [style.color]="row.meta.accentVar">{{ row.meta.label }}</span>
+        <span class="count">{{ countFor(row.type) }}</span>
+      </div>
+
+      @for (cell of row.cells; track cell.lane) {
+        @if (cell.valid) {
+          <div
+            class="cell"
+            cdkDropList
+            [cdkDropListData]="cell.lane"
+            (cdkDropListDropped)="onDrop($event)"
+          >
+            @for (card of cardsFor(row.type, cell.lane); track card.id) {
+              <app-board-card
+                [card]="card"
+                [blocked]="blockedIds().has(card.id)"
+                (activated)="open($event)"
+                cdkDrag
+                [cdkDragData]="card"
+                [cdkDragDisabled]="blockedIds().has(card.id)"
+              />
+            }
+          </div>
+        } @else {
+          <div class="cell dimmed" aria-hidden="true"></div>
+        }
+      }
+    </div>
+  }
+</div>

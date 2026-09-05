@@ -1,0 +1,342 @@
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  font-size: 14px;
+  background: none;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.back:hover {
+  color: var(--text);
+}
+
+.accent-bar {
+  width: 2px;
+  height: 14px;
+  background: var(--type-accent);
+}
+
+.type-icon {
+  color: var(--type-accent);
+}
+
+.id {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.title {
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.age {
+  margin-left: auto;
+  font-size: 14px;
+  color: var(--text-faint);
+  flex: none;
+}
+
+.body {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  max-width: 640px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field > .label {
+  color: var(--text-faint);
+}
+
+.hint {
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+.type-picker {
+  display: flex;
+  gap: 6px;
+}
+
+.type-option {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 14px;
+  background: none;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.type-option:hover {
+  color: var(--text);
+}
+
+.type-option.active {
+  color: var(--option-accent);
+  border-color: var(--option-accent);
+}
+
+.description {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+
+.dep-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.dep-label {
+  width: 72px;
+  flex: none;
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+.dep-chip {
+  font: inherit;
+  font-size: 14px;
+  background: none;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 1px 6px;
+  margin-right: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+.dep-chip:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.none {
+  color: var(--text-faint);
+}
+
+.rejection {
+  margin: 0;
+  font-size: 14px;
+  color: var(--warn);
+  border-left: 2px solid var(--warn);
+  padding-left: 8px;
+  white-space: pre-wrap;
+}
+
+.meta-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meta-key {
+  width: 72px;
+  flex: none;
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+.session {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--run);
+}
+
+.add {
+  color: var(--ok);
+  margin-right: 6px;
+}
+
+.del {
+  color: var(--err);
+  margin-right: 6px;
+}
+
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 320px;
+  flex: none;
+  align-self: flex-start;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 10px;
+}
+
+.checklist > .label {
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  padding: 3px 0;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-faint);
+}
+
+.check-row.running .status-dot {
+  background: var(--run);
+}
+
+.check-row.ok .status-dot {
+  background: var(--ok);
+}
+
+.check-row.failed .status-dot {
+  background: var(--err);
+}
+
+.check-label {
+  color: var(--text-dim);
+}
+
+.check-row.pending .check-label,
+.check-row.pending .check-status {
+  color: var(--text-faint);
+}
+
+.check-status {
+  margin-left: auto;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.retries {
+  font-size: 14px;
+  color: var(--warn);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.action {
+  font: inherit;
+  font-size: 14px;
+  background: none;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.action.danger {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.force-move {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+.force-move select {
+  font: inherit;
+  font-size: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 2px 4px;
+}
+
+.spacer {
+  flex: 1;
+}

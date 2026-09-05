@@ -1,0 +1,14 @@
+<footer class="status-strip">
+  <span class="agents">
+    @for (dot of agentDots(); track $index) {
+      <span class="dot pulse"></span>
+    }
+    {{ agentCount() }} agents running
+  </span>
+
+  <span class="spacer"></span>
+
+  <span class="hint model">{{ model() }}</span>
+  <span class="hint"><kbd>tab</kbd> next card</span>
+  <span class="hint"><kbd>ctrl+k</kbd> command</span>
+</footer>
