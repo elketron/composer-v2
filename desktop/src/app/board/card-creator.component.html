@@ -1,0 +1,51 @@
+<form class="creator" (submit)="$event.preventDefault(); submit()">
+  <div class="line">
+    <input
+      class="title"
+      type="text"
+      name="title"
+      placeholder="card title"
+      autocomplete="off"
+      [ngModel]="title()"
+      (ngModelChange)="title.set($event)"
+      [disabled]="submitting()"
+    />
+    <div class="types">
+      @for (option of typeOptions; track option) {
+        <button
+          type="button"
+          class="type"
+          [class.active]="type() === option"
+          [style.--type-accent]="typeMeta[option].accentVar"
+          [disabled]="submitting()"
+          (click)="type.set(option)"
+        >
+          {{ typeMeta[option].label }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <textarea
+    class="description"
+    name="description"
+    rows="2"
+    placeholder="description (optional)"
+    [ngModel]="description()"
+    (ngModelChange)="description.set($event)"
+    [disabled]="submitting()"
+  ></textarea>
+
+  @if (error(); as message) {
+    <p class="error" role="alert">{{ message }}</p>
+  }
+
+  <footer>
+    <button type="submit" class="create" [disabled]="submitting() || !title().trim()">
+      create card
+    </button>
+    <button type="button" class="cancel" [disabled]="submitting()" (click)="cancel()">
+      cancel
+    </button>
+  </footer>
+</form>

@@ -289,4 +289,65 @@ describe('CardPanelComponent', () => {
       requestPipelineStop: { cardId: 'T-148' },
     });
   });
+
+  it('surfaces a run rejection inline instead of failing silently', async () => {
+    events.emit(
+      wireEvent('pipelineSaved', {
+        pipeline: {
+          id: 'PL-1',
+          projectId: 'P-1',
+          name: 'Standard coding card',
+          steps: [{ id: 'st-1', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_AGENT, agentKind: 'coder', instructions: 'x' }],
+          updatedAt: '',
+        },
+      }),
+    );
+    events.respondWith({
+      ok: false,
+      rejectionCode: 'invalidCommand',
+      rejectionMessage: 'Project P-1 has no directory set',
+    });
+
+    const fixture = await render('T-148');
+    const view = el(fixture);
+    const select = view.querySelector<HTMLSelectElement>('.run-start select')!;
+    select.value = 'PL-1';
+    select.dispatchEvent(new Event('change'));
+    await fixture.whenStable();
+    view.querySelector<HTMLButtonElement>('.run-button')!.click();
+    await fixture.whenStable();
+
+    expect(events.lastCommand('requestPipelineRun')).toBeDefined();
+    expect(view.querySelector('.run-rejection')?.textContent).toContain(
+      'Project P-1 has no directory set',
+    );
+  });
+
+  it('shows how the last run ended once the run is gone', async () => {
+    events.emit(
+      wireEvent('pipelineSaved', {
+        pipeline: {
+          id: 'PL-1',
+          projectId: 'P-1',
+          name: 'Standard coding card',
+          steps: [{ id: 'st-1', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_AGENT, agentKind: 'coder', instructions: 'x' }],
+          updatedAt: '',
+        },
+      }),
+    );
+    events.emit(wireEvent('pipelineRunStarted', { cardId: 'T-148', pipelineId: 'PL-1' }));
+    events.emit(
+      wireEvent('pipelineRunEnded', {
+        cardId: 'T-148',
+        pipelineId: 'PL-1',
+        status: WirePipelineRunStatus.PIPELINE_RUN_STATUS_FAILED,
+        error: 'step st-1 failed',
+      }),
+    );
+
+    const fixture = await render('T-148');
+    const outcome = el(fixture).querySelector('.run-outcome');
+    expect(outcome?.classList).toContain('failed');
+    expect(outcome?.textContent).toContain('last run failed — step st-1 failed');
+  });
 });

@@ -49,7 +49,17 @@ export class PlanService {
     const projectId = this.activeProjectSignal();
     return projectId ? (this.sessionsSignal().get(projectId) ?? null) : null;
   });
-  readonly messages = computed(() => this.session()?.messages ?? []);
+  readonly messages = computed(() => {
+    const messages = this.session()?.messages ?? [];
+    // Re-delivered events can land the same slot twice under different
+    // indices; the transcript must render each (role, index) once — the
+    // latest write wins.
+    const seen = new Map<string, ChatMessage>();
+    for (const message of messages) {
+      seen.set(`${message.role}-${message.index}`, message);
+    }
+    return [...seen.values()];
+  });
   readonly transcript = this.messages;
   readonly planDocument = computed(() => this.session()?.planDocument ?? '');
   readonly status = computed(() => this.session()?.status ?? 'DRAFTING');
@@ -143,6 +153,7 @@ export class PlanService {
         break;
       }
       case 'UserMessageReceived': {
+        if (!this.isPlanningSession(event.sessionId)) break;
         const message = asMessage(event.message);
         this.updateSessionById(event.sessionId, (session) =>
           session.with({ messages: upsertMessage(session.messages, message) }),
@@ -155,6 +166,10 @@ export class PlanService {
         break;
       }
       case 'AgentMessageDelta': {
+        // Agent-step messages (card sessions, A-*) are the pipeline run
+        // view's; only known planning sessions fold here — a coder's
+        // stream must never replace the plan session.
+        if (!this.isPlanningSession(event.sessionId)) break;
         const current = this.streamingMessage();
         const message =
           current?.index === event.messageIndex
@@ -164,12 +179,18 @@ export class PlanService {
         break;
       }
       case 'AgentMessageComplete': {
+        if (!this.isPlanningSession(event.sessionId)) break;
         const message = asMessage(event.message);
         this.updateSessionById(event.sessionId, (session) =>
           session.with({ messages: upsertMessage(session.messages, message) }),
         );
-        if (this.streamingMessage()?.index === message.index) this.streamingMessage.set(null);
-        if (event.sessionId === this.session()?.id) this.isSending.set(false);
+        // The completion's index can disagree with the deltas' numbering
+        // (observed off-by-one), so key the match on "a live stream for the
+        // active session ended" — the planner is single-writer per session.
+        if (event.sessionId === this.session()?.id) {
+          this.streamingMessage.set(null);
+          this.isSending.set(false);
+        }
         break;
       }
       case 'PlanDocumentUpdated': {
@@ -238,6 +259,20 @@ export class PlanService {
       [lcfirst(command.type)]: commandPayload(command),
     } as unknown as PublishRequestJson;
     return this.events.publish(request);
+  }
+
+  /**
+   * True when the id belongs to a planning session this service already
+   * folds. Card-bound agent sessions (the runner's A-*) publish the same
+   * message event names — they are the pipeline run view's, not the plan's.
+   */
+  private isPlanningSession(sessionId: string | undefined): boolean {
+    if (sessionId === undefined) return false;
+    for (const session of this.sessionsSignal().values()) {
+      if (session.id === sessionId) return true;
+    }
+    // The active project's pending create (the id arrives on the echo).
+    return false;
   }
 
   private updateSessionById(
@@ -426,7 +461,9 @@ function upsertMessage(
   const next = [...messages];
   if (existing >= 0) next[existing] = incoming;
   else next.push(incoming);
-  return next.sort((a, b) => a.index - b.index || (a.role === 'user' ? -1 : 1));
+  return next.sort(
+    (a, b) => a.index - b.index || (a.role === b.role ? 0 : a.role === 'user' ? -1 : 1),
+  );
 }
 
 interface CardDto {

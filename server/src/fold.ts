@@ -162,6 +162,14 @@ export function apply(state: State, envelope: EventEnvelope): void {
       card.updatedAt = envelope.occurredAt;
       break;
     }
+    case 'cardAssigned': {
+      const body = envelope.body as EventBodyMap['cardAssigned'];
+      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      if (!card) break;
+      card.assignee = body.assignee;
+      card.updatedAt = envelope.occurredAt;
+      break;
+    }
     case 'cardArchived': {
       const body = envelope.body as EventBodyMap['cardArchived'];
       projectStateOf(state, projectId).cards.delete(body.cardId);

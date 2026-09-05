@@ -138,4 +138,53 @@ describe('BoardComponent', () => {
     await fixture.whenStable();
     expect(el.querySelector('.rejection-bar')).toBeNull();
   });
+
+  it('creates a card from the new-card form and opens it in the panel', async () => {
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+
+    el.querySelector<HTMLButtonElement>('.new-card')!.click();
+    await fixture.whenStable();
+    const form = el.querySelector('app-card-creator');
+    expect(form).toBeTruthy();
+
+    const title = form!.querySelector<HTMLInputElement>('.title')!;
+    title.value = 'Wire the debugger';
+    title.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    form!.querySelector<HTMLButtonElement>('.create')!.click();
+    await fixture.whenStable();
+
+    // The command went out; the echo lands the card and opens its panel.
+    expect(events.lastCommand('requestCardCreate')).toMatchObject({
+      projectId: 'P-1',
+      requestCardCreate: { title: 'Wire the debugger', type: 'coding' },
+    });
+    events.emit({
+      id: 'e-card',
+      projectId: 'P-1',
+      occurredAt: new Date().toISOString(),
+      cardCreated: {
+        card: {
+          id: 'T-9',
+          projectId: 'P-1',
+          type: 'coding',
+          title: 'Wire the debugger',
+          description: '',
+          tags: [],
+          stage: 'new',
+          blockedBy: [],
+          subState: {},
+          retries: {},
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    } as never);
+    await fixture.whenStable();
+
+    expect(el.querySelector('app-card-creator')).toBeNull();
+    expect(el.querySelector('app-card-panel')).toBeTruthy();
+    expect(el.textContent).toContain('T-9');
+  });
 });

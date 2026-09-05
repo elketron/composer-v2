@@ -1,7 +1,14 @@
 <div class="board">
   <header class="board-header">
     <app-type-selector [(selected)]="filter" />
+    <button class="new-card" (click)="creating.set(!creating())">
+      + new card
+    </button>
   </header>
+
+  @if (creating()) {
+    <app-card-creator (closed)="creating.set(false)" />
+  }
 
   @if (selectedCard(); as card) {
     <app-card-panel [card]="card" />

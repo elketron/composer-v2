@@ -6,11 +6,11 @@ import { filter, map } from 'rxjs';
 import { ShellService } from './shell.service';
 
 /**
- * Top bar (design.md §2): logo, project tabs (+), breadcrumb, active-task
- * pill, spec pill, and right-aligned model / calls / elapsed / build badges.
+ * Top bar (design.md §2): logo, project tabs (+), breadcrumb, and the
+ * active model badge on the right.
  *
- * The task/spec pills render only when present; the badges are static
- * placeholders until wired to live data (planner settings land in step 6).
+ * The telemetry badges (calls / elapsed / build) are gone until wired to
+ * live data — static placeholders read as real telemetry.
  */
 @Component({
   selector: 'app-topbar',

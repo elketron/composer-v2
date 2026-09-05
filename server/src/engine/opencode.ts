@@ -98,6 +98,7 @@ export class OpenCodeEngine implements AgentEngine {
       let stderr = '';
       let stdoutTail = '';
       const parts = new Map<string, TextPart>();
+      const tools = new Map<string, ToolCallState>();
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
       }, spec.timeoutMs > 0 ? spec.timeoutMs : this.defaultTimeoutMs);
@@ -122,7 +123,7 @@ export class OpenCodeEngine implements AgentEngine {
           if (event.sessionID !== undefined && engineSessionId === undefined) {
             engineSessionId = event.sessionID;
           }
-          handleEvent(event, parts, onEvent);
+          handleEvent(event, parts, tools, onEvent);
         }
       });
       child.stderr.setEncoding('utf8');
@@ -161,8 +162,13 @@ export class OpenCodeEngine implements AgentEngine {
 function handleEvent(
   event: WireEvent,
   parts: Map<string, TextPart>,
+  tools: Map<string, ToolCallState>,
   onEvent: (event: AgentTurnEvent) => void,
 ): void {
+  if (event.type === 'tool_use') {
+    handleToolUse(event, parts, tools, onEvent);
+    return;
+  }
   if (event.type !== 'text') return;
   const id = event.part?.id ?? event.part?.messageID;
   const text = event.part?.text;
@@ -184,6 +190,68 @@ function handleEvent(
     part.emitted = text.length;
   }
   part.text = text;
+}
+
+interface ToolCallState {
+  announced: boolean;
+  settled: boolean;
+}
+
+/**
+ * tool_use parts arrive repeatedly as the tool runs (pending → running →
+ * completed with input/output post-hoc). The call is announced once; the
+ * result once, when the state settles.
+ */
+function handleToolUse(
+  event: WireEvent,
+  parts: Map<string, TextPart>,
+  tools: Map<string, ToolCallState>,
+  onEvent: (event: AgentTurnEvent) => void,
+): void {
+  const part = event.part;
+  const callId = part?.callID ?? part?.id;
+  if (part === undefined || callId === undefined) return;
+  let state = tools.get(callId);
+  if (state === undefined) {
+    state = { announced: false, settled: false };
+    tools.set(callId, state);
+  }
+  const status = part.state?.status;
+  if (!state.announced) {
+    state.announced = true;
+    onEvent({
+      kind: 'toolCall',
+      toolCallId: callId,
+      toolName: part.tool ?? 'tool',
+      ...(part.state?.input !== undefined ? { args: part.state.input } : {}),
+    });
+    // A first sight already carrying output settles immediately.
+    if (part.state?.output !== undefined) {
+      state.settled = true;
+      onEvent({
+        kind: 'toolResult',
+        toolCallId: callId,
+        content: resultContent(part.state.output, part.state.metadata?.error),
+        isError: status === 'error',
+      });
+    }
+    return;
+  }
+  if (!state.settled && (status === 'completed' || status === 'error')) {
+    state.settled = true;
+    onEvent({
+      kind: 'toolResult',
+      toolCallId: callId,
+      content: resultContent(part?.state?.output, part?.state?.metadata?.error),
+      isError: status === 'error',
+    });
+  }
+}
+
+function resultContent(output: unknown, error: string | undefined): string {
+  if (typeof output === 'string') return output;
+  if (output === undefined) return error ?? '';
+  return JSON.stringify(output);
 }
 
 /** One JSON line, or null (banner output and blank lines are skipped). */
@@ -209,6 +277,9 @@ function tail(text: string): string {
 function mcpConfig(spec: AgentTurnSpec): Record<string, unknown> {
   return {
     $schema: 'https://opencode.ai/config.json',
+    // The settings-configured model override; absent keeps opencode's own
+    // default (its config owns the provider endpoint).
+    ...(spec.model ? { model: spec.model } : {}),
     mcp: {
       composer: {
         type: 'local',

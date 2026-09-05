@@ -6,6 +6,7 @@
 import type {
   AgentSession,
   AgentSessionStatus,
+  Assignee,
   Card,
   CardType,
   ChatMessage,
@@ -34,6 +35,12 @@ export interface CardTypeChanged {
   cardId: string;
   from: CardType;
   to: CardType;
+}
+
+/** Absent assignee = unassigned (the desktop's "unassign" action). */
+export interface CardAssigned {
+  cardId: string;
+  assignee?: Assignee;
 }
 
 export interface CardArchived {
@@ -177,12 +184,24 @@ export interface PipelineGateResponded {
   comment?: string;
 }
 
+/**
+ * One line of a command step's live output. Live-only (ephemeral): the
+ * durable record is the step's finish (ok/error tail), not the transcript.
+ */
+export interface CommandOutput {
+  cardId: string;
+  pipelineId: string;
+  stepId: string;
+  line: string;
+}
+
 // ---- The catalog: name → payload shape (the one registry both sides use) ----
 
 export interface EventBodyMap {
   cardCreated: CardCreated;
   cardMoved: CardMoved;
   cardTypeChanged: CardTypeChanged;
+  cardAssigned: CardAssigned;
   cardArchived: CardArchived;
   subStateUpdated: SubStateUpdated;
   dependencyStateChanged: DependencyStateChanged;
@@ -208,6 +227,7 @@ export interface EventBodyMap {
   pipelineStepFinished: PipelineStepFinished;
   pipelineRunEnded: PipelineRunEnded;
   pipelineGateResponded: PipelineGateResponded;
+  commandOutput: CommandOutput;
 }
 
 export type EventName = keyof EventBodyMap;
@@ -218,6 +238,7 @@ export const EVENT_NAMES = Object.keys({
   cardCreated: null,
   cardMoved: null,
   cardTypeChanged: null,
+  cardAssigned: null,
   cardArchived: null,
   subStateUpdated: null,
   dependencyStateChanged: null,
@@ -243,10 +264,11 @@ export const EVENT_NAMES = Object.keys({
   pipelineStepFinished: null,
   pipelineRunEnded: null,
   pipelineGateResponded: null,
+  commandOutput: null,
 }) as EventName[];
 
 /** Events that persist for the live stream but skip replay (v1 rule). */
-export const EPHEMERAL: ReadonlySet<EventName> = new Set(['agentMessageDelta']);
+export const EPHEMERAL: ReadonlySet<EventName> = new Set(['agentMessageDelta', 'commandOutput']);
 
 /** Whether an event name is in the catalog. */
 export function isEventName(name: string): name is EventName {

@@ -206,6 +206,10 @@ export interface DomainEventJson {
     readonly from: WireCardType;
     readonly to: WireCardType;
   };
+  readonly cardAssigned?: {
+    readonly cardId: string;
+    readonly assignee?: AssigneeJson;
+  };
   readonly cardArchived?: { readonly cardId: string };
   readonly subStateUpdated?: {
     readonly cardId: string;
@@ -287,6 +291,12 @@ export interface DomainEventJson {
     readonly approved: boolean;
     readonly comment?: string;
   };
+  readonly commandOutput?: {
+    readonly cardId: string;
+    readonly pipelineId: string;
+    readonly stepId: string;
+    readonly line: string;
+  };
 }
 
 /** The payload field names (the oneof members, camelCase). */
@@ -294,6 +304,7 @@ export const EVENT_KINDS = [
   'cardCreated',
   'cardMoved',
   'cardTypeChanged',
+  'cardAssigned',
   'cardArchived',
   'subStateUpdated',
   'dependencyStateChanged',
@@ -319,6 +330,7 @@ export const EVENT_KINDS = [
   'pipelineStepFinished',
   'pipelineRunEnded',
   'pipelineGateResponded',
+  'commandOutput',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -372,6 +384,12 @@ export interface PublishRequestJson {
   readonly requestProjectCreate?: { readonly name: string; readonly directory?: string };
   readonly requestProjectSetDirectory?: { readonly projectId: string; readonly directory: string };
   readonly requestProjectActivate?: { readonly projectId: string };
+  readonly requestCardCreate?: {
+    readonly title: string;
+    readonly description?: string;
+    readonly type: WireCardType;
+    readonly tags?: readonly string[];
+  };
   readonly requestCardMove?: {
     readonly cardId: string;
     readonly toLane: WireStage;
@@ -379,6 +397,7 @@ export interface PublishRequestJson {
     readonly comment?: string;
   };
   readonly requestCardTypeChange?: { readonly cardId: string; readonly toType: WireCardType };
+  readonly requestCardAssign?: { readonly cardId: string; readonly assignee?: AssigneeJson };
   readonly requestCardArchive?: { readonly cardId: string };
   readonly requestAutomationToggle?: { readonly lane: WireStage; readonly on: boolean };
   readonly requestPlanningSessionCreate?: { readonly projectId: string };
@@ -446,6 +465,15 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
       active: true,
     });
   }
+  if (request.requestCardCreate) {
+    const create = request.requestCardCreate;
+    return env('create', 'card', {
+      title: create.title,
+      ...(create.description ? { description: create.description } : {}),
+      type: create.type,
+      ...(create.tags?.length ? { tags: [...create.tags] } : {}),
+    });
+  }
   if (request.requestCardMove) {
     const body: Record<string, unknown> = {
       id: request.requestCardMove.cardId,
@@ -459,6 +487,14 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
     return env('update', 'card', {
       id: request.requestCardTypeChange.cardId,
       type: request.requestCardTypeChange.toType,
+    });
+  }
+  if (request.requestCardAssign) {
+    // An assignee object assigns; explicit null unassigns (the server keys
+    // the mutation on the field's presence).
+    return env('update', 'card', {
+      id: request.requestCardAssign.cardId,
+      assignee: request.requestCardAssign.assignee ?? null,
     });
   }
   if (request.requestCardArchive) {
@@ -585,7 +621,7 @@ export function cardFromWire(json: CardJson): Card {
   });
 }
 
-function assigneeFromWire(json: AssigneeJson | undefined): Assignee | undefined {
+export function assigneeFromWire(json: AssigneeJson | undefined): Assignee | undefined {
   if (!json?.role) return undefined;
   if (json.role === 'human') return Assignee.human();
   return Assignee.for(

@@ -277,4 +277,33 @@ describe('the boot contract', () => {
       rmSync(restartDir, { recursive: true, force: true });
     }
   });
+
+  it('settings_round_trip_over_http', async () => {
+    const put = await fetch(`${server.url}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'llamacpp/qwen3.6' }),
+    });
+    expect(put.status).toBe(200);
+    expect(await put.json()).toEqual({ model: 'llamacpp/qwen3.6' });
+
+    const get = await fetch(`${server.url}/settings`);
+    expect(await get.json()).toEqual({ model: 'llamacpp/qwen3.6' });
+
+    // An explicit null (or empty string) clears the field.
+    const clear = await fetch(`${server.url}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: null }),
+    });
+    expect(await clear.json()).toEqual({});
+
+    // Malformed: a non-string model.
+    const bad = await fetch(`${server.url}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 42 }),
+    });
+    expect(bad.status).toBe(400);
+  });
 })

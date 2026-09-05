@@ -21,6 +21,8 @@ export interface AgentTurnSpec {
   mcpScriptPath: string;
   /** The shipped agent the runtime loads (`--agent <name>`). */
   agentName: string;
+  /** The configured model override (settings); absent = the runtime's default. */
+  model?: string;
   /** Wall-clock cap for the turn (ms). */
   timeoutMs: number;
   /** Aborted when the run is stopped — the runtime's process is killed. */
@@ -30,7 +32,9 @@ export interface AgentTurnSpec {
 /** Streamed turn output. Deltas are transient; completes are durable. */
 export type AgentTurnEvent =
   | { kind: 'messageDelta'; messageId: string; delta: string }
-  | { kind: 'messageComplete'; messageId: string; text: string };
+  | { kind: 'messageComplete'; messageId: string; text: string }
+  | { kind: 'toolCall'; toolCallId: string; toolName: string; args?: unknown }
+  | { kind: 'toolResult'; toolCallId: string; content: string; isError: boolean };
 
 export interface AgentTurnOutcome {
   ok: boolean;

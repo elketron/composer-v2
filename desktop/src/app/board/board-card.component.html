@@ -16,19 +16,21 @@
     </span>
     @if (blocked()) {
       <span class="lock" [title]="lockTooltip()">
-        <lucide-icon [img]="icons.lock" [size]="10" />
+        <lucide-icon [img]="icons.lock" [size]="12" />
         {{ card().blockedBy.length }}
       </span>
     }
     @if (run(); as runState) {
-      <span
+      <button
+        type="button"
         class="run-chip"
         [class.waiting]="runState.status === 'waiting'"
-        [title]="runState.status === 'waiting' ? 'waiting at the approval gate' : 'pipeline running'"
+        [title]="runState.status === 'waiting' ? 'waiting at the approval gate — open the run view' : 'pipeline running — open the run view'"
+        (click)="openRun($event)"
       >
-        <lucide-icon [img]="runIcon()" [size]="10" />
+        <lucide-icon [img]="runIcon()" [size]="12" />
         {{ runLabel() }}
-      </span>
+      </button>
     }
   </div>
 
@@ -52,7 +54,7 @@
   <div class="row stats">
     @if (card().sessionId; as sessionId) {
       <span class="session" title="agent session">
-        <lucide-icon [img]="icons.session" [size]="10" />
+        <lucide-icon [img]="icons.session" [size]="12" />
         {{ sessionId }}
       </span>
     } @else {

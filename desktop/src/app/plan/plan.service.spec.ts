@@ -156,6 +156,34 @@ describe('PlanService', () => {
       expect(service.messages().map((m) => `${m.role}:${m.index}`)).toEqual(['user:1', 'agent:2']);
     });
 
+    it('clears the stream when the completion lands under a different index', () => {
+      // Observed live: deltas numbered the message 2, the completion called
+      // it 3 — the old index-matching left a stuck, duplicated bubble.
+      events.emit(
+        wireEvent('agentMessageDelta', { sessionId: 'S-1', messageIndex: 2, delta: 'half ' }, 'P-1'),
+      );
+      events.emit(
+        wireEvent('agentMessageDelta', { sessionId: 'S-1', messageIndex: 2, delta: 'answer' }, 'P-1'),
+      );
+      events.emit(
+        wireEvent(
+          'agentMessageComplete',
+          {
+            sessionId: 'S-1',
+            message: { index: 3, role: 'agent', text: 'half answer', at: new Date().toISOString() },
+          },
+          'P-1',
+        ),
+      );
+
+      expect(service.streamingMessage()).toBeNull();
+      expect(service.isSending()).toBe(false);
+      expect(service.messages().map((m) => `${m.role}:${m.index}`)).toEqual(['user:1', 'agent:3']);
+      // The transcript renders each slot once.
+      const keys = service.messages().map((m) => `${m.role}-${m.index}`);
+      expect(new Set(keys).size).toBe(keys.length);
+    });
+
     it('folds plan document updates wholesale', () => {
       emitDocument('<plan>\n<goal>a board</goal>\n</plan>');
       expect(service.planDocument()).toBe('<plan>\n<goal>a board</goal>\n</plan>');

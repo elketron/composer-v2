@@ -4,6 +4,7 @@ import { EventsClient } from '../core/events/events-client';
 import {
   DomainEventJson,
   WireRejectionCode,
+  assigneeFromWire,
   cardFromWire,
   cardTypeFromWire,
   cardTypeToWire,
@@ -92,11 +93,48 @@ export class BoardService {
   readonly rejectionPrompt = signal<RejectionPrompt | null>(null);
   private pendingRejection: PendingRejection | null = null;
 
+  /** Set while a create is in flight; the next cardCreated echo opens the panel. */
+  private openAfterCreate = false;
+
   constructor() {
     this.events.events$.subscribe((event) => this.fold(event));
   }
 
   // ---- Commands (optimistic; publish and revert on rejection) ----
+
+  /**
+   * RequestCardCreate: the only way to author a card outside the planner.
+   * The server allocates the id; the card lands via its `cardCreated` echo
+   * (and opens in the detail panel).
+   */
+  async createCard(draft: {
+    title: string;
+    description: string;
+    type: CardType;
+  }): Promise<{ ok: boolean; reason?: string }> {
+    const projectId = this.projectId();
+    if (!projectId) return { ok: false, reason: 'unavailable' };
+    const title = draft.title.trim();
+    if (title === '') return { ok: false, reason: 'a card needs a title' };
+
+    this.openAfterCreate = true;
+    const response = await this.events.publish({
+      projectId,
+      requestCardCreate: {
+        title,
+        ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
+        type: cardTypeToWire(draft.type),
+      },
+    });
+    if (!response.ok) {
+      this.openAfterCreate = false;
+      return {
+        ok: false,
+        reason: response.rejectionMessage ?? rejectionReason(response.rejectionCode),
+      };
+    }
+    return { ok: true };
+  }
 
   /**
    * RequestCardMove. Dragging to New unassigns; dragging from Approval back
@@ -196,14 +234,38 @@ export class BoardService {
     this.selectedId.set(null);
   }
 
-  // Assignment has no command in the event catalog yet; these patches are
-  // local-only and do not survive a restart (M2 concern).
-  assignToMe(cardId: string): void {
-    this.patch(cardId, { assignee: Assignee.human(), updatedAt: now() });
+  /** RequestCardAssign — persists with the card; survives reloads. */
+  async assignToMe(cardId: string): Promise<void> {
+    await this.assign(cardId, Assignee.human());
   }
 
-  unassign(cardId: string): void {
-    this.patch(cardId, { assignee: undefined, updatedAt: now() });
+  async unassign(cardId: string): Promise<void> {
+    await this.assign(cardId, undefined);
+  }
+
+  private async assign(cardId: string, assignee: Assignee | undefined): Promise<void> {
+    const card = this.cardsById().get(cardId);
+    const projectId = this.projectId();
+    if (!card || !projectId) return;
+    const before = card;
+
+    this.patch(cardId, { assignee, updatedAt: now() });
+    const response = await this.events.publish({
+      projectId,
+      requestCardAssign: {
+        cardId,
+        ...(assignee
+          ? {
+              assignee: {
+                role: assignee.role,
+                ...(assignee.model ? { model: assignee.model } : {}),
+                ...(assignee.effort ? { effort: assignee.effort } : {}),
+              },
+            }
+          : {}),
+      },
+    });
+    if (!response.ok) this.restoreIn(projectId, before);
   }
 
   /** Record the rejection prompt's comment and publish the deferred move. */
@@ -229,7 +291,13 @@ export class BoardService {
     switch (domainEventKind(event)) {
       case 'cardCreated': {
         const json = event.cardCreated?.card;
-        if (json) this.upsertIn(json.projectId || projectId, cardFromWire(json));
+        if (json) {
+          this.upsertIn(json.projectId || projectId, cardFromWire(json));
+          if (this.openAfterCreate) {
+            this.openAfterCreate = false;
+            this.selectedId.set(json.id ?? null);
+          }
+        }
         break;
       }
       case 'cardsCommitted': {
@@ -258,6 +326,15 @@ export class BoardService {
           type,
           subState: Card.initialSubState(type),
           stage: Lane.isValidFor(type, card.stage) ? card.stage : 'new',
+          updatedAt: event.occurredAt ?? card.updatedAt,
+        }));
+        break;
+      }
+      case 'cardAssigned': {
+        const payload = event.cardAssigned;
+        if (!payload?.cardId) break;
+        this.patchIn(projectId, payload.cardId, (card) => ({
+          assignee: assigneeFromWire(payload.assignee),
           updatedAt: event.occurredAt ?? card.updatedAt,
         }));
         break;

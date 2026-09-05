@@ -2,6 +2,7 @@ import { CdkDropListGroup } from '@angular/cdk/drag-drop';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 
 import { BoardFilter, Card, CardType, Lane, Stage } from '../core/models/board.models';
+import { CardCreatorComponent } from './card-creator.component';
 import { BoardColumnComponent } from './board-column.component';
 import { BoardSwimlaneComponent } from './board-swimlane.component';
 import { BoardService } from './board.service';
@@ -20,6 +21,7 @@ import { TypeSelectorComponent } from './type-selector.component';
   imports: [
     CdkDropListGroup,
     TypeSelectorComponent,
+    CardCreatorComponent,
     BoardColumnComponent,
     BoardSwimlaneComponent,
     CardPanelComponent,
@@ -31,6 +33,7 @@ export class BoardComponent {
   private readonly board = inject(BoardService);
 
   protected readonly filter = signal<BoardFilter>('all');
+  protected readonly creating = signal(false);
   protected readonly cards = this.board.cards;
   protected readonly blockedIds = this.board.blockedIds;
   protected readonly selectedCard = this.board.selectedCard;

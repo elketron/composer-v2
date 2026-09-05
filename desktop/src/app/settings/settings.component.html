@@ -1,4 +1,37 @@
-<div class="placeholder">
-  <span class="label">settings</span>
-  <span class="sub">planner model settings land in step 6</span>
+<div class="settings">
+  <header class="head">
+    <h1>settings</h1>
+  </header>
+
+  <section class="form">
+    <label class="field">
+      <span class="label">model</span>
+      <input
+        type="text"
+        name="model"
+        autocomplete="off"
+        placeholder="opencode default"
+        [ngModel]="model()"
+        (ngModelChange)="setModel($event)"
+        [disabled]="saving()"
+      />
+      <span class="hint">
+        the model planner and coder turns load — e.g. <code>llamacpp/qwen3.6</code>.
+        empty keeps opencode's own default; the provider endpoint lives in
+        opencode's config, not here.
+      </span>
+    </label>
+
+    @if (error(); as message) {
+      <p class="error" role="alert">{{ message }}</p>
+    }
+    @if (saved()) {
+      <p class="saved" role="status">saved</p>
+    }
+
+    <footer class="actions">
+      <button class="save" [disabled]="saving()" (click)="save()">save</button>
+      <button class="reload" [disabled]="loading()" (click)="reload()">reload</button>
+    </footer>
+  </section>
 </div>

@@ -8,9 +8,9 @@
     }
   </header>
 
-  @if (document()) {
+  @if (rendered(); as html) {
     <div class="document-body">
-      <pre class="document-text">{{ document() }}</pre>
+      <div class="document-text markdown" [innerHTML]="html"></div>
     </div>
   } @else {
     <div class="empty">

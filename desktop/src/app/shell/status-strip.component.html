@@ -1,14 +1,15 @@
 <footer class="status-strip">
-  <span class="agents">
-    @for (dot of agentDots(); track $index) {
-      <span class="dot pulse"></span>
-    }
-    {{ agentCount() }} agents running
-  </span>
+  @if (agentCount() > 0) {
+    <span class="agents">
+      @for (session of agentDots(); track session.sessionId) {
+        <span class="dot pulse" [title]="session.sessionId"></span>
+      }
+      {{ agentCount() }} {{ agentLabel() }}
+    </span>
+  }
 
   <span class="spacer"></span>
 
   <span class="hint model">{{ model() }}</span>
   <span class="hint"><kbd>tab</kbd> next card</span>
-  <span class="hint"><kbd>ctrl+k</kbd> command</span>
 </footer>

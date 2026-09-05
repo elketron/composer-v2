@@ -98,6 +98,12 @@ export class EventsClient {
   readonly events$ = this.eventsSubject.asObservable();
   readonly connected = signal(false);
 
+  /** The attached server's base URL; null when only a test transport exists. */
+  get serverBase(): string | null {
+    if (this.fallback) return null;
+    return this.link?.uri ?? null;
+  }
+
   constructor(
     @Optional() @Inject(EVENTS_TRANSPORT) providedTransport: EventsTransport | null,
     @Optional() @Inject(EVENTS_TRANSPORT_FACTORY) transportFactory: TransportFactory | null,

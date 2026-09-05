@@ -12,6 +12,7 @@ import type { Command } from './wire/commands.js';
 import type { Card, CardType, Pipeline, PipelineStep, Stage, SubStateStatus } from './wire/models.js';
 import { ALL_STAGES } from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
+import type { ComposerSettings, EventStore, SettingsPatch } from './store.js';
 
 /** The commands the MCP tools may issue (the planner's two, for now). */
 const MCP_COMMAND_TYPES: ReadonlySet<string> = new Set([
@@ -19,7 +20,7 @@ const MCP_COMMAND_TYPES: ReadonlySet<string> = new Set([
   'requestTicketsCreate',
 ]);
 
-export function router(bus: Bus, processor: Processor): Hono {
+export function router(bus: Bus, processor: Processor, store?: EventStore): Hono {
   const app = new Hono();
 
   // Permissive CORS (the v1 rule): the desktop renderer connects directly,
@@ -28,6 +29,37 @@ export function router(bus: Bus, processor: Processor): Hono {
   app.use('*', cors());
 
   app.get('/health', (context) => context.json({ status: 'SERVING' }));
+
+  // Global settings (config, not domain history): the desktop's settings
+  // view reads and writes these; the runner/planner read them per spawn.
+  app.get('/settings', async (context) => {
+    const settings = store ? await store.getSettings() : {};
+    return context.json(settings);
+  });
+  app.put('/settings', async (context) => {
+    if (store === undefined) {
+      return context.json({ error: 'settings unavailable' }, 503);
+    }
+    const body = (await context.req.json<unknown>().catch(() => undefined)) as Record<
+      string,
+      unknown
+    > | undefined;
+    if (typeof body !== 'object' || body === null) {
+      return context.json({ error: 'malformed settings' }, 400);
+    }
+    const patch: SettingsPatch = {};
+    if ('model' in body) {
+      const model = body['model'];
+      if (model !== null && typeof model !== 'string') {
+        return context.json({ error: 'malformed settings', detail: 'model must be a string' }, 400);
+      }
+      // A string sets (trimmed); null or '' clears the override.
+      const trimmed = typeof model === 'string' ? model.trim() : '';
+      patch.model = trimmed === '' ? null : trimmed;
+    }
+    const saved = await store.putSettings(patch);
+    return context.json(saved);
+  });
 
   // The MCP tools' validated-command route (D8): the composer MCP child
   // process issues plan-domain commands here. Whitelisted to the planning
@@ -159,8 +191,26 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
       const hasStage = 'stage' in body;
       const hasType = 'type' in body;
       const hasSubState = 'subState' in body;
+      const hasAssignee = 'assignee' in body;
       // Exactly one mutation field must be present.
-      if (Number(hasStage) + Number(hasType) + Number(hasSubState) !== 1) return null;
+      if (Number(hasStage) + Number(hasType) + Number(hasSubState) + Number(hasAssignee) !== 1)
+        return null;
+      if (hasAssignee) {
+        // An object assigns ({role: 'human'} for the desktop's "assign to
+        // me"); null/absent-value unassigns.
+        const raw = body['assignee'];
+        const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null;
+        const role = record ? readString(record, 'role') : undefined;
+        const assignee =
+          record && role
+            ? {
+                role,
+                ...(readString(record, 'model') ? { model: readString(record, 'model') } : {}),
+                ...(readString(record, 'effort') ? { effort: readString(record, 'effort') } : {}),
+              }
+            : undefined;
+        return { type: 'requestCardAssign', cardId: id, ...(assignee ? { assignee } : {}) };
+      }
       if (hasStage) {
         return {
           type: 'requestCardMove',

@@ -153,4 +153,8 @@ export interface RunProgress {
   readonly status: 'running' | 'waiting';
   readonly stepId?: string;
   readonly stepKind?: PipelineStepKind;
+  /** RFC 3339 timestamp of the current step's start (the run view's elapsed). */
+  readonly stepStartedAt?: string;
+  /** The agent session the current agent step opened (the run view's transcript). */
+  readonly sessionId?: string;
 }

@@ -203,4 +203,37 @@ describe('PipelineService', () => {
     events.respondWith({ ok: false, rejectionMessage: 'nope' });
     expect(await service.run('PL-1', 'T-1')).toBe(false);
   });
+
+  it('streams the run transcript and command output for the run view', () => {
+    const service = create();
+    activate('P-1');
+
+    emit({ id: 'r1', projectId: 'P-1', occurredAt: '2026-09-05T00:00:00Z', pipelineRunStarted: { cardId: 'T-1', pipelineId: 'PL-1' } });
+    emit({ id: 'r2', projectId: 'P-1', occurredAt: '2026-09-05T00:00:01Z', agentSessionStarted: { cardId: 'T-1', sessionId: 'A-1', agentKind: 'coder', startedAt: '2026-09-05T00:00:01Z' } });
+    emit({ id: 'r3', projectId: 'P-1', occurredAt: '2026-09-05T00:00:02Z', agentMessageDelta: { sessionId: 'A-1', messageIndex: 1, delta: 'working ' } });
+    emit({ id: 'r4', projectId: 'P-1', occurredAt: '2026-09-05T00:00:03Z', agentMessageDelta: { sessionId: 'A-1', messageIndex: 1, delta: 'on it' } });
+    emit({ id: 'r5', projectId: 'P-1', occurredAt: '2026-09-05T00:00:04Z', agentToolCall: { sessionId: 'A-1', toolCallId: 'c1', toolName: 'write', args: { path: 'src/x.ts' } } });
+    emit({ id: 'r6', projectId: 'P-1', occurredAt: '2026-09-05T00:00:05Z', agentToolResult: { sessionId: 'A-1', toolCallId: 'c1', content: 'written', isError: false } });
+    emit({ id: 'r7', projectId: 'P-1', occurredAt: '2026-09-05T00:00:06Z', agentMessageComplete: { sessionId: 'A-1', message: { index: 1, role: 'agent', text: 'working on it', at: '' } } });
+    emit({ id: 'r8', projectId: 'P-1', occurredAt: '2026-09-05T00:00:07Z', commandOutput: { cardId: 'T-1', pipelineId: 'PL-1', stepId: 'st-2', line: 'npm test' } });
+
+    const transcript = service.transcriptFor('A-1');
+    expect(transcript).toHaveLength(3);
+    expect(transcript[0]).toMatchObject({ kind: 'message', streaming: true, text: 'working on it' });
+    expect(transcript[1]).toMatchObject({ kind: 'tool', toolName: 'write' });
+    expect(transcript[2]).toMatchObject({ kind: 'message', streaming: false, text: 'working on it' });
+    const tool = transcript[1] as { kind: 'tool'; result?: { content: string } };
+    expect(tool.result?.content).toBe('written');
+    expect(service.runForCard('T-1')?.sessionId).toBe('A-1');
+    expect(service.commandOutputFor('T-1')).toEqual([{ stepId: 'st-2', line: 'npm test' }]);
+
+    // The run view keys nothing for unknown sessions (the planner's stream
+    // is plan.service's).
+    emit({ id: 'r9', projectId: 'P-1', occurredAt: '2026-09-05T00:00:08Z', agentMessageDelta: { sessionId: 'S-1', messageIndex: 1, delta: 'planning…' } });
+    expect(service.transcriptFor('S-1')).toEqual([]);
+
+    // A fresh run clears the build pane.
+    emit({ id: 'r10', projectId: 'P-1', occurredAt: '2026-09-05T00:00:09Z', pipelineRunStarted: { cardId: 'T-1', pipelineId: 'PL-1' } });
+    expect(service.commandOutputFor('T-1')).toEqual([]);
+  });
 });

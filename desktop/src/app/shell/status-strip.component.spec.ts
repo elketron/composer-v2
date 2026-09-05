@@ -4,9 +4,9 @@ import {
   FakeEventsClient,
   provideFakeEventsClient,
   seedProject,
+  wireEvent,
 } from '../core/events/events-client.fake';
-import { Lane } from '../core/models/board.models';
-import { BoardService } from '../board/board.service';
+import { PipelineService } from '../pipelines/pipeline.service';
 import { StatusStripComponent } from './status-strip.component';
 
 describe('StatusStripComponent', () => {
@@ -19,7 +19,7 @@ describe('StatusStripComponent', () => {
       providers: [provideFakeEventsClient(events)],
     }).compileComponents();
     // Instantiate before seeding: folds only see events after subscription.
-    TestBed.inject(BoardService);
+    TestBed.inject(PipelineService);
     seedProject(events, 'P-1');
   });
 
@@ -29,23 +29,64 @@ describe('StatusStripComponent', () => {
     return fixture;
   }
 
-  it('shows one agent per enabled automation lane by default', async () => {
+  function startSession(sessionId: string): void {
+    events.emit(
+      wireEvent('agentSessionStarted', {
+        sessionId,
+        cardId: 'T-1',
+        agentKind: 'coder',
+        startedAt: new Date().toISOString(),
+      }),
+    );
+  }
+
+  it('hides the agents block while nothing runs', async () => {
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.textContent).toContain(`${Lane.AGENT_OWNED.size} agents running`);
-    expect(el.querySelectorAll('.agents .dot').length).toBe(Lane.AGENT_OWNED.size);
+    expect(el.querySelector('.agents')).toBeNull();
   });
 
-  it('tracks automation toggles (mvp.md acceptance 13)', async () => {
-    const service = TestBed.inject(BoardService);
+  it('counts actually running agent sessions', async () => {
     const fixture = await render();
-
-    service.toggleAutomation('security');
-    service.toggleAutomation('review');
+    startSession('A-1');
+    startSession('A-2');
     await fixture.whenStable();
 
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.textContent).toContain(`${Lane.AGENT_OWNED.size - 2} agents running`);
-    expect(el.querySelectorAll('.agents .dot').length).toBe(Lane.AGENT_OWNED.size - 2);
+    expect(el.textContent).toContain('2 agents running');
+    expect(el.querySelectorAll('.agents .dot').length).toBe(2);
+  });
+
+  it('singularizes the label for one session', async () => {
+    const fixture = await render();
+    startSession('A-1');
+    await fixture.whenStable();
+
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.textContent).toContain('1 agent running');
+  });
+
+  it('drops a session once it ends', async () => {
+    const fixture = await render();
+    startSession('A-1');
+    await fixture.whenStable();
+    events.emit(
+      wireEvent('agentSessionEnded', {
+        sessionId: 'A-1',
+        cardId: 'T-1',
+        status: 'ended',
+        endedAt: new Date().toISOString(),
+      }),
+    );
+    await fixture.whenStable();
+
+    expect((fixture.nativeElement as HTMLElement).querySelector('.agents')).toBeNull();
+  });
+
+  it('shows the model and the tab hint, not the unimplemented command hint', async () => {
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.textContent).toContain('tab');
+    expect(el.textContent).not.toContain('ctrl+k');
   });
 });

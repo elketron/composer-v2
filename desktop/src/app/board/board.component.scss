@@ -19,6 +19,23 @@
   flex: none;
 }
 
+.new-card {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--text-dim);
+  }
+}
+
 .columns {
   display: flex;
   gap: 8px;

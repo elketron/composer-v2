@@ -31,6 +31,8 @@ export interface RunnerOptions {
   commandTimeoutMs?: number;
   /** Wall-clock cap per agent step (default 10 minutes). */
   agentTimeoutMs?: number;
+  /** The settings provider — the model override rides each agent step's spec. */
+  getModel?: () => Promise<{ model?: string }> | { model?: string };
 }
 
 interface GateDecision {
@@ -257,8 +259,34 @@ export class PipelineRunner {
       const child = spawn('/bin/sh', ['-c', step.command ?? ''], { cwd: directory });
       task.child = child;
       let output = '';
+      // Live output rides ephemeral `commandOutput` events (live-only, like
+      // agent deltas) — capped so a chatty build can't flood the stream.
+      const MAX_LIVE_LINES = 400;
+      let liveLines = 0;
+      let lineBuffer = '';
+      const streamLines = (chunk: string): void => {
+        lineBuffer += chunk;
+        let index: number;
+        while ((index = lineBuffer.indexOf('\n')) >= 0) {
+          const line = lineBuffer.slice(0, index);
+          lineBuffer = lineBuffer.slice(index + 1);
+          if (liveLines < MAX_LIVE_LINES) {
+            liveLines++;
+            void this.bus
+              .publish(task.projectId, 'commandOutput', {
+                cardId: task.cardId,
+                pipelineId: task.pipelineId,
+                stepId: step.id,
+                line,
+              })
+              .catch(() => undefined);
+          }
+        }
+      };
       const capture = (chunk: Buffer): void => {
-        output = (output + chunk.toString()).slice(-8_000);
+        const text = chunk.toString();
+        output = (output + text).slice(-8_000);
+        streamLines(text);
       };
       child.stdout?.on('data', capture);
       child.stderr?.on('data', capture);
@@ -316,6 +344,7 @@ export class PipelineRunner {
     });
     this.agentSessions.set(`${runSeq}:${step.id}`, sessionId);
 
+    const settings = (await this.options.getModel?.()) ?? {};
     const spec: AgentTurnSpec = {
       projectId: task.projectId,
       sessionId,
@@ -324,10 +353,33 @@ export class PipelineRunner {
       serverUrl: this.options.serverUrl ?? '',
       mcpScriptPath: this.options.mcpScriptPath ?? '',
       agentName: `composer-${step.agentKind ?? 'coder'}`,
+      ...(settings.model ? { model: settings.model } : {}),
       timeoutMs: this.options.agentTimeoutMs,
       signal: task.abort.signal,
     };
     const onEvent = (event: AgentTurnEvent): void => {
+      if (event.kind === 'toolCall') {
+        void this.bus
+          .publish(task.projectId, 'agentToolCall', {
+            sessionId,
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            ...(event.args !== undefined ? { args: event.args as Record<string, unknown> } : {}),
+          })
+          .catch((error) => console.error('runner: failed to publish a tool call:', error));
+        return;
+      }
+      if (event.kind === 'toolResult') {
+        void this.bus
+          .publish(task.projectId, 'agentToolResult', {
+            sessionId,
+            toolCallId: event.toolCallId,
+            content: event.content,
+            isError: event.isError,
+          })
+          .catch((error) => console.error('runner: failed to publish a tool result:', error));
+        return;
+      }
       const body =
         event.kind === 'messageDelta'
           ? { sessionId, messageIndex: this.nextAgentMessageIndex(sessionId), delta: event.delta }

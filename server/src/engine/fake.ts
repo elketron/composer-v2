@@ -45,7 +45,14 @@ export class FakeEngine implements AgentEngine {
   ): Promise<AgentTurnOutcome> {
     this.toolCalls.push(spec);
     const turn = this.turns.shift();
-    const emit = (event: AgentTurnEvent): void => onEvent(event);
+    // The final message completes the streamed one (the real engine pairs a
+    // part's deltas and its complete on one id), so the scripted turn's
+    // return rides the last delta's messageId when there is one.
+    let lastDeltaId: string | undefined;
+    const emit = (event: AgentTurnEvent): void => {
+      if (event.kind === 'messageDelta') lastDeltaId = event.messageId;
+      onEvent(event);
+    };
     const tools: FakeTurnTools = {
       editDocument: (document) => editDocument(this.caller, spec.projectId, spec.sessionId, document),
       createTickets: (tickets) => createTickets(this.caller, spec.projectId, spec.sessionId, tickets),
@@ -56,7 +63,8 @@ export class FakeEngine implements AgentEngine {
     const result = await turn({ spec, tools, emit });
     if (typeof result === 'string') {
       // The turn's reply is its final message.
-      onEvent({ kind: 'messageComplete', messageId: `fake-${this.emitted++}`, text: result });
+      const messageId = lastDeltaId ?? `fake-${this.emitted++}`;
+      onEvent({ kind: 'messageComplete', messageId, text: result });
       return { ok: true, engineSessionId: `fake-${spec.sessionId}` };
     }
     return { ok: false, error: result.error };

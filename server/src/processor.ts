@@ -13,6 +13,7 @@ import {
   isLaneValid,
   stageCsName,
   subStateFor,
+  type Assignee,
   type Card,
   type CardType,
   type ChatMessage,
@@ -60,6 +61,8 @@ export class Processor {
         return this.moveCard(projectId, command.cardId, command.toLane, command.override, command.comment);
       case 'requestCardTypeChange':
         return this.changeCardType(projectId, command.cardId, command.toType);
+      case 'requestCardAssign':
+        return this.assignCard(projectId, command.cardId, command.assignee);
       case 'requestCardArchive':
         return this.archiveCard(projectId, command.cardId);
       case 'requestSubStateUpdate':
@@ -276,6 +279,23 @@ export class Processor {
       cardId: found.card.id,
       from: found.card.type,
       to: toType,
+    });
+    return ok();
+  }
+
+  /** Assigns (or unassigns) a card; the assignee rides the event (v1 §3.4). */
+  private async assignCard(
+    scope: string | undefined,
+    cardId: string,
+    assignee: Assignee | undefined,
+  ): Promise<CommandOutcome> {
+    const found = this.findCard(scope, cardId);
+    if (!found) {
+      return rejected('unknownCard', `Unknown card ${cardId}`);
+    }
+    await this.bus.publish(found.projectId, 'cardAssigned', {
+      cardId: found.card.id,
+      ...(assignee ? { assignee } : {}),
     });
     return ok();
   }

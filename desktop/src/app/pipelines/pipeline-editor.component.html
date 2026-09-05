@@ -29,7 +29,7 @@
 
       <div class="steps">
         @for (step of draft.steps; track $index) {
-          <div class="step" [class.invalid]="validate(draft.name, draft.steps) !== null">
+          <div class="step" [class.invalid]="showError()">
             <div class="step-head">
               <span class="index">{{ $index + 1 }}</span>
               <select
@@ -49,13 +49,13 @@
               />
               <span class="spacer"></span>
               <button class="mini" (click)="moveStep($index, -1)" [disabled]="$index === 0" title="move up">
-                <lucide-icon [img]="icons.up" [size]="11" />
+                <lucide-icon [img]="icons.up" [size]="12" />
               </button>
               <button class="mini" (click)="moveStep($index, 1)" [disabled]="$index === draft.steps.length - 1" title="move down">
-                <lucide-icon [img]="icons.down" [size]="11" />
+                <lucide-icon [img]="icons.down" [size]="12" />
               </button>
               <button class="mini danger" (click)="removeStep($index)" title="remove step">
-                <lucide-icon [img]="icons.trash" [size]="11" />
+                <lucide-icon [img]="icons.trash" [size]="12" />
               </button>
             </div>
 
@@ -116,8 +116,10 @@
         </button>
       </div>
 
-      @if (draft.rejection; as rejection) {
-        <p class="rejection">{{ rejection }}</p>
+      @if (showError() && validationError(); as invalid) {
+        <p class="rejection" role="alert">{{ invalid }}</p>
+      } @else if (draft.rejection; as rejection) {
+        <p class="rejection" role="alert">{{ rejection }}</p>
       }
 
       <footer class="form-actions">
@@ -147,7 +149,7 @@
           <div class="row-actions">
             <button class="mini" (click)="edit(pipeline)" title="edit">edit</button>
             <button class="mini danger" (click)="remove(pipeline.id)" title="delete">
-              <lucide-icon [img]="icons.trash" [size]="11" />
+              <lucide-icon [img]="icons.trash" [size]="12" />
             </button>
           </div>
         </article>

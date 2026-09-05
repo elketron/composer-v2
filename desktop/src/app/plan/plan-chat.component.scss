@@ -104,27 +104,6 @@
   flex: none;
 }
 
-.composer-tools {
-  display: flex;
-  gap: 2px;
-}
-
-.composer-tools button {
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--border-strong);
-  background: transparent;
-  color: var(--text-faint);
-  font: inherit;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.composer-tools button:hover {
-  color: var(--text-dim);
-}
-
 .composer input {
   min-width: 0;
   flex: 1;

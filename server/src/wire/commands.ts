@@ -3,6 +3,7 @@
 // typed rejection (and nothing else). Ported from v1 with the v2 trims.
 
 import type {
+  Assignee,
   Card,
   CardType,
   Pipeline,
@@ -18,6 +19,7 @@ export type Command =
   | { type: 'requestCardsCreate'; cards: Card[] }
   | { type: 'requestCardMove'; cardId: string; toLane: Stage; override: boolean; comment?: string }
   | { type: 'requestCardTypeChange'; cardId: string; toType: CardType }
+  | { type: 'requestCardAssign'; cardId: string; assignee?: Assignee }
   | { type: 'requestCardArchive'; cardId: string }
   | { type: 'requestSubStateUpdate'; cardId: string; stage: string; status: SubStateStatus }
   | { type: 'requestAutomationToggle'; lane: Stage; on: boolean }

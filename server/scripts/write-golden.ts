@@ -40,6 +40,7 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
   cardCreated: { card },
   cardMoved: { cardId: 'T-1', from: 'new', to: 'coding', comment: 'needs tests' },
   cardTypeChanged: { cardId: 'T-1', from: 'coding', to: 'design' },
+  cardAssigned: { cardId: 'T-1', assignee: { role: 'human' } },
   cardArchived: { cardId: 'T-2' },
   subStateUpdated: { cardId: 'T-1', stage: 'implement', status: 'running' },
   dependencyStateChanged: { cardId: 'T-2', blocked: true, blockedBy: ['T-1'] },
@@ -122,6 +123,7 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
   pipelineStepFinished: { cardId: 'T-1', pipelineId: 'PL-1', stepId: 'st-1', ok: true },
   pipelineRunEnded: { cardId: 'T-1', pipelineId: 'PL-1', status: 'completed' as const },
   pipelineGateResponded: { cardId: 'T-1', approved: true, comment: 'ship it' },
+  commandOutput: { cardId: 'T-1', pipelineId: 'PL-1', stepId: 'st-2', line: 'npm test' },
 };
 
 const frames = EVENT_NAMES.map((name, index) =>

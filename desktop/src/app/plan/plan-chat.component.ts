@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { PlanService } from './plan.service';
@@ -16,12 +16,13 @@ export class PlanChatComponent {
   protected readonly messages = this.plan.messages;
   protected readonly streamingMessage = this.plan.streamingMessage;
   protected readonly sending = this.plan.isSending;
-  protected draft = '';
+  // A signal so clearing it after send repaints under zoneless CD.
+  protected readonly draft = signal('');
 
   protected send(): void {
-    const text = this.draft;
+    const text = this.draft();
     void this.plan.sendMessage(text).then((sent) => {
-      if (sent) this.draft = '';
+      if (sent) this.draft.set('');
     });
   }
 

@@ -337,13 +337,32 @@ describe('BoardService', () => {
       expect(service.selectedCard()).toBeNull();
     });
 
-    it('assignToMe sets the human assignee locally and unassign clears it', () => {
-      service.assignToMe('T-1');
+    it('assignToMe publishes requestCardAssign and folds the echo', async () => {
+      await service.assignToMe('T-1');
       expect(service.cardsById().get('T-1')?.assignee?.isHuman).toBe(true);
-      service.unassign('T-1');
+      expect(events.lastCommand('requestCardAssign')).toMatchObject({
+        projectId: 'P-1',
+        requestCardAssign: { cardId: 'T-1', assignee: { role: 'human' } },
+      });
+
+      await service.unassign('T-1');
       expect(service.cardsById().get('T-1')?.assignee).toBeUndefined();
-      // Local-only: nothing published.
-      expect(events.published).toEqual([]);
+      // No assignee key on the DTO; the action mapping sends explicit null.
+      expect('assignee' in events.lastCommand('requestCardAssign')!.requestCardAssign!).toBe(false);
+    });
+
+    it('folds cardAssigned events from other writers', async () => {
+      events.emit(
+        wireEvent('cardAssigned', { cardId: 'T-1', assignee: { role: 'coder', model: 'm', effort: 'high' } }),
+      );
+      TestBed.tick();
+      const assignee = service.cardsById().get('T-1')?.assignee;
+      expect(assignee?.isHuman).toBe(false);
+      expect(assignee?.label).toContain('m · high');
+
+      events.emit(wireEvent('cardAssigned', { cardId: 'T-1' }));
+      TestBed.tick();
+      expect(service.cardsById().get('T-1')?.assignee).toBeUndefined();
     });
   });
 

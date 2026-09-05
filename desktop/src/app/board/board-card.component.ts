@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
+import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { Bot, Lock, MessageSquare, SquareCheck, Terminal } from 'lucide-angular';
 
@@ -27,6 +28,7 @@ import { PipelineService } from '../pipelines/pipeline.service';
 })
 export class BoardCardComponent {
   private readonly pipelines = inject(PipelineService);
+  private readonly router = inject(Router);
 
   readonly card = input.required<Card>();
   readonly blocked = input(false);
@@ -79,5 +81,11 @@ export class BoardCardComponent {
 
   protected activate(): void {
     this.activated.emit(this.card());
+  }
+
+  /** The run chip opens the full-page run view (not the card panel). */
+  protected openRun(event: MouseEvent): void {
+    event.stopPropagation();
+    void this.router.navigate(['/run', this.card().id]);
   }
 }

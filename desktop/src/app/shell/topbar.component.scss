@@ -56,6 +56,9 @@
   display: flex;
   color: var(--text-faint);
   line-height: 1;
+  /* Keep the glyph small but the click target comfortable. */
+  padding: 6px;
+  margin: -6px;
 }
 
 .tab .directory:hover {
@@ -66,6 +69,8 @@
   color: var(--text-faint);
   visibility: hidden;
   line-height: 1;
+  padding: 6px 8px;
+  margin: -6px -8px;
 }
 
 .tab:hover .close,

@@ -26,6 +26,8 @@ export interface PlanningOptions {
   serverUrl?: string;
   /** Absolute path to composer's MCP server script. */
   mcpScriptPath?: string;
+  /** The settings provider — the model override rides each turn's spec. */
+  getModel?: () => Promise<{ model?: string }> | { model?: string };
 }
 
 export class PlanningOrchestrator {
@@ -34,6 +36,15 @@ export class PlanningOrchestrator {
   private readonly options: Required<Pick<PlanningOptions, 'agentName' | 'timeoutMs'>> & PlanningOptions;
   /** Session id → user-message count at the in-flight turn's start (v1 InFlight). */
   private readonly inFlight = new Map<string, number>();
+  /**
+   * Transcript index reservations, keyed by session then engine messageId:
+   * a message's deltas and its completion must agree on one index (the
+   * desktop keys the live bubble on it), and successive messages of one
+   * turn must not collide even when the fold lags the (synchronous) emit
+   * stream. `lastReserved` keeps the allocation monotonic per session.
+   */
+  private readonly reservedIndex = new Map<string, Map<string, number>>();
+  private readonly lastReserved = new Map<string, number>();
   /** Session id → the runtime's own session id (continuity, process lifetime). */
   private readonly engineSessions = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
@@ -76,6 +87,8 @@ export class PlanningOrchestrator {
       await this.turnLoop(projectId, sessionId, count, text);
     } finally {
       this.inFlight.delete(sessionId);
+      this.reservedIndex.delete(sessionId);
+      this.lastReserved.delete(sessionId);
     }
   }
 
@@ -101,6 +114,7 @@ export class PlanningOrchestrator {
         }
       }
 
+      const settings = (await this.options.getModel?.()) ?? {};
       const spec: AgentTurnSpec = {
         projectId,
         sessionId,
@@ -112,6 +126,7 @@ export class PlanningOrchestrator {
         serverUrl: this.options.serverUrl ?? '',
         mcpScriptPath: this.options.mcpScriptPath ?? '',
         agentName: this.options.agentName ?? PLANNER_AGENT_NAME,
+        ...(settings.model ? { model: settings.model } : {}),
         timeoutMs: this.options.timeoutMs,
       };
       const outcome = await this.engine.run(spec, (event) =>
@@ -126,6 +141,7 @@ export class PlanningOrchestrator {
         await this.publishAgentMessage(
           projectId,
           sessionId,
+          `failure:${sessionId}`,
           `The planner turn failed: ${outcome.error ?? 'unknown error'}`,
         );
         return;
@@ -147,25 +163,44 @@ export class PlanningOrchestrator {
       if (!found) return;
       void this.bus.publish(projectId, 'agentMessageDelta', {
         sessionId,
-        messageIndex: nextMessageIndex(found.session),
+        messageIndex: this.reserveIndex(sessionId, event.messageId, found.session),
         delta: event.delta,
       });
       return;
     }
-    void this.publishAgentMessage(projectId, sessionId, event.text);
+    if (event.kind !== 'messageComplete') return;
+    void this.publishAgentMessage(projectId, sessionId, event.messageId, event.text);
   }
 
   private async publishAgentMessage(
     projectId: string,
     sessionId: string,
+    messageId: string,
     text: string,
   ): Promise<void> {
     const found = this.sessionOf(projectId, sessionId);
     if (!found) return;
+    const index = this.reserveIndex(sessionId, messageId, found.session);
     await this.bus.publish(projectId, 'agentMessageComplete', {
       sessionId,
-      message: { index: nextMessageIndex(found.session), role: 'agent', text, at: nowIso() },
+      message: { index, role: 'agent', text, at: nowIso() },
     });
+  }
+
+  /** The message's transcript index (reserved once per engine messageId). */
+  private reserveIndex(
+    sessionId: string,
+    messageId: string,
+    session: { messages: { index: number }[] },
+  ): number {
+    const byMessage = this.reservedIndex.get(sessionId) ?? new Map<string, number>();
+    const existing = byMessage.get(messageId);
+    if (existing !== undefined) return existing;
+    const reserved = Math.max(nextMessageIndex(session), (this.lastReserved.get(sessionId) ?? 0) + 1);
+    byMessage.set(messageId, reserved);
+    this.reservedIndex.set(sessionId, byMessage);
+    this.lastReserved.set(sessionId, reserved);
+    return reserved;
   }
 
   private sessionOf(projectId: string, sessionId: string) {

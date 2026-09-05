@@ -361,6 +361,40 @@ describe('card commands', () => {
     expect(bus.state.byProject.get(projectId)?.cards.has(id)).toBe(false);
   });
 
+  it('assign_then_unassign_rides_cardAssigned_events', async () => {
+    const id = await createCard('owned', 'coding');
+
+    const assign = await processor.execute(projectId, {
+      type: 'requestCardAssign',
+      cardId: id,
+      assignee: { role: 'human' },
+    });
+    expect(assign.ok).toBe(true);
+    expect(recorded.at(-1)).toMatchObject({
+      eventType: 'cardAssigned',
+      body: { cardId: id, assignee: { role: 'human' } },
+    });
+    expect(card(id).assignee).toEqual({ role: 'human' });
+
+    const unassign = await processor.execute(projectId, {
+      type: 'requestCardAssign',
+      cardId: id,
+    });
+    expect(unassign.ok).toBe(true);
+    expect(recorded.at(-1)).toMatchObject({ eventType: 'cardAssigned', body: { cardId: id } });
+    expect(card(id).assignee).toBeUndefined();
+  });
+
+  it('assign_rejects_unknown_card', async () => {
+    const result = await processor.execute(projectId, {
+      type: 'requestCardAssign',
+      cardId: 'T-404',
+      assignee: { role: 'human' },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.rejection.code).toBe('unknownCard');
+  });
+
   it('sub_state_update_lands_on_the_card', async () => {
     const id = await createCard('progress', 'coding');
     const result = await processor.execute(projectId, {

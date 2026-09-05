@@ -34,20 +34,16 @@
   </div>
 
   <form class="composer" (submit)="$event.preventDefault(); send()">
-    <div class="composer-tools" aria-label="message tools">
-      <button type="button" title="attach">+</button>
-      <button type="button" title="format">T</button>
-      <button type="button" title="comment">#</button>
-    </div>
     <input
       name="message"
       autocomplete="off"
-      [(ngModel)]="draft"
+      [ngModel]="draft()"
+      (ngModelChange)="draft.set($event)"
       (keydown)="keydown($event)"
       placeholder="share a direction, ask a question, refine the plan…"
       [disabled]="sending()"
     />
     <span class="hint">enter to send</span>
-    <button type="submit" class="send" [disabled]="sending() || !draft.trim()">send</button>
+    <button type="submit" class="send" [disabled]="sending() || !draft().trim()">send</button>
   </form>
 </section>

@@ -175,11 +175,18 @@
   gap: 3px;
   margin-left: auto;
   padding: 1px 6px;
+  border: none;
+  font: inherit;
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.4px;
   color: var(--run);
   background: color-mix(in srgb, var(--run) 14%, transparent);
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, var(--run) 26%, transparent);
+  }
 
   &.waiting {
     color: var(--warn);

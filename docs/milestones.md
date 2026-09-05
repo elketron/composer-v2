@@ -302,6 +302,78 @@ Research notes:
   **not** gated by `COMPOSER_PLANNER_ENABLED` (only the planner is) — a
   run's agent step needs the runner alive even when planning is off.
 
+## S5 — UI slices: card create, assignment, settings, transcript integrity  ·  done (2026-09-05)
+
+Four gaps left by the S0–S4 smoke test (see `desktop/docs/ui-issues.md`), plus
+the desktop fix pass it drove (silent rejections surfaced, honest status
+strip/top bar, the 12px floor).
+
+- **Card creation UI**: the board's `+ new card` form (title, description,
+  type) publishes `requestCardCreate` — the desktop's first authoring path
+  outside the planner; the card lands via its echo and opens in the panel.
+- **Assignment on the wire**: `requestCardAssign` (29th event,
+  `cardAssigned`; assignee absent = unassigned) — processor, fold, action
+  mapping (`update:card` + `assignee`), golden regenerated, desktop folds
+  and publishes it; "assign to me"/"unassign" now survive reloads.
+- **Transcript integrity**: the planning orchestrator reserves one
+  transcript index per engine messageId (deltas and their completion always
+  pair; successive messages of a turn can't collide when the fold lags);
+  the FakeEngine pairs its final message with the last delta's id. The
+  desktop's fold clears the live bubble on any completion for the active
+  session and dedupes the transcript projection.
+- **Settings + model wiring**: a global `settings` table (config, not
+  domain history — outside the event log) with `GET/PUT /settings`; the
+  desktop settings view edits the model override, the top bar/status strip
+  show the live value, and the runner/planner pass it into each spawn's
+  `OPENCODE_CONFIG_CONTENT` (`model`).
+- **Plan document as markdown**: the document pane renders markdown (HTML
+  escaped first, so the XML skeleton displays literally); `marked` added.
+
+Exit criteria (met): `pnpm verify` (server 69, desktop 156 — 4 new spec
+files); the live smoke created a card from the UI, assigned it (server
+state carries the assignee across restart), saved a model override (badge
+followed, spawn spec carries it), and a fresh boot restored the transcript
+without duplicates.
+
+## S6 — The live run view  ·  done (2026-09-05)
+
+A full page for one card's pipeline run (`#/run/:cardId`): the agent output
+pane (streamed messages interleaved with tool calls and their results), the
+context column (usage counts, the card's sub-state checklist, changed
+files), and the command output pane — the three-pane mock (2026-09-05)
+reduced to what the wire can honestly carry. Entry points: a board card's
+run chip and the card panel's run box; a finished run stays readable
+(durable history + the outcome banner).
+
+- **Engine**: `AgentTurnEvent` gains `toolCall`/`toolResult`;
+  `OpenCodeEngine` announces a `tool_use` part once (args from
+  `state.input`) and settles it once on `completed`/`error` (output
+  post-hoc, `metadata.error` → `isError`).
+- **Wire**: `agentToolCall`/`agentToolResult` are now actually published
+  (the runner forwards them; the fold + snapshot support existed); new
+  ephemeral `commandOutput` (30th event, golden regenerated) — one line per
+  publish, capped at 400 lines per step, live-only like agent deltas.
+- **Desktop**: `PipelineService` folds the run transcript (per agent
+  session: deltas merge into a streaming bubble, completes finalize, tool
+  results patch their call) and the per-card command-output buffer
+  (cleared on a fresh run); `RunProgress` carries `sessionId` +
+  `stepStartedAt` (the elapsed clock); a finished run's outcome keeps its
+  session id so the transcript outlives the run, and the page falls back to
+  the card's newest session after a restart. `plan.service` now ignores
+  message events for sessions it doesn't own — a coder's stream can never
+  clobber the plan session (a latent mis-fold the run view would have
+  exposed).
+- **Routing**: `provideRouter` gained `withComponentInputBinding()` (route
+  params → component inputs).
+
+Exit criteria (met): `pnpm verify` (server 69, desktop 161); the live
+smoke ran the real coder on a card — messages and tool calls streamed into
+the run page with the elapsed clock ticking, an echo pipeline's
+`commandOutput` frames landed on the SSE stream, a saved model override
+reached opencode and was rejected by it (the settings→spawn path works end
+to end), stop killed the run mid-flight, and the page rebuilt the full
+transcript (16 messages · 33 tool calls) from the snapshot after a reload.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

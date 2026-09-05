@@ -23,7 +23,7 @@
               [style.--option-accent]="typeMeta[type].accentVar"
               (click)="changeType(type)"
             >
-              <lucide-icon [img]="typeMeta[type].icon" [size]="11" />
+              <lucide-icon [img]="typeMeta[type].icon" [size]="12" />
               {{ typeMeta[type].label }}
             </button>
           }
@@ -73,6 +73,9 @@
 
       <div class="field">
         <span class="label">pipeline run</span>
+        @if (rejection(); as message) {
+          <p class="run-rejection" role="alert">{{ message }}</p>
+        }
         @if (run(); as runState) {
           <div class="run-progress" [class.waiting]="runState.status === 'waiting'">
             <div class="run-row">
@@ -84,8 +87,11 @@
                   {{ runStep() ? runStep()!.id : 'working…' }}
                 }
               </span>
+              @if (elapsed()) {
+                <span class="run-elapsed">{{ elapsed() }}</span>
+              }
               <button class="run-stop" (click)="stopPipeline()" title="stop the run">
-                <lucide-icon [img]="icons.stop" [size]="10" />
+                <lucide-icon [img]="icons.stop" [size]="12" />
                 stop
               </button>
             </div>
@@ -97,6 +103,20 @@
                 @if (step.kind === 'human' && step.description) { · {{ step.description }} }
               </p>
             }
+
+            <div class="run-open">
+              <button
+                class="open-run"
+                (click)="openRunView()"
+                title="the full-page run view"
+              >
+                open the run view
+              </button>
+              <span class="run-open-hint">
+                {{ transcript().length }} transcript entries · {{ buildOutput().length }} output lines
+              </span>
+            </div>
+
             @if (runState.status === 'waiting') {
               <div class="gate">
                 <input
@@ -112,6 +132,11 @@
             }
           </div>
         } @else if (pipelineOptions().length > 0) {
+          @if (lastRun(); as outcome) {
+            <p class="run-outcome" [class.failed]="outcome.status === 'failed'">
+              {{ lastRunLabel(outcome) }}
+            </p>
+          }
           <div class="run-start">
             <select [(ngModel)]="selectedPipelineId">
               <option value="" disabled>run a pipeline…</option>
@@ -124,7 +149,7 @@
               [disabled]="selectedPipelineId() === ''"
               (click)="startPipeline()"
             >
-              <lucide-icon [img]="icons.run" [size]="10" />
+              <lucide-icon [img]="icons.run" [size]="12" />
               run
             </button>
           </div>
@@ -148,7 +173,7 @@
             <span class="meta-key">session</span>
             @if (card().sessionId; as sessionId) {
               <span class="session">
-                <lucide-icon [img]="icons.session" [size]="10" />
+                <lucide-icon [img]="icons.session" [size]="12" />
                 {{ sessionId }}
               </span>
             } @else {

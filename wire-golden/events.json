@@ -67,13 +67,25 @@
     "id": "e-04",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "cardAssigned",
+    "body": {
+      "cardId": "T-1",
+      "assignee": {
+        "role": "human"
+      }
+    }
+  },
+  {
+    "id": "e-05",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "cardArchived",
     "body": {
       "cardId": "T-2"
     }
   },
   {
-    "id": "e-05",
+    "id": "e-06",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "subStateUpdated",
@@ -84,7 +96,7 @@
     }
   },
   {
-    "id": "e-06",
+    "id": "e-07",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "dependencyStateChanged",
@@ -97,7 +109,7 @@
     }
   },
   {
-    "id": "e-07",
+    "id": "e-08",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "automationToggled",
@@ -107,7 +119,7 @@
     }
   },
   {
-    "id": "e-08",
+    "id": "e-09",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "planningSessionCreated",
@@ -123,7 +135,7 @@
     }
   },
   {
-    "id": "e-09",
+    "id": "e-10",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "userMessageReceived",
@@ -138,7 +150,7 @@
     }
   },
   {
-    "id": "e-10",
+    "id": "e-11",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentMessageDelta",
@@ -149,7 +161,7 @@
     }
   },
   {
-    "id": "e-11",
+    "id": "e-12",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentMessageComplete",
@@ -164,7 +176,7 @@
     }
   },
   {
-    "id": "e-12",
+    "id": "e-13",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "planDocumentUpdated",
@@ -174,7 +186,7 @@
     }
   },
   {
-    "id": "e-13",
+    "id": "e-14",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "planningSessionCompleted",
@@ -183,7 +195,7 @@
     }
   },
   {
-    "id": "e-14",
+    "id": "e-15",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "cardsCommitted",
@@ -213,7 +225,7 @@
     }
   },
   {
-    "id": "e-15",
+    "id": "e-16",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "projectCreated",
@@ -227,7 +239,7 @@
     }
   },
   {
-    "id": "e-16",
+    "id": "e-17",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "projectDirectoryChanged",
@@ -237,7 +249,7 @@
     }
   },
   {
-    "id": "e-17",
+    "id": "e-18",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "projectActivated",
@@ -246,7 +258,7 @@
     }
   },
   {
-    "id": "e-18",
+    "id": "e-19",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentSessionStarted",
@@ -258,7 +270,7 @@
     }
   },
   {
-    "id": "e-19",
+    "id": "e-20",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentSessionEnded",
@@ -270,7 +282,7 @@
     }
   },
   {
-    "id": "e-20",
+    "id": "e-21",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentToolCall",
@@ -285,7 +297,7 @@
     }
   },
   {
-    "id": "e-21",
+    "id": "e-22",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentToolResult",
@@ -297,7 +309,7 @@
     }
   },
   {
-    "id": "e-22",
+    "id": "e-23",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineSaved",
@@ -331,7 +343,7 @@
     }
   },
   {
-    "id": "e-23",
+    "id": "e-24",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineDeleted",
@@ -340,7 +352,7 @@
     }
   },
   {
-    "id": "e-24",
+    "id": "e-25",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineRunStarted",
@@ -350,7 +362,7 @@
     }
   },
   {
-    "id": "e-25",
+    "id": "e-26",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineStepStarted",
@@ -362,7 +374,7 @@
     }
   },
   {
-    "id": "e-26",
+    "id": "e-27",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineStepFinished",
@@ -374,7 +386,7 @@
     }
   },
   {
-    "id": "e-27",
+    "id": "e-28",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineRunEnded",
@@ -385,7 +397,7 @@
     }
   },
   {
-    "id": "e-28",
+    "id": "e-29",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineGateResponded",
@@ -393,6 +405,18 @@
       "cardId": "T-1",
       "approved": true,
       "comment": "ship it"
+    }
+  },
+  {
+    "id": "e-30",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "commandOutput",
+    "body": {
+      "cardId": "T-1",
+      "pipelineId": "PL-1",
+      "stepId": "st-2",
+      "line": "npm test"
     }
   }
 ]

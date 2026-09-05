@@ -1,0 +1,148 @@
+<section class="run-page">
+  <header class="run-head">
+    <button class="back" (click)="back()" title="back to the card">
+      <lucide-icon [img]="icons.back" [size]="12" />
+      card
+    </button>
+
+    @if (card(); as cardState) {
+      <span class="id">{{ cardState.id }}</span>
+      <span class="title">{{ cardState.title }}</span>
+    } @else {
+      <span class="title muted">unknown card</span>
+    }
+
+    @if (run(); as runState) {
+      <span class="pill run-live">
+        {{ runPipeline()?.name ?? runState.pipelineId }}
+        · {{ runStep()?.id ?? 'working…' }}
+        @if (elapsed()) {
+          · {{ elapsed() }}
+        }
+      </span>
+      <button class="stop" (click)="stop()" title="stop the run">
+        <lucide-icon [img]="icons.stop" [size]="12" />
+        stop
+      </button>
+    } @else if (outcome(); as ended) {
+      <span class="pill" [class.failed]="ended.status === 'failed'">
+        {{ outcomeLabel(ended) }}
+      </span>
+    }
+  </header>
+
+  @if (card(); as cardState) {
+    <div class="panes">
+      <section class="pane output">
+        <header class="pane-head">
+          <span>agent output</span>
+          <span class="pane-meta">{{ messageCount() }} messages · {{ toolCount() }} tool calls</span>
+        </header>
+        <div class="pane-body" #outputPane>
+          @for (entry of transcript(); track $index) {
+            @switch (entry.kind) {
+              @case ('message') {
+                <p class="entry message" [class.streaming]="entry.streaming">
+                  {{ entry.text }}
+                  @if (entry.streaming) {
+                    <span class="stream-dot pulse"></span>
+                  }
+                </p>
+              }
+              @case ('tool') {
+                <div class="entry tool" [class.error]="entry.result?.isError">
+                  <span class="tool-name">
+                    <lucide-icon [img]="icons.tool" [size]="12" />
+                    {{ entry.toolName }}
+                  </span>
+                  @if (toolArgs(entry.args); as args) {
+                    <span class="tool-args">{{ args }}</span>
+                  }
+                  @if (entry.result; as result) {
+                    <span class="tool-result" [class.is-error]="result.isError">
+                      {{ toolResult(entry) }}
+                    </span>
+                  }
+                </div>
+              }
+            }
+          } @empty {
+            <p class="pane-empty">the agent's messages and tool calls stream here</p>
+          }
+        </div>
+      </section>
+
+      <section class="pane context">
+        <header class="pane-head"><span>context</span></header>
+        <div class="pane-body">
+          <div class="context-block">
+            <span class="context-label">usage</span>
+            <div class="usage-rows">
+              <div class="usage-row">
+                <span>tool calls</span>
+                <span>{{ toolCount() }}</span>
+              </div>
+              <div class="usage-row">
+                <span>messages</span>
+                <span>{{ messageCount() }}</span>
+              </div>
+              <div class="usage-row">
+                <span>output lines</span>
+                <span>{{ buildOutput().length }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="context-block">
+            <span class="context-label">todo</span>
+            <div class="todo-rows">
+              @for (entry of cardState.checklist(); track entry.stage) {
+                <div class="todo-row {{ entry.status }}">
+                  <span class="status-dot" [class.pulse]="entry.status === 'running'"></span>
+                  <span class="todo-label">{{ entry.label }}</span>
+                  <span class="todo-status">{{ entry.status }}</span>
+                </div>
+              }
+            </div>
+          </div>
+
+          <div class="context-block">
+            <span class="context-label">modified files</span>
+            @if (cardState.fileStats; as stats) {
+              <div class="files-rows">
+                <div class="usage-row">
+                  <span>across {{ stats.files }} files</span>
+                  <span class="files-delta">
+                    <span class="add">+{{ stats.added }}</span>
+                    <span class="del">−{{ stats.removed }}</span>
+                  </span>
+                </div>
+              </div>
+            } @else {
+              <p class="pane-empty">no file changes yet</p>
+            }
+          </div>
+        </div>
+      </section>
+
+      <section class="pane build">
+        <header class="pane-head">
+          <span>build output</span>
+          <span class="pane-meta">{{ buildOutput().length }} lines</span>
+        </header>
+        <div class="pane-body mono" #buildPane>
+          @for (line of buildOutput(); track $index) {
+            <pre class="output-line">{{ line.line }}</pre>
+          } @empty {
+            <p class="pane-empty">command steps' output streams here</p>
+          }
+        </div>
+      </section>
+    </div>
+  } @else {
+    <div class="empty">
+      <span class="label">run</span>
+      <span>no card "{{ cardId() }}" on this project's board</span>
+    </div>
+  }
+</section>

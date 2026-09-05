@@ -53,6 +53,16 @@ export class PipelineEditorComponent {
     rejection: string | null;
   } | null>(null);
 
+  /** Client-side validation runs live, but only surfaces after a save attempt. */
+  private readonly attemptedSave = signal(false);
+
+  protected readonly validationError = computed(() => {
+    const draft = this.editing();
+    return draft ? this.validate(draft.name, draft.steps) : null;
+  });
+
+  protected readonly showError = computed(() => this.attemptedSave() && this.validationError() !== null);
+
   protected readonly icons = { workflow: Workflow, plus: Plus, trash: Trash2, save: Save, close: X, up: ArrowUp, down: ArrowDown };
 
   protected stepSummary(pipeline: Pipeline): string {
@@ -139,22 +149,26 @@ export class PipelineEditorComponent {
     this.updateStep(index, { retries: value === '' ? null : Number(value) });
   }
 
-  /** Client-side pre-validation (the server re-validates the same rule). */
+  /** Client-side pre-validation (the server re-validates the same rule).
+   * Defensive against non-string drafts: it runs inside the render loop, and
+   * a throw here aborts change detection for the whole view. */
   protected validate(name: string, steps: StepDraft[]): string | null {
-    if (name.trim() === '') return 'Pipeline name is required';
+    const nameText = text(name);
+    if (nameText === '') return 'Pipeline name is required';
     if (steps.length === 0) return 'A pipeline needs at least one step';
     const seen = new Set<string>();
     for (const [index, step] of steps.entries()) {
-      if (step.id.trim() === '') return `Step ${index + 1} needs an id`;
-      if (seen.has(step.id.trim())) return `Step id '${step.id.trim()}' appears twice`;
-      seen.add(step.id.trim());
+      const id = text(step.id);
+      if (id === '') return `Step ${index + 1} needs an id`;
+      if (seen.has(id)) return `Step id '${id}' appears twice`;
+      seen.add(id);
       const missing = new PipelineStep({
-        id: step.id,
+        id,
         kind: step.kind,
-        ...(step.agentKind ? { agentKind: step.agentKind } : {}),
-        ...(step.instructions ? { instructions: step.instructions } : {}),
-        ...(step.command ? { command: step.command } : {}),
-        ...(step.description ? { description: step.description } : {}),
+        ...(text(step.agentKind) ? { agentKind: text(step.agentKind) } : {}),
+        ...(text(step.instructions) ? { instructions: text(step.instructions) } : {}),
+        ...(text(step.command) ? { command: text(step.command) } : {}),
+        ...(text(step.description) ? { description: text(step.description) } : {}),
         ...(step.retries !== null ? { retries: step.retries } : {}),
       }).missingField();
       if (missing !== null) return `Step ${index + 1}: ${missing}`;
@@ -166,22 +180,23 @@ export class PipelineEditorComponent {
     const current = this.editing();
     const projectId = this.projectId();
     if (current === null || projectId === null) return;
+    this.attemptedSave.set(true);
     const invalid = this.validate(current.name, current.steps);
     if (invalid !== null) {
-      this.editing.set({ ...current, rejection: invalid });
+      this.editing.set({ ...current, rejection: null });
       return;
     }
     const pipeline = new Pipeline({
       id: current.id,
-      name: current.name.trim(),
+      name: text(current.name).trim(),
       steps: current.steps.map((step) =>
         new PipelineStep({
-          id: step.id.trim(),
+          id: text(step.id).trim(),
           kind: step.kind,
-          ...(step.agentKind.trim() ? { agentKind: step.agentKind.trim() } : {}),
-          ...(step.instructions.trim() ? { instructions: step.instructions.trim() } : {}),
-          ...(step.command.trim() ? { command: step.command.trim() } : {}),
-          ...(step.description.trim() ? { description: step.description.trim() } : {}),
+          ...(text(step.agentKind).trim() ? { agentKind: text(step.agentKind).trim() } : {}),
+          ...(text(step.instructions).trim() ? { instructions: text(step.instructions).trim() } : {}),
+          ...(text(step.command).trim() ? { command: text(step.command).trim() } : {}),
+          ...(text(step.description).trim() ? { description: text(step.description).trim() } : {}),
           ...(step.retries !== null ? { retries: step.retries } : {}),
         }),
       ),
@@ -189,9 +204,10 @@ export class PipelineEditorComponent {
     const ok = await this.pipelines.save(projectId, pipeline);
     if (!ok) {
       const latest = this.editing();
-      if (latest !== null) this.editing.set({ ...latest, rejection: 'the server rejected the pipeline' });
+      if (latest !== null) this.editing.set({ ...latest, rejection: this.pipelines.rejection() ?? 'the server rejected the pipeline' });
       return;
     }
+    this.attemptedSave.set(false);
     this.editing.set(null);
   }
 
@@ -216,4 +232,9 @@ export class PipelineEditorComponent {
   private emptyDraft(kind: PipelineStepKind): StepDraft {
     return { id: '', kind, agentKind: 'coder', instructions: '', command: '', description: '', retries: null };
   }
+}
+
+/** Coerce an editable field to text (validate runs in the render path). */
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : value === null || value === undefined ? '' : String(value);
 }

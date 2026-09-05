@@ -37,6 +37,18 @@ export class PipelineService {
   private readonly sessionsByProject = signal<ReadonlyMap<string, readonly AgentSessionView[]>>(
     new Map(),
   );
+  private readonly lastRunsByProject = signal<
+    ReadonlyMap<string, ReadonlyMap<string, RunOutcome>>
+  >(new Map());
+  private readonly transcriptsByProject = signal<
+    ReadonlyMap<string, ReadonlyMap<string, readonly RunTranscriptEntry[]>>
+  >(new Map());
+  private readonly commandOutputByProject = signal<
+    ReadonlyMap<string, ReadonlyMap<string, readonly CommandOutputLine[]>>
+  >(new Map());
+
+  /** The last command rejection, for the views to surface (cleared on success). */
+  readonly rejection = signal<string | null>(null);
 
   private readonly projectId = computed(() => this.shell.activeTabId());
 
@@ -52,6 +64,25 @@ export class PipelineService {
   /** The agent sessions of the active project, newest first (the coding tab). */
   readonly agentSessions = computed(
     () => this.sessionsByProject().get(this.projectId() ?? '') ?? [],
+  );
+
+  /** How each card's most recent run ended (the board's outcome projection). */
+  readonly lastRuns = computed(
+    () => this.lastRunsByProject().get(this.projectId() ?? '') ?? new Map<string, RunOutcome>(),
+  );
+
+  /** The run view's live transcript, per agent session id of the active project. */
+  readonly transcripts = computed(
+    () =>
+      this.transcriptsByProject().get(this.projectId() ?? '') ??
+      new Map<string, readonly RunTranscriptEntry[]>(),
+  );
+
+  /** The command steps' live output lines, per card id of the active project. */
+  readonly commandOutput = computed(
+    () =>
+      this.commandOutputByProject().get(this.projectId() ?? '') ??
+      new Map<string, readonly CommandOutputLine[]>(),
   );
 
   private readonly seenEventIds = new Map<string, true>();
@@ -92,6 +123,22 @@ export class PipelineService {
 
   runForCard(cardId: string): RunProgress | undefined {
     return this.runs().get(cardId);
+  }
+
+  /** How the card's most recent run ended (undefined = none this session). */
+  lastRunForCard(cardId: string): RunOutcome | undefined {
+    return this.lastRuns().get(cardId);
+  }
+
+  /** The live agent transcript for a session (the run view's output pane). */
+  transcriptFor(sessionId: string | undefined): readonly RunTranscriptEntry[] {
+    if (sessionId === undefined) return [];
+    return this.transcripts().get(sessionId) ?? [];
+  }
+
+  /** The command steps' live output for a card (the run view's build pane). */
+  commandOutputFor(cardId: string): readonly CommandOutputLine[] {
+    return this.commandOutput().get(cardId) ?? [];
   }
 
   pipelineById(id: string): Pipeline | undefined {
@@ -141,6 +188,16 @@ export class PipelineService {
           pipelineId: payload.pipelineId ?? '',
           status: 'running',
         });
+        // A fresh run starts with a clean build pane.
+        this.commandOutputByProject.update((map) => {
+          const cards = map.get(projectId);
+          if (cards === undefined || !cards.has(payload.cardId)) return map;
+          const nextCards = new Map(cards);
+          nextCards.delete(payload.cardId);
+          const next = new Map(map);
+          next.set(projectId, nextCards);
+          return next;
+        });
         break;
       }
       case 'pipelineStepStarted': {
@@ -153,12 +210,14 @@ export class PipelineService {
           stepId: payload.stepId,
           stepKind: payload.kind ?? 'agent',
           status: payload.kind === 'human' ? 'waiting' : 'running',
+          ...(event.occurredAt ? { stepStartedAt: event.occurredAt } : {}),
         });
         break;
       }
       case 'pipelineRunEnded': {
         const payload = event.pipelineRunEnded;
         if (!payload?.cardId) break;
+        const finished = this.runsByProject().get(projectId)?.get(payload.cardId);
         this.runsByProject.update((map) => {
           const runs = map.get(projectId);
           if (runs === undefined || !runs.has(payload.cardId)) return map;
@@ -166,6 +225,19 @@ export class PipelineService {
           nextRuns.delete(payload.cardId);
           const next = new Map(map);
           next.set(projectId, nextRuns);
+          return next;
+        });
+        this.lastRunsByProject.update((map) => {
+          const outcome: RunOutcome = {
+            status: payload.status === 'failed' ? 'failed' : 'completed',
+            // The finished run's agent session — the transcript outlives the run.
+            ...(finished?.sessionId ? { sessionId: finished.sessionId } : {}),
+            ...(payload.error ? { error: payload.error } : {}),
+          };
+          const cardOutcomes = new Map(map.get(projectId) ?? []);
+          cardOutcomes.set(payload.cardId, outcome);
+          const next = new Map(map);
+          next.set(projectId, cardOutcomes);
           return next;
         });
         break;
@@ -188,6 +260,15 @@ export class PipelineService {
           ]);
           return next;
         });
+        // The run view keys its transcript on this session.
+        const run = this.runsByProject().get(projectId)?.get(payload.cardId ?? '');
+        if (run !== undefined && payload.cardId) {
+          this.setRun(projectId, payload.cardId, {
+            ...run,
+            sessionId: payload.sessionId,
+            ...(payload.startedAt ? { stepStartedAt: payload.startedAt } : {}),
+          });
+        }
         break;
       }
       case 'agentSessionEnded': {
@@ -208,6 +289,90 @@ export class PipelineService {
         });
         break;
       }
+      // The run view's live transcript: agent-step messages and tool calls
+      // only (planning sessions fold in plan.service).
+      case 'agentMessageDelta': {
+        const payload = event.agentMessageDelta;
+        if (!this.isAgentSession(projectId, payload?.sessionId)) break;
+        this.appendToTranscript(projectId, payload!.sessionId, (entries) => {
+          const last = entries.at(-1);
+          if (last?.kind === 'message' && last.streaming) {
+            const merged = { ...last, text: last.text + (payload?.delta ?? '') };
+            return [...entries.slice(0, -1), merged];
+          }
+          return [
+            ...entries,
+            { kind: 'message', streaming: true, text: payload?.delta ?? '' } as RunTranscriptEntry,
+          ];
+        });
+        break;
+      }
+      case 'agentMessageComplete': {
+        const sessionId = event.agentMessageComplete?.sessionId;
+        if (!this.isAgentSession(projectId, sessionId)) break;
+        const text = event.agentMessageComplete?.message
+          ? agentMessageText(event.agentMessageComplete.message)
+          : '';
+        this.appendToTranscript(projectId, sessionId!, (entries) => {
+          // A streamed bubble finalizes; a cold complete (snapshot replay)
+          // appends.
+          const last = entries.at(-1);
+          if (last?.kind === 'message' && last.streaming) {
+            const final = { ...last, streaming: false, text: text || last.text };
+            return [...entries.slice(0, -1), final];
+          }
+          return [...entries, { kind: 'message', streaming: false, text } as RunTranscriptEntry];
+        });
+        break;
+      }
+      case 'agentToolCall': {
+        const payload = event.agentToolCall;
+        if (!this.isAgentSession(projectId, payload?.sessionId)) break;
+        this.appendToTranscript(projectId, payload!.sessionId, (entries) => [
+          ...entries,
+          {
+            kind: 'tool',
+            toolCallId: payload!.toolCallId,
+            toolName: payload!.toolName ?? 'tool',
+            args: payload!.args,
+          } as RunTranscriptEntry,
+        ]);
+        break;
+      }
+      case 'agentToolResult': {
+        const payload = event.agentToolResult;
+        if (!this.isAgentSession(projectId, payload?.sessionId)) break;
+        this.appendToTranscript(projectId, payload!.sessionId, (entries) => {
+          let index = -1;
+          for (let i = entries.length - 1; i >= 0; i--) {
+            const entry = entries[i];
+            if (entry.kind === 'tool' && entry.toolCallId === payload!.toolCallId) {
+              index = i;
+              break;
+            }
+          }
+          if (index < 0) return entries;
+          const patched = {
+            ...entries[index],
+            result: { content: payload!.content ?? '', isError: payload!.isError ?? false },
+          };
+          return [...entries.slice(0, index), patched, ...entries.slice(index + 1)];
+        });
+        break;
+      }
+      case 'commandOutput': {
+        const payload = event.commandOutput;
+        if (!payload?.cardId || typeof payload.line !== 'string') break;
+        this.commandOutputByProject.update((map) => {
+          const cards = new Map(map.get(projectId) ?? []);
+          const lines = [...(cards.get(payload.cardId) ?? []), { stepId: payload.stepId, line: payload.line }];
+          cards.set(payload.cardId, lines.slice(-COMMAND_OUTPUT_CAP));
+          const next = new Map(map);
+          next.set(projectId, cards);
+          return next;
+        });
+        break;
+      }
       // pipelineStepFinished: the outcome rides the step's sub-state and
       // the card's retries (the board folds those); gate responses flip
       // the run back to running, which the next step's start re-sets.
@@ -224,10 +389,44 @@ export class PipelineService {
     });
   }
 
+  /** True when the id is an agent session this service tracks (A-*). */
+  private isAgentSession(projectId: string, sessionId: string | undefined): boolean {
+    if (sessionId === undefined) return false;
+    return this.sessionsByProject().get(projectId)?.some((s) => s.sessionId === sessionId) ?? false;
+  }
+
+  private appendToTranscript(
+    projectId: string,
+    sessionId: string,
+    updater: (entries: readonly RunTranscriptEntry[]) => readonly RunTranscriptEntry[],
+  ): void {
+    this.transcriptsByProject.update((map) => {
+      const sessions = new Map(map.get(projectId) ?? []);
+      const entries = updater(sessions.get(sessionId) ?? []);
+      sessions.set(sessionId, entries.slice(-TRANSCRIPT_CAP));
+      const next = new Map(map);
+      next.set(projectId, sessions);
+      return next;
+    });
+  }
+
   private async publish(projectId: string, request: PublishRequest): Promise<boolean> {
     const response = await this.events.publish({ projectId, ...request });
-    return response.ok;
+    if (response.ok) {
+      if (this.rejection() !== null) this.rejection.set(null);
+      return true;
+    }
+    this.rejection.set(response.rejectionMessage ?? 'the server refused the request');
+    return false;
   }
+}
+
+/** How a card's most recent pipeline run ended. */
+export interface RunOutcome {
+  readonly status: 'completed' | 'failed';
+  /** The finished run's agent session (its transcript outlives the run). */
+  readonly sessionId?: string;
+  readonly error?: string;
 }
 
 export interface AgentSessionView {
@@ -237,6 +436,36 @@ export interface AgentSessionView {
   readonly status: 'running' | 'ended' | 'failed';
   readonly startedAt: string;
   readonly error?: string;
+}
+
+/** One line of a command step's streamed output. */
+export interface CommandOutputLine {
+  readonly stepId: string;
+  readonly line: string;
+}
+
+/** The run view's transcript: streamed messages interleaved with tool calls. */
+export type RunTranscriptEntry =
+  | {
+      readonly kind: 'message';
+      readonly messageId?: string;
+      readonly streaming: boolean;
+      readonly text: string;
+    }
+  | {
+      readonly kind: 'tool';
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly args?: unknown;
+      readonly result?: { readonly content: string; readonly isError: boolean };
+    };
+
+const COMMAND_OUTPUT_CAP = 400;
+const TRANSCRIPT_CAP = 300;
+
+function agentMessageText(message: unknown): string {
+  const record = message as { text?: unknown } | undefined;
+  return typeof record?.text === 'string' ? record.text : '';
 }
 
 type PublishRequest = {

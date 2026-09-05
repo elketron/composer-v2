@@ -378,6 +378,40 @@ describe('the planning turn', () => {
     expect(complete?.body).toMatchObject({ sessionId, message: { index: 2, role: 'agent', text: 'drafted the plan' } });
   });
 
+  it('two_messages_in_one_turn_get_distinct_indices_and_pair_with_their_deltas', async () => {
+    engine.enqueue(async ({ emit }) => {
+      emit({ kind: 'messageDelta', messageId: 'a', delta: 'first ' });
+      emit({ kind: 'messageComplete', messageId: 'a', text: 'first reply' });
+      emit({ kind: 'messageDelta', messageId: 'b', delta: 'second ' });
+      // The turn's return value is its final message (FakeEngine rule).
+      return 'second reply';
+    });
+
+    const sent = await processor.execute(projectId, {
+      type: 'requestUserMessage',
+      sessionId,
+      text: 'say two things',
+    });
+    expect(sent.ok).toBe(true);
+    await waitUntil(() => session(projectId, sessionId).messages.at(-1)?.text === 'second reply');
+
+    const agentEvents = recorded
+      .filter((frame) => frame.eventType === 'agentMessageDelta' || frame.eventType === 'agentMessageComplete')
+      .map((frame) => ({
+        type: frame.eventType,
+        index: (frame.body as { messageIndex?: number; message?: { index?: number } }).messageIndex
+          ?? (frame.body as { message?: { index?: number } }).message!.index!,
+      }));
+    // Deltas and their completion share one reserved index; the next
+    // message reserves the following one (the live corruption fix).
+    expect(agentEvents).toEqual([
+      { type: 'agentMessageDelta', index: 2 },
+      { type: 'agentMessageComplete', index: 2 },
+      { type: 'agentMessageDelta', index: 3 },
+      { type: 'agentMessageComplete', index: 3 },
+    ]);
+  });
+
   it('an_approval_turn_lands_tickets_and_completes_the_session', async () => {
     engine.enqueue(async ({ tools }) => {
       const result = await tools.editDocument('<plan><goal>board</goal></plan>');

@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
 import { ArrowLeft, Bot, MessageSquare, Play, Square, SquareCheck } from 'lucide-angular';
@@ -12,7 +13,7 @@ import {
   Lane,
   Stage,
 } from '../core/models/board.models';
-import { PipelineService } from '../pipelines/pipeline.service';
+import { PipelineService, RunOutcome } from '../pipelines/pipeline.service';
 import { BoardService } from './board.service';
 
 /**
@@ -33,6 +34,7 @@ import { BoardService } from './board.service';
 export class CardPanelComponent {
   private readonly board = inject(BoardService);
   private readonly pipelines = inject(PipelineService);
+  private readonly router = inject(Router);
 
   readonly card = input.required<Card>();
 
@@ -47,6 +49,12 @@ export class CardPanelComponent {
   // ---- Pipeline run (S4) ----
 
   protected readonly run = computed(() => this.pipelines.runForCard(this.card().id));
+
+  /** The last command rejection (run/stop/gate), for inline display. */
+  protected readonly rejection = this.pipelines.rejection;
+
+  /** How this card's most recent run ended (undefined = none this session). */
+  protected readonly lastRun = computed(() => this.pipelines.lastRunForCard(this.card().id));
 
   protected readonly runPipeline = computed(() => {
     const run = this.run();
@@ -72,6 +80,12 @@ export class CardPanelComponent {
 
   protected readonly gateComment = signal('');
 
+  // ---- The run (the full-page run view carries the live panes) ----
+
+  protected readonly transcript = computed(() => this.pipelines.transcriptFor(this.run()?.sessionId));
+
+  protected readonly buildOutput = computed(() => this.pipelines.commandOutputFor(this.card().id));
+
   protected readonly icons = {
     back: ArrowLeft,
     session: MessageSquare,
@@ -80,6 +94,21 @@ export class CardPanelComponent {
     gate: SquareCheck,
     agent: Bot,
   };
+
+  /** mm:ss since the current step started. */
+  protected elapsed(): string {
+    const startedIso = this.run()?.stepStartedAt;
+    const started = startedIso ? Date.parse(startedIso) : Number.NaN;
+    if (Number.isNaN(started)) return '';
+    const seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+  }
+
+  protected openRunView(): void {
+    void this.router.navigate(['/run', this.card().id]);
+  }
 
   protected laneLabel(lane: Stage): string {
     return Lane.label(lane);
@@ -115,7 +144,10 @@ export class CardPanelComponent {
 
   protected startPipeline(): void {
     const pipelineId = this.selectedPipelineId();
-    if (pipelineId !== '') void this.pipelines.run(pipelineId, this.card().id);
+    if (pipelineId === '') return;
+    void this.pipelines.run(pipelineId, this.card().id).then((ok) => {
+      if (ok) this.selectedPipelineId.set('');
+    });
   }
 
   protected stopPipeline(): void {
@@ -130,5 +162,11 @@ export class CardPanelComponent {
   protected rejectGate(): void {
     void this.pipelines.gateRespond(this.card().id, false, this.gateComment().trim() || undefined);
     this.gateComment.set('');
+  }
+
+  protected lastRunLabel(outcome: RunOutcome): string {
+    return outcome.status === 'failed'
+      ? `last run failed${outcome.error ? ' — ' + outcome.error : ''}`
+      : 'last run completed';
   }
 }

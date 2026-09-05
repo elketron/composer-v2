@@ -56,7 +56,7 @@ export async function boot(config: Config): Promise<{
   const [hostname, port] = config.addr.includes(':')
     ? (config.addr.split(':') as [string, string])
     : ['127.0.0.1', config.addr];
-  const server = serve({ fetch: router(bus, processor).fetch, hostname, port: Number(port) });
+  const server = serve({ fetch: router(bus, processor, store).fetch, hostname, port: Number(port) });
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -82,6 +82,7 @@ export async function boot(config: Config): Promise<{
       const orchestrator = new PlanningOrchestrator(bus, engine, {
         serverUrl: url,
         mcpScriptPath: mcpScriptPath(),
+        getModel: () => store.getSettings(),
       });
       orchestrator.start();
       stopPlanning = () => orchestrator.stop();
@@ -89,6 +90,7 @@ export async function boot(config: Config): Promise<{
     const runner = new PipelineRunner(bus, processor, engine, {
       serverUrl: url,
       mcpScriptPath: mcpScriptPath(),
+      getModel: () => store.getSettings(),
     });
     runner.start();
     stopRunner = () => runner.stop();
