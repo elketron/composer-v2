@@ -42,16 +42,18 @@
     </div>
   } @else {
     <form class="composer" (submit)="$event.preventDefault(); send()">
-      <input
+      <textarea
+        #composer
         name="message"
+        rows="1"
         autocomplete="off"
         [ngModel]="draft()"
-        (ngModelChange)="draft.set($event)"
+        (ngModelChange)="draft.set($event); resize(composer)"
         (keydown)="keydown($event)"
         placeholder="share a direction, ask a question, refine the plan…"
         [disabled]="sending()"
-      />
-      <span class="hint">enter to send</span>
+      ></textarea>
+      <span class="hint">enter to send · shift+enter for a newline</span>
       <button type="submit" class="send" [disabled]="sending() || !draft().trim()">send</button>
     </form>
   }

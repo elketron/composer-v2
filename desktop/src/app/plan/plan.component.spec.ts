@@ -42,7 +42,7 @@ describe('PlanComponent', () => {
     const fixture = TestBed.createComponent(PlanComponent);
     await fixture.whenStable();
     const element = fixture.nativeElement as HTMLElement;
-    const input = element.querySelector<HTMLInputElement>('app-plan-chat input[name="message"]')!;
+    const input = element.querySelector<HTMLTextAreaElement>('app-plan-chat textarea[name="message"]')!;
     input.value = 'Add a review step';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     fixture.detectChanges();

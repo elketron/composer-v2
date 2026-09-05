@@ -19,6 +19,7 @@ import { stepStageOf } from './fold.js';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
 import { ensureAgentFiles } from './agents.js';
+import { resolveModel } from './store.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
 import type { Card, Pipeline, PipelineStep } from './wire/models.js';
 
@@ -345,6 +346,8 @@ export class PipelineRunner {
     this.agentSessions.set(`${runSeq}:${step.id}`, sessionId);
 
     const settings = (await this.options.getModel?.()) ?? {};
+    const agentKind = step.agentKind ?? 'coder';
+    const model = resolveModel(settings, agentKind);
     const spec: AgentTurnSpec = {
       projectId: task.projectId,
       sessionId,
@@ -352,8 +355,8 @@ export class PipelineRunner {
       prompt: coderPrompt(card, step),
       serverUrl: this.options.serverUrl ?? '',
       mcpScriptPath: this.options.mcpScriptPath ?? '',
-      agentName: `composer-${step.agentKind ?? 'coder'}`,
-      ...(settings.model ? { model: settings.model } : {}),
+      agentName: `composer-${agentKind}`,
+      ...(model ? { model } : {}),
       timeoutMs: this.options.agentTimeoutMs,
       signal: task.abort.signal,
     };

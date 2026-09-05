@@ -4,6 +4,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { ArrowDown, ArrowUp, Plus, Save, Trash2, Workflow, X } from 'lucide-angular';
 
 import { ShellService } from '../shell/shell.service';
+import { SettingsService } from '../settings/settings.service';
 import {
   Pipeline,
   PipelineStep,
@@ -39,9 +40,13 @@ interface StepDraft {
 export class PipelineEditorComponent {
   private readonly shell = inject(ShellService);
   private readonly pipelines = inject(PipelineService);
+  private readonly settings = inject(SettingsService);
 
   protected readonly projectId = computed(() => this.shell.activeTabId());
   protected readonly list = computed(() => this.pipelines.pipelines());
+
+  /** The agent kinds the picker offers: the shipped two plus overrides. */
+  protected readonly agentKinds = this.settings.agentKinds;
 
   protected readonly kinds: readonly PipelineStepKind[] = ['agent', 'command', 'human'];
 

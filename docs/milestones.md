@@ -404,6 +404,23 @@ refusal, stale-lock reaping, and stranded-turn publishing are unit-tested
 against the real store; the live stack restarted cleanly through the
 gateway with the lock held by the spawned server.
 
+## S8 — Planning ergonomics  ·  done (2026-09-05)
+
+- **Per-agent models**: settings gain a per-agent map (`models`, keyed by
+  the bare agent kind) beside the default model; `resolveModel` picks
+  override → default, and the planner/coder spawns use it. The settings
+  view lists planner + coder rows, custom kinds are addable, and the
+  pipeline editor's agent-kind field offers the known kinds as a
+  type-to-filter list (`datalist`).
+- **Multi-line plan composer**: the single-line input becomes an
+  auto-growing textarea — Enter sends, Shift+Enter folds a newline,
+  height resets after send.
+
+Exit criteria (met): `pnpm verify` (server 76, desktop 167); the live
+smoke saved `models.planner` over HTTP (the resolution override is
+unit-tested at the orchestrator), the editor's picker listed the known
+kinds, and the composer held a newline through Shift+Enter.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

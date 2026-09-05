@@ -306,4 +306,42 @@ describe('the boot contract', () => {
     });
     expect(bad.status).toBe(400);
   });
+
+  it('per_agent_models_set_clear_and_replace', async () => {
+    const put = async (body: unknown): Promise<Record<string, unknown>> => {
+      const response = await fetch(`${server.url}/settings`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()) as Record<string, unknown>;
+    };
+
+    // A default plus per-agent overrides.
+    expect(await put({ model: 'default-model', models: { planner: 'planner-model', coder: 'coder-model' } })).toEqual({
+      model: 'default-model',
+      models: { planner: 'planner-model', coder: 'coder-model' },
+    });
+
+    // One key cleared; the default and the other override stay.
+    expect(await put({ models: { planner: null, coder: 'coder-model' } })).toEqual({
+      model: 'default-model',
+      models: { coder: 'coder-model' },
+    });
+
+    // A models patch replaces the whole map; empty values drop keys.
+    expect(await put({ models: { reviewer: 'review-model' } })).toEqual({
+      model: 'default-model',
+      models: { reviewer: 'review-model' },
+    });
+
+    // Malformed: a non-string per-agent value.
+    const bad = await fetch(`${server.url}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ models: { planner: 7 } }),
+    });
+    expect(bad.status).toBe(400);
+  });
 })

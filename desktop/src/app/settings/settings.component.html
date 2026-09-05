@@ -5,7 +5,7 @@
 
   <section class="form">
     <label class="field">
-      <span class="label">model</span>
+      <span class="label">default model</span>
       <input
         type="text"
         name="model"
@@ -16,11 +16,50 @@
         [disabled]="saving()"
       />
       <span class="hint">
-        the model planner and coder turns load — e.g. <code>llamacpp/qwen3.6</code>.
-        empty keeps opencode's own default; the provider endpoint lives in
-        opencode's config, not here.
+        what every agent loads unless it has its own override below — e.g.
+        <code>llamacpp/qwen3.6</code>. empty keeps opencode's own default; the
+        provider endpoint lives in opencode's config, not here.
       </span>
     </label>
+
+    <div class="field">
+      <span class="label">per-agent models</span>
+      <div class="agent-rows">
+        @for (kind of agentKinds(); track kind) {
+          <div class="agent-row">
+            <span class="agent-kind">{{ kind }}</span>
+            <input
+              type="text"
+              [ngModel]="models()[kind] || ''"
+              [ngModelOptions]="{ standalone: true }"
+              autocomplete="off"
+              [placeholder]="'opencode default'"
+              (ngModelChange)="setAgentModel(kind, $event)"
+              [disabled]="saving()"
+            />
+          </div>
+        }
+      </div>
+      <div class="add-row">
+        <input
+          type="text"
+          name="new-agent"
+          autocomplete="off"
+          placeholder="add an agent kind…"
+          [ngModel]="newAgent()"
+          (ngModelChange)="newAgent.set($event)"
+          (keydown.enter)="$event.preventDefault(); addAgent()"
+          [disabled]="saving()"
+        />
+        <button type="button" class="add" [disabled]="saving() || !newAgent().trim()" (click)="addAgent()">
+          add
+        </button>
+      </div>
+      <span class="hint">
+        overrides for one agent — the planner, the coder, or a pipeline step's
+        custom agent kind.
+      </span>
+    </div>
 
     @if (error(); as message) {
       <p class="error" role="alert">{{ message }}</p>

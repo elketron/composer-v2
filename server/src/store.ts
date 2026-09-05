@@ -30,13 +30,22 @@ interface EventRow {
 
 /** Global (not per-project) app settings. */
 export interface ComposerSettings {
-  /** The model opencode loads for planner/coder turns (its config owns the provider). */
+  /** The model every agent loads when no per-agent override exists. */
   model?: string;
+  /** Per-agent model overrides, keyed by the bare agent kind (planner, coder, …). */
+  models?: Record<string, string>;
 }
 
-/** A settings update: a value sets the field, null clears it, absent leaves it. */
+/** A settings update: a value sets the field, null clears it, absent leaves it.
+ * `models` (when present) replaces the whole per-agent map. */
 export interface SettingsPatch {
   model?: string | null;
+  models?: Record<string, string | null>;
+}
+
+/** The model an agent kind loads: its override, else the global default. */
+export function resolveModel(settings: ComposerSettings, agentKind: string): string | undefined {
+  return settings.models?.[agentKind] ?? settings.model;
 }
 
 export class EventStore {
@@ -64,11 +73,19 @@ export class EventStore {
   }
 
   private async loadSettings(): Promise<void> {
-    const [rows] = await this.db.query<{ model?: string | null }[][]>(
-      'SELECT model FROM settings:global;',
+    const [rows] = await this.db.query<{ model?: string | null; models?: Record<string, string> | null }[][]>(
+      'SELECT model, models FROM settings:global;',
     );
     const row = rows?.[0];
-    this.settings = typeof row?.model === 'string' && row.model !== '' ? { model: row.model } : {};
+    this.settings = {};
+    if (typeof row?.model === 'string' && row.model !== '') this.settings.model = row.model;
+    if (row?.models !== null && typeof row?.models === 'object') {
+      const models: Record<string, string> = {};
+      for (const [kind, model] of Object.entries(row.models)) {
+        if (typeof model === 'string' && model !== '') models[kind] = model;
+      }
+      if (Object.keys(models).length > 0) this.settings.models = models;
+    }
   }
 
   /**
@@ -157,21 +174,39 @@ export class EventStore {
 
   /** Global app settings, cached hot (the runner/planner read per spawn). */
   async getSettings(): Promise<ComposerSettings> {
-    return { ...this.settings };
+    return {
+      ...(this.settings.model !== undefined ? { model: this.settings.model } : {}),
+      ...(this.settings.models !== undefined ? { models: { ...this.settings.models } } : {}),
+    };
   }
 
-  /** Merges a validated patch and persists it (null clears a field). */
+  /** Merges a validated patch and persists it (null clears a field;
+   * a `models` patch replaces the whole per-agent map). */
   async putSettings(patch: SettingsPatch): Promise<ComposerSettings> {
     const next: ComposerSettings = {
       ...(this.settings.model !== undefined ? { model: this.settings.model } : {}),
-      ...(patch.model !== undefined ? { model: patch.model === null ? undefined : patch.model } : {}),
+      ...(this.settings.models !== undefined ? { models: { ...this.settings.models } } : {}),
     };
-    if (next.model === undefined) delete next.model;
-    await this.db.query('UPSERT settings:global SET model = $model;', {
+    if (patch.model !== undefined) {
+      if (patch.model === null || patch.model === '') delete next.model;
+      else next.model = patch.model;
+    }
+    if (patch.models !== undefined) {
+      const models: Record<string, string> = {};
+      for (const [kind, model] of Object.entries(patch.models)) {
+        const key = kind.trim();
+        const value = typeof model === 'string' ? model.trim() : '';
+        if (key !== '' && value !== '') models[key] = value;
+      }
+      if (Object.keys(models).length > 0) next.models = models;
+      else delete next.models;
+    }
+    await this.db.query('UPSERT settings:global SET model = $model, models = $models;', {
       model: next.model ?? null,
+      models: next.models ?? null,
     });
     this.settings = next;
-    return { ...next };
+    return this.getSettings();
   }
 
   async close(): Promise<void> {

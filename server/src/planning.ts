@@ -15,7 +15,15 @@ import type { Bus } from './bus.js';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
 import { ensureAgentFiles, PLANNER_AGENT_NAME } from './agents.js';
+import { resolveModel, type ComposerSettings } from './store.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
+
+/** The per-agent model for a turn's spec (override, else the default). */
+function modelFor(settings: ComposerSettings, agentName: string): string | undefined {
+  // Settings keys are bare agent kinds; the shipped agents are composer-*.
+  const kind = agentName.replace(/^composer-/, '');
+  return resolveModel(settings, kind);
+}
 
 export interface PlanningOptions {
   /** The shipped agent the turn loads. */
@@ -126,7 +134,9 @@ export class PlanningOrchestrator {
         serverUrl: this.options.serverUrl ?? '',
         mcpScriptPath: this.options.mcpScriptPath ?? '',
         agentName: this.options.agentName ?? PLANNER_AGENT_NAME,
-        ...(settings.model ? { model: settings.model } : {}),
+        ...(modelFor(settings, this.options.agentName ?? PLANNER_AGENT_NAME)
+          ? { model: modelFor(settings, this.options.agentName ?? PLANNER_AGENT_NAME) }
+          : {}),
         timeoutMs: this.options.timeoutMs,
       };
       const outcome = await this.engine.run(spec, (event) =>

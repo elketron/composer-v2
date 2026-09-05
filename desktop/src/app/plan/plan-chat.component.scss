@@ -124,7 +124,7 @@
 
 .composer {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   min-height: 42px;
   padding: 7px 0 9px;
@@ -132,6 +132,16 @@
   flex: none;
 }
 
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  overflow-y: auto;
+  max-height: 180px;
+  line-height: 1.5;
+}
+
+.composer textarea,
 .composer input {
   min-width: 0;
   flex: 1;
@@ -144,6 +154,7 @@
   font-size: 14px;
 }
 
+.composer textarea:focus,
 .composer input:focus {
   border-color: var(--accent);
 }

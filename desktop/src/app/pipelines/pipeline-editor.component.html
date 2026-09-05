@@ -1,3 +1,8 @@
+<datalist id="composer-agent-kinds">
+  @for (kind of agentKinds(); track kind) {
+    <option [value]="kind"></option>
+  }
+</datalist>
 <div class="editor">
   <header class="head">
     <lucide-icon [img]="icons.workflow" [size]="14" />
@@ -64,6 +69,7 @@
                 <div class="step-fields">
                   <input
                     type="text"
+                    list="composer-agent-kinds"
                     placeholder="agent kind (coder)"
                     [ngModel]="step.agentKind"
                     (ngModelChange)="updateStep($index, { agentKind: $event })"

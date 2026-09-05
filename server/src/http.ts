@@ -57,6 +57,27 @@ export function router(bus: Bus, processor: Processor, store?: EventStore): Hono
       const trimmed = typeof model === 'string' ? model.trim() : '';
       patch.model = trimmed === '' ? null : trimmed;
     }
+    if ('models' in body) {
+      const raw = body['models'];
+      if (raw !== null && typeof raw !== 'object') {
+        return context.json({ error: 'malformed settings', detail: 'models must be an object' }, 400);
+      }
+      if (raw === null) {
+        patch.models = {};
+      } else {
+        const models: Record<string, string | null> = {};
+        for (const [kind, value] of Object.entries(raw as Record<string, unknown>)) {
+          if (value !== null && typeof value !== 'string') {
+            return context.json(
+              { error: 'malformed settings', detail: `models.${kind} must be a string` },
+              400,
+            );
+          }
+          models[kind] = typeof value === 'string' ? value.trim() : null;
+        }
+        patch.models = models;
+      }
+    }
     const saved = await store.putSettings(patch);
     return context.json(saved);
   });

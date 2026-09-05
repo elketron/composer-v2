@@ -130,6 +130,21 @@ describe('PipelineEditorComponent', () => {
     expect(events.lastCommand('requestPipelineSave')).toBeUndefined();
   });
 
+  it('offers the known agent kinds in the step picker (type-to-filter)', async () => {
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.new')!.click();
+    await fixture.whenStable();
+
+    const datalist = el.querySelector('datalist#composer-agent-kinds');
+    expect(datalist).toBeTruthy();
+    const options = [...datalist!.querySelectorAll('option')].map((o) => o.getAttribute('value'));
+    expect(options).toContain('planner');
+    expect(options).toContain('coder');
+    // The agent step's kind field is wired to the list.
+    expect(el.querySelector('input[list="composer-agent-kinds"]')).toBeTruthy();
+  });
+
   it('edits an existing pipeline and keeps its id (the upsert path)', async () => {
     seedPipeline('PL-1', 'Standard coding card');
     const fixture = await render();

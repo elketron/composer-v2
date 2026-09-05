@@ -38,7 +38,7 @@ describe('SettingsService', () => {
       const body = JSON.parse(String(init?.body)) as { model?: string | null };
       return { status: 200, body: { model: body.model ?? '' } };
     };
-    service.setDraft('llamacpp/qwen3.6');
+    service.setModel('llamacpp/qwen3.6');
     const ok = await service.save();
 
     expect(ok).toBe(true);
@@ -50,7 +50,7 @@ describe('SettingsService', () => {
       RequestInit,
     ];
     expect(url).toContain('/settings');
-    expect(JSON.parse(String(init.body))).toEqual({ model: 'llamacpp/qwen3.6' });
+    expect(JSON.parse(String(init.body))).toEqual({ model: 'llamacpp/qwen3.6', models: {} });
   });
 
   it('an empty draft clears the override (the shell shows the default)', async () => {
@@ -58,7 +58,7 @@ describe('SettingsService', () => {
       const body = JSON.parse(String(init?.body)) as { model?: string | null };
       return { status: 200, body: { model: body.model ?? '' } };
     };
-    service.setDraft('  ');
+    service.setModel('  ');
     const ok = await service.save();
 
     expect(ok).toBe(true);
@@ -67,15 +67,67 @@ describe('SettingsService', () => {
       string,
       RequestInit,
     ];
-    expect(JSON.parse(String(init.body))).toEqual({ model: null });
+    expect(JSON.parse(String(init.body))).toEqual({ model: null, models: {} });
   });
 
   it('surfaces a refused save as an error', async () => {
     fetchJson = () => ({ status: 400, body: { error: 'malformed settings' } });
-    service.setDraft('not a model');
+    service.setModel('not a model');
     const ok = await service.save();
 
     expect(ok).toBe(false);
     expect(service.error()).toContain('refused');
+  });
+
+  it('per-agent overrides ride the PUT and the picker list', async () => {
+    service.setAgentModel('planner', 'planner-model');
+    service.addAgent('reviewer');
+    service.setAgentModel('reviewer', 'review-model');
+    fetchJson = (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { model?: unknown; models?: unknown };
+      return { status: 200, body: { model: '', models: body.models } };
+    };
+    const ok = await service.save();
+
+    expect(ok).toBe(true);
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls.at(-1) as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(init.body))).toEqual({
+      model: null,
+      models: { planner: 'planner-model', reviewer: 'review-model' },
+    });
+    // The picker now offers the custom kind.
+    expect(service.agentKinds()).toEqual(['planner', 'coder', 'reviewer']);
+  });
+
+  it('clearing an agent model drops the key on save', async () => {
+    service.setAgentModel('coder', 'coder-model');
+    service.setAgentModel('coder', '  ');
+    fetchJson = (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { models?: unknown };
+      return { status: 200, body: { model: '', models: body.models } };
+    };
+    await service.save();
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls.at(-1) as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(init.body))).toEqual({ model: null, models: {} });
+    expect(service.models()).toEqual({});
+  });
+
+  it('load restores the per-agent overrides and the picker list', async () => {
+    fetchJson = () => ({
+      status: 200,
+      body: { model: 'default-m', models: { planner: 'p-m', reviewer: 'r-m' } },
+    });
+    await service.load();
+
+    expect(service.models()).toEqual({ planner: 'p-m', reviewer: 'r-m' });
+    expect(service.agentKinds()).toEqual(['planner', 'coder', 'reviewer']);
+    expect(shell.model()).toBe('default-m');
   });
 });

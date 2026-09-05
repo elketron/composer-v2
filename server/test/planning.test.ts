@@ -543,3 +543,53 @@ describe('the planning turn', () => {
     expect(engine.toolCalls[1]?.engineSessionId).toBe('fake-S-1');
   });
 });
+
+// ---- The per-agent model override (settings → the turn spec) ----
+
+describe('per-agent model wiring', () => {
+  it('the agent override wins over the default model', async () => {
+    const projectId = await createProject();
+    const sessionId = await createSession(projectId);
+    const engine = new FakeEngine(processor);
+    const orchestrator = new PlanningOrchestrator(bus, engine, {
+      serverUrl: 'http://127.0.0.1:0',
+      getModel: () => ({ model: 'fallback-model', models: { planner: 'planner-model' } }),
+    });
+    orchestrator.start();
+    engine.enqueue(async () => 'planned');
+
+    const sent = await processor.execute(projectId, {
+      type: 'requestUserMessage',
+      sessionId,
+      text: 'plan it',
+    });
+    expect(sent.ok).toBe(true);
+    await waitUntil(() => session(projectId, sessionId).messages.at(-1)?.text === 'planned');
+
+    expect(engine.toolCalls.at(-1)?.model).toBe('planner-model');
+    orchestrator.stop();
+  });
+
+  it('without an override the default model rides the spec', async () => {
+    const projectId = await createProject();
+    const sessionId = await createSession(projectId);
+    const engine = new FakeEngine(processor);
+    const orchestrator = new PlanningOrchestrator(bus, engine, {
+      serverUrl: 'http://127.0.0.1:0',
+      getModel: () => ({ model: 'fallback-model', models: { coder: 'coder-model' } }),
+    });
+    orchestrator.start();
+    engine.enqueue(async () => 'planned');
+
+    const sent = await processor.execute(projectId, {
+      type: 'requestUserMessage',
+      sessionId,
+      text: 'plan it',
+    });
+    expect(sent.ok).toBe(true);
+    await waitUntil(() => session(projectId, sessionId).messages.at(-1)?.text === 'planned');
+
+    expect(engine.toolCalls.at(-1)?.model).toBe('fallback-model');
+    orchestrator.stop();
+  });
+});
