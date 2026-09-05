@@ -2,9 +2,15 @@
 // database file, one table per concern. The `event_log` is the log of
 // truth — composer envelopes persisted as rows keyed by project, in
 // emission order (`seq`). Ephemeral events (live-only) skip replay.
+//
+// Single-writer (t9): a PID lockfile guards the data dir — a second boot
+// against a live server's dir is refused with a clear error instead of two
+// processes appending colliding seqs to one log.
 
 import { Surreal } from 'surrealdb';
 import { createNodeEngines } from '@surrealdb/node';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
+import { join } from 'node:path';
 import type { EventEnvelope } from './wire/envelope.js';
 import type { EventName } from './wire/events.js';
 
@@ -37,10 +43,11 @@ export class EventStore {
   private db!: Surreal;
   private seq = 0;
   private settings: ComposerSettings = {};
+  private lockPath: string | null = null;
 
   async connect(dir: string): Promise<void> {
-    const { mkdirSync } = await import('node:fs');
     mkdirSync(dir, { recursive: true });
+    this.acquireDirLock(dir);
     this.db = new Surreal({ engines: { ...createNodeEngines() } });
     await this.db.connect(`rocksdb://${dir}/composer.db`);
     await this.db.use({ namespace: 'composer', database: 'main' });
@@ -62,6 +69,40 @@ export class EventStore {
     );
     const row = rows?.[0];
     this.settings = typeof row?.model === 'string' && row.model !== '' ? { model: row.model } : {};
+  }
+
+  /**
+   * The data dir admits one writer: a live PID in `server.lock` refuses the
+   * boot with a plain error; a stale lock (dead PID — a crash, or the test
+   * child that never ran close()) is removed and boot proceeds.
+   */
+  private acquireDirLock(dir: string): void {
+    const lockPath = join(dir, 'server.lock');
+    if (existsSync(lockPath)) {
+      const raw = readFileSync(lockPath, 'utf8').trim();
+      const pid = Number(raw);
+      if (Number.isInteger(pid) && pid > 0 && pidAlive(pid)) {
+        throw new Error(
+          `another composer server (pid ${pid}) is already using ${dir} — ` +
+            `stop it first (or point COMPOSER_DATA_DIR somewhere else)`,
+        );
+      }
+      unlinkSync(lockPath);
+    }
+    const fd = openSync(lockPath, 'w');
+    writeSync(fd, String(process.pid));
+    closeSync(fd);
+    this.lockPath = lockPath;
+  }
+
+  private releaseDirLock(): void {
+    if (this.lockPath === null) return;
+    try {
+      unlinkSync(this.lockPath);
+    } catch {
+      // Already gone (a concurrent boot reaped it as stale).
+    }
+    this.lockPath = null;
   }
 
   /** Persists one event and returns its assigned sequence. */
@@ -139,5 +180,15 @@ export class EventStore {
     if (this.db !== undefined) {
       await this.db.close();
     }
+    this.releaseDirLock();
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }

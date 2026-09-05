@@ -5,6 +5,9 @@
       <span class="session-id">{{ session()?.id ?? 'new' }}</span>
       <span class="session-status">{{ status().toLowerCase() }}</span>
     </div>
+    <button class="new-session" title="start a fresh session (the current one closes)" (click)="newSession()">
+      + new session
+    </button>
   </header>
 
   <div class="plan-body">

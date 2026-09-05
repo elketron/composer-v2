@@ -33,17 +33,26 @@
     }
   </div>
 
-  <form class="composer" (submit)="$event.preventDefault(); send()">
-    <input
-      name="message"
-      autocomplete="off"
-      [ngModel]="draft()"
-      (ngModelChange)="draft.set($event)"
-      (keydown)="keydown($event)"
-      placeholder="share a direction, ask a question, refine the plan…"
-      [disabled]="sending()"
-    />
-    <span class="hint">enter to send</span>
-    <button type="submit" class="send" [disabled]="sending() || !draft().trim()">send</button>
-  </form>
+  @if (isDone()) {
+    <div class="done-bar">
+      <span>this session is complete — its tickets are on the board</span>
+      <button type="button" class="new-session" (click)="newSession()">
+        start a new session
+      </button>
+    </div>
+  } @else {
+    <form class="composer" (submit)="$event.preventDefault(); send()">
+      <input
+        name="message"
+        autocomplete="off"
+        [ngModel]="draft()"
+        (ngModelChange)="draft.set($event)"
+        (keydown)="keydown($event)"
+        placeholder="share a direction, ask a question, refine the plan…"
+        [disabled]="sending()"
+      />
+      <span class="hint">enter to send</span>
+      <button type="submit" class="send" [disabled]="sending() || !draft().trim()">send</button>
+    </form>
+  }
 </section>

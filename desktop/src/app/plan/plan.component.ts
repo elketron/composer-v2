@@ -19,6 +19,10 @@ export class PlanComponent {
   protected readonly session = this.plan.session;
   protected readonly status = this.plan.status;
 
+  protected newSession(): void {
+    this.plan.requestNewSession();
+  }
+
   constructor() {
     effect(() => this.plan.setProject(this.shell.activeTabId()));
   }

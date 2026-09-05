@@ -12,7 +12,7 @@ import { Bus } from './bus.js';
 import { EventStore } from './store.js';
 import { Processor } from './processor.js';
 import { router } from './http.js';
-import { PlanningOrchestrator } from './planning.js';
+import { PlanningOrchestrator, resumeStrandedTurns } from './planning.js';
 import { PipelineRunner } from './runner.js';
 import { cancelInterruptedRuns, seedDefaultPipelines } from './pipelines.js';
 import { OpenCodeEngine } from './engine/opencode.js';
@@ -46,6 +46,10 @@ export async function boot(config: Config): Promise<{
   const bus = new Bus(store);
   const rehydrated = await bus.rehydrate();
   const processor = new Processor(bus);
+
+  // t10: a restart drops in-flight turns; tell the stranded sessions (and
+  // the desktop's send-lock) before anything listens.
+  const resumed = await resumeStrandedTurns(bus);
 
   // D5: a restart ends non-terminal runs `cancelled`; the default coding
   // pipeline seeds every project that has neither it nor its tombstone
@@ -99,7 +103,8 @@ export async function boot(config: Config): Promise<{
   console.log(
     `composer v2 listening on ${url}` +
       ` (replayed ${rehydrated} events, ${bus.state.projects.size} projects` +
-      `${cancelled > 0 ? `, cancelled ${cancelled} interrupted run${cancelled === 1 ? '' : 's'}` : ''})` +
+      `${cancelled > 0 ? `, cancelled ${cancelled} interrupted run${cancelled === 1 ? '' : 's'}` : ''}` +
+      `${resumed > 0 ? `, resumed ${resumed} stranded turn${resumed === 1 ? '' : 's'}` : ''})` +
       (plannerEnabled ? ' [planner: on]' : ' [planner: off]'),
   );
   return {

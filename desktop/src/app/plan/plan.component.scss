@@ -22,6 +22,29 @@
   flex: none;
 }
 
+.plan-header .session-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plan-header .new-session {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--text-dim);
+  }
+}
+
 .session-title {
   display: flex;
   align-items: baseline;

@@ -94,6 +94,34 @@
   background: var(--run);
 }
 
+.done-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 7px 0 9px;
+  border-top: 1px solid var(--border);
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.done-bar .new-session {
+  margin-left: auto;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent-soft);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+}
+
 .composer {
   display: flex;
   align-items: center;

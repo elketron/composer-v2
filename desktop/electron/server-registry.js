@@ -16,6 +16,15 @@ const path = require('node:path');
 const PROBE_TIMEOUT_MS = 1_500;
 const SPAWN_WAIT_MS = 15_000;
 const SPAWN_POLL_MS = 250;
+// t11: a failed spawn (dead URI the spawn can't satisfy — e.g. the WSL
+// host is down) backs off, so a reconnect loop can't spawn a process per
+// retry and orphan a pile of servers.
+const SPAWN_RETRY_BACKOFF_MS = 30_000;
+
+/** Our previous spawn (when we spawned one) and the in-flight attempt. */
+let lastSpawnedChild = null;
+let lastFailedSpawnAt = 0;
+let spawnInFlight = null;
 
 /** The server URI: `$COMPOSER_SERVER_URL`, else the default port. */
 function serverUrl() {
@@ -49,28 +58,53 @@ async function discover() {
   const uri = serverUrl();
   if (await healthy(uri)) return entry(uri);
 
-  const command = process.env['COMPOSER_SERVER_CMD'];
-  const entryJs = serverEntry();
-  if (command) {
-    spawn(command, { stdio: 'ignore', shell: true, detached: true }).unref();
-  } else if (entryJs !== null) {
-    const logDir = path.join(__dirname, '..', 'logs');
-    fs.mkdirSync(logDir, { recursive: true });
-    const logFile = fs.openSync(path.join(logDir, 'server.log'), 'a');
-    const child = spawn(process.execPath, [entryJs], {
-      stdio: ['ignore', logFile, logFile],
-      detached: true,
-      env: {
-        ...process.env,
-        COMPOSER_HTTP_ADDR: uri.replace(/^https?:\/\//, ''),
-      },
-    });
-    child.unref();
-    fs.closeSync(logFile);
-  } else {
-    return null; // attach-only: nothing to spawn
-  }
-  return (await waitHealthy(uri, SPAWN_WAIT_MS)) ? entry(uri) : null;
+  if (spawnInFlight !== null) return spawnInFlight;
+  if (Date.now() - lastFailedSpawnAt < SPAWN_RETRY_BACKOFF_MS) return null;
+
+  spawnInFlight = (async () => {
+    try {
+      // t11: kill our previous spawn before starting the next — a probe
+      // failure while the child still lives means it is wedged, and two
+      // servers would fight over the store.
+      if (lastSpawnedChild !== null && lastSpawnedChild.exitCode === null) {
+        try {
+          lastSpawnedChild.kill('SIGTERM');
+        } catch {
+          // Already gone.
+        }
+      }
+      lastSpawnedChild = null;
+
+      const command = process.env['COMPOSER_SERVER_CMD'];
+      const entryJs = serverEntry();
+      if (command) {
+        spawn(command, { stdio: 'ignore', shell: true, detached: true }).unref();
+      } else if (entryJs !== null) {
+        const logDir = path.join(__dirname, '..', 'logs');
+        fs.mkdirSync(logDir, { recursive: true });
+        const logFile = fs.openSync(path.join(logDir, 'server.log'), 'a');
+        const child = spawn(process.execPath, [entryJs], {
+          stdio: ['ignore', logFile, logFile],
+          detached: true,
+          env: {
+            ...process.env,
+            COMPOSER_HTTP_ADDR: uri.replace(/^https?:\/\//, ''),
+          },
+        });
+        child.unref();
+        fs.closeSync(logFile);
+        lastSpawnedChild = child;
+      } else {
+        return null; // attach-only: nothing to spawn
+      }
+      const ok = await waitHealthy(uri, SPAWN_WAIT_MS);
+      if (!ok) lastFailedSpawnAt = Date.now();
+      return ok ? entry(uri) : null;
+    } finally {
+      spawnInFlight = null;
+    }
+  })();
+  return spawnInFlight;
 }
 
 function entry(uri) {

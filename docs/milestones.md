@@ -374,6 +374,36 @@ reached opencode and was rejected by it (the settings→spawn path works end
 to end), stop killed the run mid-flight, and the page rebuilt the full
 transcript (16 messages · 33 tool calls) from the snapshot after a reload.
 
+## S7 — Reliability: single-writer, stranded turns, gateway hygiene  ·  done (2026-09-05)
+
+The three incident fixes S2's smoke flagged (t9/t10/t11), plus the
+planning-session lifecycle affordance they left exposed.
+
+- **t9, single-writer store**: a PID lockfile (`server.lock`) in the data
+  dir — a second boot against a live server's dir is refused with a plain
+  error (`another composer server (pid …) is already using …`); a stale
+  lock (dead PID — a crash) is reaped; `close()` releases. Two-boot test.
+- **t10, stranded turns**: on boot, any drafting session whose transcript
+  ends with a user message lost its turn to the restart — one failure
+  agent message is published per stranded session, so the transcript is
+  coherent and the desktop's send-lock clears ("resumed N stranded
+  turns" in the boot line).
+- **t11, gateway churn**: the desktop's registry now tracks its spawn —
+  a wedged previous child is killed before the next spawn, a spawn attempt
+  is never concurrent with itself, and a failed spawn backs off 30s (no
+  more per-retry process piles).
+- **New planning session**: a completed session's transcript is closed
+  (`requestUserMessage` rejects), and there was no way to plan the next
+  milestone. The plan header gains `+ new session` and a finished chat
+  shows `start a new session`; the service marks the deliberate create so
+  the fresh echo replaces the populated session (the stale-replay
+  clobber-guard stays).
+
+Exit criteria (met): `pnpm verify` (server 73, desktop 163); the two-boot
+refusal, stale-lock reaping, and stranded-turn publishing are unit-tested
+against the real store; the live stack restarted cleanly through the
+gateway with the lock held by the spawned server.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

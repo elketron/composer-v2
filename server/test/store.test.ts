@@ -1,7 +1,7 @@
 // The event store against the real embedded SurrealDB (RocksDB) in a temp
 // directory — no mocks for the database (the v1 rule that earned its keep).
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -94,6 +94,30 @@ describe('EventStore', () => {
     );
     const replayed = await reopened.replay('P-1');
     expect(replayed.map((envelope) => envelope.id)).toEqual(['e1', 'e2']);
+    await reopened.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('refuses a second concurrent boot on the same data dir (t9)', async () => {
+    await fresh();
+
+    const second = new EventStore();
+    await expect(second.connect(dir)).rejects.toThrow(/another composer server \(pid \d+\)/);
+    // The refused boot took no lock of its own.
+    await expect(second.connect(dir)).rejects.toThrow(/another composer server/);
+
+    // Closing the first releases the dir (the lock file goes with it; the
+    // cross-process reopen is covered by the restart test above).
+    await store.close();
+    expect(existsSync(join(dir, 'server.lock'))).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reaps a stale lock left by a crashed boot', async () => {
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(join(dir, 'server.lock'), String(999_999_999)); // dead pid
+    const reopened = new EventStore();
+    await reopened.connect(dir); // no throw: the stale lock is reaped
     await reopened.close();
     rmSync(dir, { recursive: true, force: true });
   });

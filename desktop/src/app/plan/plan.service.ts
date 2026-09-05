@@ -42,6 +42,8 @@ export class PlanService {
   private readonly activeProjectSignal = signal<string | null>(null);
   private readonly pendingSessions = new Map<string, Promise<PlanningSession | null>>();
   private readonly seenEventIds = new Map<string, true>();
+  /** Projects with a deliberate session-create in flight (the echo replaces). */
+  private readonly pendingCreate = new Set<string>();
 
   readonly sessions = this.sessionsSignal.asReadonly();
   readonly projectId = this.activeProjectSignal.asReadonly();
@@ -118,7 +120,18 @@ export class PlanService {
     return this.sendMessage(text);
   }
 
-  requestPlanningSessionCreate(projectId: string): void {
+  /**
+   * Starts a fresh session for the project, replacing the current one (a
+   * completed session's transcript is closed — this is how the next
+   * milestone gets planned). The echo is accepted even though the old
+   * session was populated: we asked for it.
+   */
+  requestNewSession(): void {
+    const projectId = this.activeProjectSignal();
+    if (!projectId) return;
+    this.pendingCreate.add(projectId);
+    this.streamingMessage.set(null);
+    this.error.set(null);
     void this.publishCommand({ type: 'RequestPlanningSessionCreate', projectId });
   }
 
@@ -140,6 +153,13 @@ export class PlanService {
       case 'PlanningSessionCreated': {
         const incoming = asSession(event.session);
         const existing = this.sessionsSignal().get(incoming.projectId);
+        // A deliberate new session replaces the current one (the fold's
+        // clobber-guard is for stale replays, not for what we asked for).
+        if (this.pendingCreate.has(incoming.projectId)) {
+          this.pendingCreate.delete(incoming.projectId);
+          this.setProjectSession(incoming.projectId, incoming);
+          break;
+        }
         // A duplicate (or stale snapshot) session must not clobber a
         // populated one; same-id replaces are snapshot replays and safe —
         // the transcript events re-fold right after.

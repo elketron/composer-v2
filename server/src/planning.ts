@@ -227,3 +227,32 @@ function buildPrompt(document: string, text: string): string {
 function nextMessageIndex(session: { messages: { index: number }[] }): number {
   return session.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
 }
+
+/**
+ * t10: a restart drops in-flight turns — a drafting session whose
+ * transcript ends with a user message lost its turn (no agent reply will
+ * ever come for it). Publish one failure message per stranded session so
+ * the transcript is coherent and the desktop's send-lock clears. The next
+ * real turn's prompt carries the whole transcript, so nothing is lost.
+ */
+export async function resumeStrandedTurns(bus: Bus): Promise<number> {
+  let resumed = 0;
+  for (const [projectId, project] of bus.state.byProject) {
+    for (const session of project.planningSessions.values()) {
+      if (session.status !== 'drafting') continue;
+      const last = session.messages.at(-1);
+      if (last === undefined || last.role !== 'user') continue;
+      await bus.publish(projectId, 'agentMessageComplete', {
+        sessionId: session.id,
+        message: {
+          index: nextMessageIndex(session),
+          role: 'agent',
+          text: 'the server restarted before this turn could run — send your message again',
+          at: nowIso(),
+        },
+      });
+      resumed++;
+    }
+  }
+  return resumed;
+}

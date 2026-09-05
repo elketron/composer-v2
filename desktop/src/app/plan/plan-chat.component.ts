@@ -16,6 +16,7 @@ export class PlanChatComponent {
   protected readonly messages = this.plan.messages;
   protected readonly streamingMessage = this.plan.streamingMessage;
   protected readonly sending = this.plan.isSending;
+  protected readonly isDone = this.plan.isDone;
   // A signal so clearing it after send repaints under zoneless CD.
   protected readonly draft = signal('');
 
@@ -24,6 +25,10 @@ export class PlanChatComponent {
     void this.plan.sendMessage(text).then((sent) => {
       if (sent) this.draft.set('');
     });
+  }
+
+  protected newSession(): void {
+    this.plan.requestNewSession();
   }
 
   protected keydown(event: KeyboardEvent): void {

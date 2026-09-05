@@ -63,6 +63,53 @@ describe('PlanService', () => {
     expect(events.published).toEqual([]);
   });
 
+  it('requestNewSession replaces a populated session with the fresh echo', () => {
+    // The active session is populated (document + a message).
+    emitSession();
+    service.applyServerEvent({
+      type: 'PlanDocumentUpdated',
+      sessionId: 'S-1',
+      document: '<plan><goal>the old plan</goal></plan>',
+    } as never);
+    events.emit(
+      wireEvent('userMessageReceived', {
+        sessionId: 'S-1',
+        message: { index: 1, role: 'user', text: 'the old direction', at: '' },
+      }),
+    );
+
+    service.requestNewSession();
+    expect(events.lastCommand('requestPlanningSessionCreate')).toMatchObject({
+      projectId: 'P-1',
+      requestPlanningSessionCreate: {},
+    });
+
+    // The fresh echo (different id, empty) lands — we asked for it.
+    events.emit(
+      wireEvent('planningSessionCreated', {
+        session: { id: 'S-2', projectId: 'P-1', createdAt: '', status: 'drafting', messages: [], planDocument: '' },
+      }),
+    );
+    expect(service.session()?.id).toBe('S-2');
+    expect(service.messages()).toEqual([]);
+    expect(service.planDocument()).toBe('');
+  });
+
+  it('a stale echo (no create in flight) still cannot clobber a populated session', () => {
+    emitSession();
+    service.applyServerEvent({
+      type: 'PlanDocumentUpdated',
+      sessionId: 'S-1',
+      document: '<plan><goal>the old plan</goal></plan>',
+    } as never);
+    events.emit(
+      wireEvent('planningSessionCreated', {
+        session: { id: 'S-9', projectId: 'P-1', createdAt: '', status: 'drafting', messages: [], planDocument: '' },
+      }),
+    );
+    expect(service.session()?.id).toBe('S-1');
+  });
+
   describe('sendMessage', () => {
     it('creates the session on first send, then publishes the user message', async () => {
       const promise = service.sendMessage('Build a board');

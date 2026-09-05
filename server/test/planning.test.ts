@@ -10,7 +10,7 @@ import { Bus } from '../src/bus.js';
 import { Processor } from '../src/processor.js';
 import { apply, newState, type State } from '../src/fold.js';
 import { snapshotEvents } from '../src/snapshot.js';
-import { PlanningOrchestrator } from '../src/planning.js';
+import { PlanningOrchestrator, resumeStrandedTurns } from '../src/planning.js';
 import { FakeEngine } from '../src/engine/fake.js';
 import type { EventFrame } from '../src/wire/envelope.js';
 import type { TicketEmission } from '../src/wire/commands.js';
@@ -336,6 +336,45 @@ describe('planning commands', () => {
       automation: [...project.automation.entries()],
     }));
   }
+});
+
+// ---- t10: a restart publishes the lost turn as a failure message ----
+
+describe('resumeStrandedTurns', () => {
+  it('publishes a failure message for a transcript that ends with a user message', async () => {
+    const projectId = await createProject();
+    const sessionId = await createSession(projectId);
+    await processor.execute(projectId, {
+      type: 'requestUserMessage',
+      sessionId,
+      text: 'plan the work',
+    });
+
+    const resumed = await resumeStrandedTurns(bus);
+    expect(resumed).toBe(1);
+
+    const transcript = session(projectId, sessionId).messages;
+    expect(transcript.at(-1)).toMatchObject({
+      role: 'agent',
+      text: 'the server restarted before this turn could run — send your message again',
+    });
+    // It is a real durable message (index 2, after the user's).
+    expect(recorded.at(-1)?.eventType).toBe('agentMessageComplete');
+  });
+
+  it('leaves sessions that do not end with a user message alone', async () => {
+    const projectId = await createProject();
+    const sessionId = await createSession(projectId);
+    // An empty session and one whose last message is the agent's.
+    await bus.publish(projectId, 'agentMessageComplete', {
+      sessionId,
+      message: { index: 1, role: 'agent', text: 'done earlier', at: new Date().toISOString() },
+    });
+
+    const resumed = await resumeStrandedTurns(bus);
+    expect(resumed).toBe(0);
+    expect(session(projectId, sessionId).messages).toHaveLength(1);
+  });
 });
 
 // ---- The scripted-engine e2e (the S2 exit criteria) ----
