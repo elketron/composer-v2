@@ -13,6 +13,12 @@ import type { Card, CardType, Stage, SubStateStatus } from './wire/models.js';
 import { ALL_STAGES } from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
 
+/** The commands the MCP tools may issue (the planner's two, for now). */
+const MCP_COMMAND_TYPES: ReadonlySet<string> = new Set([
+  'requestPlanDocumentUpdate',
+  'requestTicketsCreate',
+]);
+
 export function router(bus: Bus, processor: Processor): Hono {
   const app = new Hono();
 
@@ -22,6 +28,29 @@ export function router(bus: Bus, processor: Processor): Hono {
   app.use('*', cors());
 
   app.get('/health', (context) => context.json({ status: 'SERVING' }));
+
+  // The MCP tools' validated-command route (D8): the composer MCP child
+  // process issues plan-domain commands here. Whitelisted to the planning
+  // commands — it is not a second generic action surface.
+  app.post('/mcp/command', async (context) => {
+    const body = await context.req
+      .json<{ projectId?: unknown; command?: unknown }>()
+      .catch(() => undefined);
+    const projectId = typeof body?.projectId === 'string' ? body.projectId : undefined;
+    const command = body?.command as { type?: unknown } | undefined;
+    if (
+      projectId === undefined ||
+      projectId === '' ||
+      typeof command !== 'object' ||
+      command === null ||
+      typeof command.type !== 'string' ||
+      !MCP_COMMAND_TYPES.has(command.type)
+    ) {
+      return context.json({ error: 'malformed command', detail: 'unknown command shape' }, 400);
+    }
+    const outcome = await processor.execute(projectId, command as Command);
+    return context.json(outcome);
+  });
 
   app.post('/action', async (context) => {
     const action = await context.req.json<unknown>().catch(() => undefined);
@@ -159,6 +188,17 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
       return { type: 'requestCardArchive', cardId: str('id') ?? '' };
     case 'update:automation':
       return { type: 'requestAutomationToggle', lane: parseStage(str('lane')), on: bool('on') ?? false };
+    case 'create:planningSession':
+      return {
+        type: 'requestPlanningSessionCreate',
+        projectId: scopeProjectId ?? str('projectId') ?? '',
+      };
+    case 'create:chatMessage':
+      return {
+        type: 'requestUserMessage',
+        sessionId: str('sessionId') ?? '',
+        text: str('text') ?? '',
+      };
     default:
       return null;
   }

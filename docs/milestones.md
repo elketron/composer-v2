@@ -104,33 +104,93 @@ Notes for later slices (researched while porting):
   `coding` / `pending`) lives in the action mapper (`http.ts`); the
   desktop mirrors it in `wire.ts`.
 
-## S2 — Planning turn  ·  planned
+## S2 — Planning turn  ·  done (2026-09-05)
 
 The planner on opencode: chat → plan document → tickets.
 
-- Domain: planning sessions (`requestPlanningSessionCreate`,
-  `requestUserMessage`), the document
-  (`requestPlanDocumentUpdate`), ticket emission
-  (`requestTicketsCreate` — in-batch keys remap onto fresh card ids,
-  blockedBy validated; session → `done`).
-- Engine boundary: `AgentEngine` interface (`run(spec, onEvent) →
-  outcome`) + `FakeEngine` (scripted sessions for tests) +
-  `OpenCodeEngine` (spawn/parse `opencode run --agent composer-planner
-  --format json`; session id stored on the planning session for
-  continuity).
-- The `composer-planner` agent definition (shipped into the project):
-  the document-in-context brief, v1's prompt discipline (§6: directive
-  tool usage), with `edit_document` / `create_tickets` as MCP tools
-  calling the validated commands.
-- Composer's MCP server (`server/src/mcp.ts`, stdio): the planner's
-  tools + session context (document + transcript tail).
-- Wire: `agentSessionStarted/Ended` + `agentMessageDelta/Complete`
-  become real (streamed from the engine, deltas ephemeral).
+- Domain: planning sessions (`requestPlanningSessionCreate` allocates
+  `S-N` per project, `requestUserMessage` — drafting-only, sequential
+  transcript indexes), the document (`requestPlanDocumentUpdate` —
+  wholesale replace, drafting-only), ticket emission
+  (`requestTicketsCreate` — title/key/key-uniqueness/self-block/dep
+  validation; ids allocate a `T-N` block; in-batch keys remap onto fresh
+  card ids; `cardsCommitted` → per-blocked `dependencyStateChanged` →
+  `planningSessionCompleted`).
+- Fold: sessions, messages (replace-by-index, sorted), document,
+  completion, `cardsCommitted`. Snapshot replays sessions after
+  automation, before cards (v1 order) — the creation event carries the
+  current record, messages re-fold idempotently.
+- Engine boundary (`server/src/engine/`): `AgentEngine` (`run(spec,
+  onEvent) → outcome`) + `FakeEngine` (scripted turns that call the real
+  planner-tools against the processor) + `OpenCodeEngine` (spawn/parse).
+  Engine-session continuity is in-process state (D5: a restart starts a
+  fresh runtime session; document + transcript are durable, so context
+  survives).
+- The `composer-planner` agent definition ships into the project on turn
+  start (`.opencode/agent/composer-planner.md`; user-editable, written
+  once) with v1's prompt discipline: commit the document every turn,
+  reply short, tickets only on explicit approval.
+- Composer's MCP server (`server/src/mcp.ts`, stdio, hand-rolled
+  newline-delimited JSON-RPC — no SDK): `edit_document` /
+  `create_tickets` (accepts v1's `type` alias, defaults cardType) →
+  `POST /mcp/command` → the processor. The route is whitelisted to the
+  two planning commands — not a second generic action surface.
+- Wire: `agentMessageDelta/Complete` are real (deltas ephemeral);
+  `agentSessionStarted/Ended` stay S3 (they are card-bound; planning
+  turns are session-bound).
 
-Exit criteria: scripted-FakeEngine e2e — user message → document edit →
-`planDocumentUpdated` → approval turn → `create_tickets` → cards land →
-session `done`; the desktop Plan view works unchanged; one real-opencode
-manual smoke documented here.
+Exit criteria (met): the FakeEngine e2e covers user message → document
+edit → `planDocumentUpdated` → approval turn → `create_tickets` → cards
+land → session `done`, plus mid-turn queueing, failure publishing, and
+continuity; the desktop Plan view folds unchanged (131 specs green);
+`pnpm verify`: server 54, desktop 131. The real-opencode smoke ran
+2026-09-05 (see below).
+
+Manual smoke (real opencode 1.18.25 + the llama.cpp endpoint): project
+pointing at a scratch dir → `create:planningSession` → `create:chatMessage`
+"plan the work to add a sum(a,b) function…" — ~30s later the planner had
+committed `<plan><goal>…</goal><tasks>…</tasks></plan>` through
+`composer_edit_document`; "Approved. Emit the tickets." →
+`composer_create_tickets` → T-1, T-2 (t2 blockedBy t1 → `T-1` remapped),
+session `done`, transcript user/agent/user/agent.
+
+Research notes for later slices:
+
+- **`opencode run --format json` schema** (probed 2026-09-05, opencode
+  1.18.25): stdout is one JSON object per line — vendor banner lines
+  (the llama.cpp plugin's) precede it, so non-JSON lines must be
+  skipped. Events: `{type, timestamp, sessionID, part}` with type
+  `step_start | text | tool_use | step_finish`; `text` parts may arrive
+  repeatedly with growing text (streamed — diff per part id for
+  deltas); `tool_use` parts carry the tool name, `callID`, and
+  `state.input/output` post-hoc; `step_finish.reason` is `stop` or
+  `tool-calls`. Exit code 0 = ok; on nonzero, stderr (or the last
+  stdout line, which may be a `{"type":"error"}` JSON) carries the
+  cause.
+- **opencode trusts `$PWD` over the real cwd** for workspace discovery.
+  A spawn with `cwd: <project>` but an inherited stale `PWD` points
+  opencode at the wrong project (symptom: `UnknownError … Check server
+  logs`, exit 1 in ~5s). The engine pins `PWD`/`OLDPWD` to the spawn
+  directory. S3's coder spawn must do the same.
+- **MCP without an SDK**: newline-delimited JSON-RPC over stdio works —
+  initialize → `notifications/initialized` → `tools/list` →
+  `tools/call` (opencode sends `_meta.progressToken`; a trailing
+  `notifications/cancelled` is normal). Tool names on the wire are
+  `<server>_<tool>` (`composer_edit_document`). Register the server per
+  spawn via `OPENCODE_CONFIG_CONTENT` (inline JSON config) — nothing in
+  the user's project config is touched. Session context rides the
+  environment (`COMPOSER_SERVER_URL/PROJECT_ID/SESSION_ID`), which the
+  MCP child inherits from opencode.
+- **opencode silently falls back to its default agent** when the named
+  agent file is missing (the first smoke chatted happily without the
+  shipped definition). S3's runner should verify the agent file exists
+  before spawning, or the turn runs without composer's tools.
+- The desktop's send-lock clears on `agentMessageComplete`; a failed
+  turn publishes the failure as an agent message so the UI unblocks
+  (v1 logged only).
+- Kill switches: `COMPOSER_PLANNER_ENABLED=0` (no turns),
+  `COMPOSER_FAKE_ENGINE=1` (scripted engine in dev boots);
+  `COMPOSER_MCP_SCRIPT` overrides the MCP child path for tsx/dev runs.
 
 ## S3 — Pipelines  ·  planned
 
@@ -154,8 +214,11 @@ Authoring + the sequential runner + the coder.
 - The `composer-coder` agent definition: implement the card through
   opencode's own file/bash tools in the project directory (no workspace
   buffer — the runtime's tools are the surface).
-- First task: a spike capturing `opencode run --format json`'s event
-  schema (isolated in `engine/opencode.ts`'s parser).
+- First task: the `opencode run --format json` schema spike is already
+  done (captured during S2 — see the S2 research notes; the parser in
+  `engine/opencode.ts` handles it). What remains: reuse the parser for
+  `agent` steps, verify the agent file exists before spawning, and pin
+  `PWD` (the S2 bug applies to coder spawns too).
 
 Exit criteria: fake-engine runner e2e (walk hands-off, park at the gate,
 gate resumes/rejects, stop, boot-cancel); the real smoke — the sum.js

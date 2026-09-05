@@ -5,7 +5,13 @@
 import type { EventBodyMap, EventName } from './wire/events.js';
 import type { EventEnvelope } from './wire/envelope.js';
 import { isLaneValid, subStateFor } from './wire/models.js';
-import type { Pipeline, Project, Stage } from './wire/models.js';
+import type {
+  ChatMessage,
+  Pipeline,
+  PlanningSession,
+  Project,
+  Stage,
+} from './wire/models.js';
 
 /** Where a card's pipeline run is (keyed by card id, one per card). */
 export interface PipelineRunProgress {
@@ -19,31 +25,15 @@ export interface ProjectState {
   projectId: string;
   cards: Map<string, CardState>;
   automation: Map<Stage, boolean>;
-  planningSessions: Map<string, PlanningSessionState>;
+  planningSessions: Map<string, PlanningSession>;
   agentSessions: Map<string, AgentSessionState>;
   pipelines: Map<string, Pipeline>;
   deletedPipelines: Set<string>;
   pipelineRuns: Map<string, PipelineRunProgress>;
 }
 
-export interface PlanningSessionState {
-  id: string;
-  projectId: string;
-  createdAt: string;
-  status: 'drafting' | 'done';
-  messages: ChatMessageState[];
-  planDocument: string;
-}
-
-export interface ChatMessageState {
-  index: number;
-  role: string;
-  text: string;
-  at?: string;
-}
-
 export type TranscriptEntryState =
-  | { kind: 'message'; message: ChatMessageState }
+  | { kind: 'message'; message: ChatMessage }
   | { kind: 'toolCall'; toolCallId: string; toolName: string; args: unknown }
   | { kind: 'toolResult'; toolCallId: string; content: string; isError: boolean };
 
@@ -179,6 +169,48 @@ export function apply(state: State, envelope: EventEnvelope): void {
     case 'automationToggled': {
       const body = envelope.body as EventBodyMap['automationToggled'];
       projectStateOf(state, projectId).automation.set(body.lane as Stage, body.on);
+      break;
+    }
+
+    // ---- Planning ----
+
+    case 'planningSessionCreated': {
+      const body = envelope.body as EventBodyMap['planningSessionCreated'];
+      projectStateOf(state, projectId).planningSessions.set(
+        body.session.id,
+        structuredClone(body.session),
+      );
+      break;
+    }
+    case 'userMessageReceived':
+    case 'agentMessageComplete': {
+      const body = envelope.body as EventBodyMap['userMessageReceived' | 'agentMessageComplete'];
+      const session = projectStateOf(state, projectId).planningSessions.get(body.sessionId);
+      if (!session) break;
+      session.messages = session.messages
+        .filter((message) => message.index !== body.message.index)
+        .concat(structuredClone(body.message))
+        .sort((a, b) => a.index - b.index);
+      break;
+    }
+    case 'planDocumentUpdated': {
+      const body = envelope.body as EventBodyMap['planDocumentUpdated'];
+      const session = projectStateOf(state, projectId).planningSessions.get(body.sessionId);
+      if (session) session.planDocument = body.document;
+      break;
+    }
+    case 'planningSessionCompleted': {
+      const body = envelope.body as EventBodyMap['planningSessionCompleted'];
+      const session = projectStateOf(state, projectId).planningSessions.get(body.sessionId);
+      if (session) session.status = 'done';
+      break;
+    }
+    case 'cardsCommitted': {
+      const body = envelope.body as EventBodyMap['cardsCommitted'];
+      const cards = projectStateOf(state, projectId).cards;
+      for (const card of body.cards) {
+        cards.set(card.id, structuredClone(card));
+      }
       break;
     }
     default:

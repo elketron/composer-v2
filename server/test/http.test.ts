@@ -66,6 +66,53 @@ describe('the boot contract', () => {
     expect(result.status).toBe(400);
   });
 
+  it('the_planning_actions_and_the_mcp_route_drive_a_session', async () => {
+    await action({ type: 'create', on: 'project', body: { name: 'alpha' } });
+
+    // The desktop's paths: create:planningSession then create:chatMessage.
+    const created = await action({ type: 'create', on: 'planningSession', projectId: 'P-1', body: {} });
+    expect(created).toEqual({ status: 200, json: { ok: true } });
+    const message = await action({
+      type: 'create',
+      on: 'chatMessage',
+      projectId: 'P-1',
+      body: { sessionId: 'S-1', text: 'plan the board' },
+    });
+    expect(message).toEqual({ status: 200, json: { ok: true } });
+
+    // The MCP tools' route: a whitelisted planning command.
+    const doc = await fetch(`${server.url}/mcp/command`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'P-1',
+        command: { type: 'requestPlanDocumentUpdate', sessionId: 'S-1', document: '<plan>v1</plan>' },
+      }),
+    });
+    expect(doc.status).toBe(200);
+    expect((await doc.json()) as unknown).toEqual({ ok: true });
+
+    // Out-of-scope commands are malformed here even when valid on /action.
+    const card = await fetch(`${server.url}/mcp/command`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'P-1',
+        command: { type: 'requestCardCreate', card: {} },
+      }),
+    });
+    expect(card.status).toBe(400);
+
+    // The session folded the message and the document: the snapshot's
+    // planningSessionCreated carries the current record.
+    const frames = await collectFrames(server.url, 2);
+    const kinds = frames.map((frame) => frame['eventType']);
+    expect(kinds).toEqual(['projectCreated', 'planningSessionCreated']);
+    const session = (frames[1]?.body as { session: { planDocument: string; messages: { text: string }[] } }).session;
+    expect(session.planDocument).toBe('<plan>v1</plan>');
+    expect(session.messages).toEqual([expect.objectContaining({ role: 'user', text: 'plan the board' })]);
+  }, 15_000);
+
   it('card_actions_drive_the_board_end_to_end', async () => {
     // Subscribe before anything happens: the empty snapshot is 0 frames,
     // then every action's live event arrives in order.

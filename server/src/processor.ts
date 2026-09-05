@@ -6,7 +6,7 @@
 import { statSync } from 'node:fs';
 import { isAbsolute, join, normalize } from 'node:path';
 import type { Bus } from './bus.js';
-import type { Command, CommandOutcome, Rejection } from './wire/commands.js';
+import type { Command, CommandOutcome, Rejection, TicketEmission } from './wire/commands.js';
 import { nowIso } from './wire/envelope.js';
 import {
   cardTypeCsName,
@@ -15,6 +15,8 @@ import {
   subStateFor,
   type Card,
   type CardType,
+  type ChatMessage,
+  type PlanningSession,
   type Project,
   type Stage,
   type SubStateStatus,
@@ -54,6 +56,14 @@ export class Processor {
         return this.updateSubState(projectId, command.cardId, command.stage, command.status);
       case 'requestAutomationToggle':
         return this.toggleAutomation(projectId, command.lane, command.on);
+      case 'requestPlanningSessionCreate':
+        return this.createPlanningSession(command.projectId);
+      case 'requestUserMessage':
+        return this.userMessage(projectId, command.sessionId, command.text);
+      case 'requestPlanDocumentUpdate':
+        return this.updatePlanDocument(projectId, command.sessionId, command.document);
+      case 'requestTicketsCreate':
+        return this.createTickets(projectId, command.sessionId, command.tickets);
       default:
         return rejected('invalidCommand', `${command.type} is not implemented yet`);
     }
@@ -287,6 +297,162 @@ export class Processor {
     return ok();
   }
 
+  // ---- Planning ----
+
+  /** Opens a planning session (v1 `create_session`); the command names the project. */
+  private async createPlanningSession(projectId: string): Promise<CommandOutcome> {
+    if (!this.bus.state.projects.has(projectId)) {
+      return rejected('unknownProject', `Unknown project ${projectId}`);
+    }
+    const session: PlanningSession = {
+      id: allocateId(this.sessionsOf(projectId).keys(), 'S'),
+      projectId,
+      createdAt: nowIso(),
+      status: 'drafting',
+      messages: [],
+      planDocument: '',
+    };
+    await this.bus.publish(projectId, 'planningSessionCreated', { session });
+    return ok();
+  }
+
+  /** Appends a user message (v1 `user_message`); drafting sessions only. */
+  private async userMessage(
+    scope: string | undefined,
+    sessionId: string,
+    text: string,
+  ): Promise<CommandOutcome> {
+    const found = this.findSession(scope, sessionId);
+    if (!found) {
+      return rejected('unknownSession', `Unknown session ${sessionId}`);
+    }
+    if (found.session.status !== 'drafting') {
+      return rejected('invalidCommand', `Session ${sessionId} is done; its transcript is closed`);
+    }
+    if (text.trim() === '') {
+      return rejected('invalidCommand', 'Message text is required');
+    }
+    const message: ChatMessage = {
+      index: nextMessageIndex(found.session),
+      role: 'user',
+      text,
+      at: nowIso(),
+    };
+    await this.bus.publish(found.projectId, 'userMessageReceived', {
+      sessionId: found.session.id,
+      message,
+    });
+    return ok();
+  }
+
+  /** Replaces the plan document wholesale (v1 `update_plan_document`). */
+  private async updatePlanDocument(
+    scope: string | undefined,
+    sessionId: string,
+    document: string,
+  ): Promise<CommandOutcome> {
+    const found = this.findSession(scope, sessionId);
+    if (!found) {
+      return rejected('unknownSession', `Unknown session ${sessionId}`);
+    }
+    if (found.session.status !== 'drafting') {
+      return rejected('invalidCommand', `Session ${sessionId} is done; its plan document is closed`);
+    }
+    await this.bus.publish(found.projectId, 'planDocumentUpdated', {
+      sessionId: found.session.id,
+      document,
+    });
+    return ok();
+  }
+
+  /**
+   * Emits the planner's tickets as cards (v1 `create_tickets`): in-batch
+   * keys remap onto the freshly assigned card ids, `blockedBy` entries must
+   * name an existing card or another ticket's key (never the ticket
+   * itself), and the session closes.
+   */
+  private async createTickets(
+    scope: string | undefined,
+    sessionId: string,
+    tickets: TicketEmission[],
+  ): Promise<CommandOutcome> {
+    const found = this.findSession(scope, sessionId);
+    if (!found) {
+      return rejected('unknownSession', `Unknown session ${sessionId}`);
+    }
+    if (found.session.status !== 'drafting') {
+      return rejected('invalidCommand', `Session ${sessionId} is done; its tickets were already emitted`);
+    }
+    if (tickets.length === 0) {
+      return rejected('invalidCommand', 'No tickets provided');
+    }
+    for (const ticket of tickets) {
+      if (ticket.title.trim() === '') {
+        return rejected('invalidCommand', 'Every ticket needs a title');
+      }
+      if (ticket.key !== undefined && ticket.key.trim() === '') {
+        return rejected('invalidCommand', `Ticket '${ticket.title}': key must not be empty`);
+      }
+    }
+    const keys = tickets.filter((ticket) => ticket.key !== undefined).map((ticket) => ticket.key);
+    if (new Set(keys).size !== keys.length) {
+      return rejected('invalidCommand', 'Ticket keys must be unique');
+    }
+    const keySet = new Set(keys);
+    const cards = this.cardsOf(found.projectId);
+    for (const ticket of tickets) {
+      for (const dep of ticket.blockedBy) {
+        if (dep === ticket.key) {
+          return rejected('invalidCommand', `Ticket '${ticket.title}': a ticket cannot block itself`);
+        }
+        if (!keySet.has(dep) && !cards.has(dep)) {
+          return rejected(
+            'invalidCommand',
+            `Ticket '${ticket.title}': blockedBy entry ${dep} is neither an existing card nor a ticket key`,
+          );
+        }
+      }
+    }
+
+    const first = Number(allocateId(cards.keys(), 'T').slice(2));
+    const cardIdByKey = new Map<string, string>();
+    const ids: string[] = tickets.map((_, offset) => `T-${first + offset}`);
+    tickets.forEach((ticket, offset) => {
+      if (ticket.key !== undefined) cardIdByKey.set(ticket.key, ids[offset]!);
+    });
+
+    const now = nowIso();
+    const emitted: Card[] = tickets.map((ticket, offset) => ({
+      id: ids[offset]!,
+      projectId: found.projectId,
+      type: ticket.cardType,
+      title: ticket.title,
+      description: ticket.description,
+      tags: [],
+      stage: 'new',
+      blockedBy: ticket.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
+      subState: subStateFor(ticket.cardType),
+      retries: {},
+      sessionId: found.session.id,
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+    await this.bus.publish(found.projectId, 'cardsCommitted', { cards: emitted });
+    for (const card of emitted) {
+      if (card.blockedBy.length === 0) continue;
+      await this.bus.publish(found.projectId, 'dependencyStateChanged', {
+        cardId: card.id,
+        blocked: true,
+        blockedBy: card.blockedBy,
+      });
+    }
+    await this.bus.publish(found.projectId, 'planningSessionCompleted', {
+      sessionId: found.session.id,
+    });
+    return ok();
+  }
+
   // ---- Card helpers ----
 
   private findCard(
@@ -309,6 +475,19 @@ export class Processor {
 
   private allocateCardId(projectId: string): string {
     return allocateId(this.cardsOf(projectId).keys(), 'T');
+  }
+
+  private sessionsOf(projectId: string): Map<string, PlanningSession> {
+    return this.bus.state.byProject.get(projectId)?.planningSessions ?? new Map();
+  }
+
+  private findSession(
+    scope: string | undefined,
+    sessionId: string,
+  ): { projectId: string; session: PlanningSession } | null {
+    if (scope === undefined) return null;
+    const session = this.sessionsOf(scope).get(sessionId);
+    return session ? { projectId: scope, session } : null;
   }
 
   /**
@@ -357,6 +536,11 @@ function isBlockedIn(cardsById: Map<string, Card>, card: Card): boolean {
 /** A timestamp the client actually set (v1's DEFAULT_TIMESTAMP sentinel → absent here). */
 function isSet(timestamp: string): boolean {
   return timestamp !== '' && Date.parse(timestamp) > 0;
+}
+
+/** One past the highest message index (v1 `next_message_index`; starts at 1). */
+function nextMessageIndex(session: PlanningSession): number {
+  return session.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
 }
 
 /** One past the highest numeric suffix in use ("P-3" → "P-4"). */

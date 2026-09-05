@@ -41,6 +41,27 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       events.push(frame(project.id, 'automationToggled', { lane, on }, index++));
     }
 
+    // Planning sessions replay their current record (the creation event
+    // carries the folded session: document and messages included) and then
+    // each message, so partial folds reconcile idempotently (v1 order).
+    const sessions = [...projectState.planningSessions.values()].sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+    );
+    for (const session of sessions) {
+      events.push(frame(project.id, 'planningSessionCreated', { session: structuredClone(session) }, index++));
+      for (const message of session.messages) {
+        const eventType = message.role === 'user' ? 'userMessageReceived' : 'agentMessageComplete';
+        events.push(
+          frame(
+            project.id,
+            eventType,
+            { sessionId: session.id, message: structuredClone(message) },
+            index++,
+          ),
+        );
+      }
+    }
+
     for (const card of [...projectState.cards.values()].sort(
       (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
     )) {
