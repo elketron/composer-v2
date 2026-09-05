@@ -5,6 +5,14 @@ const registry = require('./server-registry');
 
 const devServerUrl = process.env['COMPOSER_DEV_SERVER_URL'];
 
+// The debugger (electron-debug MCP smoke): opt-in Chrome DevTools remote
+// debugging — `COMPOSER_DEBUG_PORT=<port>` exposes the CDP endpoint the
+// MCP attaches to (same window, dev-server or dist boot).
+const debugPort = process.env['COMPOSER_DEBUG_PORT'];
+if (debugPort) {
+    app.commandLine.appendSwitch('remote-debugging-port', debugPort);
+}
+
 // The renderer talks to the server directly over REST + SSE; main owns the
 // native surfaces the renderer cannot reach: the directory picker and the
 // server gateway (probe + spawn-on-refusal).

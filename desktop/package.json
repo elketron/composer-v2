@@ -5,6 +5,7 @@
     "ng": "ng",
     "start": "ng serve",
     "start:electron": "concurrently -k \"npm:start\" \"wait-on tcp:4200 && COMPOSER_DEV_SERVER_URL=http://localhost:4200 electron .\"",
+    "start:electron:debug": "concurrently -k \"npm:start\" \"wait-on tcp:4200 && COMPOSER_DEV_SERVER_URL=http://localhost:4200 COMPOSER_DEBUG_PORT=9222 electron .\"",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
