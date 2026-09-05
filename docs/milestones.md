@@ -54,30 +54,55 @@ Exit criteria (met): `pnpm verify` green (server 17, desktop 131); the
 desktop builds against the trimmed wire; the boot contract e2e covers
 health, malformed-action 400, snapshot + live SSE, restart replay.
 
-## S1 — Domain core  ·  planned
+## S1 — Domain core  ·  done (2026-09-05)
 
 Cards, lanes, sub-state, blockers, automation — the board's engine,
 ported from v1's processor semantics (same validation order, same
 rejection messages, same emitted event lists).
 
 - Commands: `requestCardCreate` / `requestCardsCreate` (blockedBy must
-  reference existing cards; ids allocate `T-N` per project; initial
-  sub-state per type), `requestCardMove` (lane-valid for the type,
-  blockers unless `override`, same-lane no-op, automation honored for
-  agent moves — human drags never blocked), `requestCardTypeChange`
-  (resets sub-state; invalid lane falls back to new),
-  `requestCardArchive`, `requestSubStateUpdate`,
+  reference existing cards — validated against the pre-command state, so
+  in-batch cross-references reject; in-batch keys are the planner-ticket
+  path, S2. ids allocate `T-N` per project; initial sub-state per type),
+  `requestCardMove` (lane-valid for the type, blockers unless `override`,
+  same-lane no-op, automation honored for agent moves — human drags never
+  blocked), `requestCardTypeChange` (resets sub-state; invalid lane falls
+  back to new), `requestCardArchive`, `requestSubStateUpdate`,
   `requestAutomationToggle`.
-- Fold: card moves (New unassigns; rejection comments),
-  type changes, sub-state, dependency state, automation.
+- Fold: card moves (New unassigns; the move's comment records as
+  `rejectionComment` whenever present), type changes, sub-state,
+  dependency state (derived — the fold ignores
+  `dependencyStateChanged`, clients compute blocked-ness), automation
+  (absent lane = on).
 - Action mapping: `create`/`update`/`delete` on `card`, `update` on
-  `automation`.
+  `automation` — the desktop's `actionForCommand` routes verified against
+  it.
 - Tests: v1's processor behavioral suite re-expressed (create/move/
-  blockers/type-change/automation) + fold/snapshot round-trips.
+  blockers/type-change/automation) + fold/snapshot round-trips + an
+  http e2e driving the whole card surface through `POST /action`.
 
-Exit criteria: the desktop board is fully interactive against v2
-(create, drag, block, archive); the processor suite is green; the wire
-is untouched (golden stays).
+Exit criteria (met): the desktop board is fully interactive against v2
+(drag, block, archive — the desktop has no card-create UI, so create is
+covered at the action surface); the processor suite is green; the wire
+is untouched (golden stays). `pnpm verify`: server 31, desktop 131.
+
+Notes for later slices (researched while porting):
+
+- v1's processor collects events then publishes after validation; v2
+  publishes each event as it goes. For bulk card create this is a
+  deliberate fix: ids allocate per publish, so one batch gets `T-1`,
+  `T-2`, … (v1's allocate-then-publish would duplicate `T-1` across a
+  batch). Validation still runs over the whole batch before the first
+  publish, so a bad batch emits nothing.
+- Archiving a blocker emits no `dependencyStateChanged` (v1 semantics:
+  missing blockers don't block, and the fold derives blocked-ness
+  client-side). Don't "fix" this asymmetry later.
+- Rejection messages interpolate C# enum names (`Lane Security is not
+  valid for Design cards`) — `stageCsName` / `cardTypeCsName` in
+  `wire/models.ts` exist for exactly this.
+- The wire-enum parse rule (unknown string → first variant: `new` /
+  `coding` / `pending`) lives in the action mapper (`http.ts`); the
+  desktop mirrors it in `wire.ts`.
 
 ## S2 — Planning turn  ·  planned
 

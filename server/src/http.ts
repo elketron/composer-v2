@@ -9,6 +9,8 @@ import { streamSSE } from 'hono/streaming';
 import type { Bus } from './bus.js';
 import type { Processor } from './processor.js';
 import type { Command } from './wire/commands.js';
+import type { Card, CardType, Stage, SubStateStatus } from './wire/models.js';
+import { ALL_STAGES } from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
 
 export function router(bus: Bus, processor: Processor): Hono {
@@ -23,11 +25,11 @@ export function router(bus: Bus, processor: Processor): Hono {
 
   app.post('/action', async (context) => {
     const action = await context.req.json<unknown>().catch(() => undefined);
-    const command = fromAction(action);
+    const scope = readScope(action);
+    const command = fromAction(action, scope);
     if (command === null) {
       return context.json({ error: 'malformed action', detail: 'unknown action shape' }, 400);
     }
-    const scope = readScope(action);
     const outcome = await processor.execute(scope, command);
     if (outcome.ok) {
       return context.json({ ok: true });
@@ -83,7 +85,7 @@ export function router(bus: Bus, processor: Processor): Hono {
 }
 
 /** The action envelope → command mapping (v1 actions.rs, mechanical). */
-export function fromAction(action: unknown): Command | null {
+export function fromAction(action: unknown, scopeProjectId?: string): Command | null {
   if (typeof action !== 'object' || action === null) return null;
   const record = action as Record<string, unknown>;
   const type = readString(record, 'type');
@@ -114,9 +116,147 @@ export function fromAction(action: unknown): Command | null {
       }
       return null;
     }
+    case 'create:card': {
+      // A single card object, or { cards: [...] } for bulk.
+      const cards = body['cards'];
+      if (Array.isArray(cards)) {
+        return { type: 'requestCardsCreate', cards: cards.map((card) => readCard(card, scopeProjectId)) };
+      }
+      return { type: 'requestCardCreate', card: readCard(body, scopeProjectId) };
+    }
+    case 'update:card': {
+      const id = str('id') ?? scopeProjectId;
+      if (id === undefined) return null;
+      const hasStage = 'stage' in body;
+      const hasType = 'type' in body;
+      const hasSubState = 'subState' in body;
+      // Exactly one mutation field must be present.
+      if (Number(hasStage) + Number(hasType) + Number(hasSubState) !== 1) return null;
+      if (hasStage) {
+        return {
+          type: 'requestCardMove',
+          cardId: id,
+          toLane: parseStage(str('stage')),
+          override: bool('override') ?? false,
+          ...(str('comment') !== undefined ? { comment: str('comment') } : {}),
+        };
+      }
+      if (hasType) {
+        return { type: 'requestCardTypeChange', cardId: id, toType: parseCardType(str('type')) };
+      }
+      const subState = readObject(body, 'subState');
+      if (subState === undefined || !('stage' in subState) || !('status' in subState)) return null;
+      return {
+        type: 'requestSubStateUpdate',
+        cardId: id,
+        stage: typeof subState['stage'] === 'string' ? subState['stage'] : '',
+        status: parseSubStateStatus(
+          typeof subState['status'] === 'string' ? subState['status'] : '',
+        ),
+      };
+    }
+    case 'delete:card':
+      return { type: 'requestCardArchive', cardId: str('id') ?? '' };
+    case 'update:automation':
+      return { type: 'requestAutomationToggle', lane: parseStage(str('lane')), on: bool('on') ?? false };
     default:
       return null;
   }
+}
+
+/** Wire-enum parsing: unknown strings fall back to the first variant (v1 rule). */
+function parseStage(value: string | undefined): Stage {
+  return ALL_STAGES.includes(value as Stage) ? (value as Stage) : 'new';
+}
+
+function parseCardType(value: string | undefined): CardType {
+  return value === 'design' || value === 'docs' ? value : 'coding';
+}
+
+function parseSubStateStatus(value: string | undefined): SubStateStatus {
+  return value === 'running' || value === 'ok' || value === 'failed' ? value : 'pending';
+}
+
+/** The card the client meant — every field lenient, defaults where absent. */
+function readCard(json: unknown, scopeProjectId: string | undefined): Card {
+  const card = typeof json === 'object' && json !== null ? (json as Record<string, unknown>) : {};
+  const str = (key: string): string | undefined => readString(card, key);
+  const assigneeJson = readObject(card, 'assignee');
+  const assigneeRole = readString(assigneeJson ?? {}, 'role') ?? 'human';
+  const fileStats = readObject(card, 'fileStats');
+  const createdAt = str('createdAt');
+  const updatedAt = str('updatedAt');
+  const created = createdAt !== undefined && Date.parse(createdAt) > 0 ? createdAt : '';
+  const updated = updatedAt !== undefined && Date.parse(updatedAt) > 0 ? updatedAt : '';
+  return {
+    id: str('id') ?? '',
+    projectId: str('projectId') ?? scopeProjectId ?? '',
+    type: parseCardType(str('type') ?? 'coding'),
+    title: str('title') ?? '',
+    description: str('description') ?? '',
+    tags: readStringArray(card, 'tags'),
+    stage: parseStage(str('stage') ?? 'new'),
+    blockedBy: readStringArray(card, 'blockedBy'),
+    ...(assigneeJson !== undefined
+      ? {
+          assignee:
+            assigneeRole === 'human'
+              ? { role: 'human' }
+              : {
+                  role: assigneeRole,
+                  ...(readString(assigneeJson, 'model') ? { model: readString(assigneeJson, 'model') } : {}),
+                  ...(readString(assigneeJson, 'effort') ? { effort: readString(assigneeJson, 'effort') } : {}),
+                },
+        }
+      : {}),
+    ...(str('sessionId') !== undefined ? { sessionId: str('sessionId') } : {}),
+    ...(str('branch') !== undefined ? { branch: str('branch') } : {}),
+    ...(fileStats !== undefined
+      ? {
+          fileStats: {
+            added: readNumber(fileStats, 'added'),
+            removed: readNumber(fileStats, 'removed'),
+            files: readNumber(fileStats, 'files'),
+          },
+        }
+      : {}),
+    subState: readSubState(card),
+    retries: readRetries(card),
+    ...(str('rejectionComment') !== undefined ? { rejectionComment: str('rejectionComment') } : {}),
+    createdAt: created,
+    updatedAt: updated,
+  };
+}
+
+function readSubState(card: Record<string, unknown>): Record<string, SubStateStatus> {
+  const json = readObject(card, 'subState');
+  if (json === undefined) return {};
+  const result: Record<string, SubStateStatus> = {};
+  for (const [key, value] of Object.entries(json)) {
+    result[key] = parseSubStateStatus(typeof value === 'string' ? value : 'pending');
+  }
+  return result;
+}
+
+function readRetries(card: Record<string, unknown>): Record<string, number> {
+  const json = readObject(card, 'retries');
+  if (json === undefined) return {};
+  const result: Record<string, number> = {};
+  for (const [key, value] of Object.entries(json)) {
+    if (typeof value === 'number' && Number.isFinite(value)) result[key] = value;
+  }
+  return result;
+}
+
+function readStringArray(record: Record<string, unknown>, key: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry !== '');
+}
+
+function readNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 function readScope(action: unknown): string | undefined {

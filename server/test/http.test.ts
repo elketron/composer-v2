@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { boot } from '../src/index.js';
+import { subStateFor } from '../src/wire/models.js';
 
 let dir: string;
 let server: Awaited<ReturnType<typeof boot>>;
@@ -64,6 +65,104 @@ describe('the boot contract', () => {
     const result = await action({ type: 'conjure', on: 'card' });
     expect(result.status).toBe(400);
   });
+
+  it('card_actions_drive_the_board_end_to_end', async () => {
+    // Subscribe before anything happens: the empty snapshot is 0 frames,
+    // then every action's live event arrives in order.
+    const framesPromise = collectFrames(server.url, 10);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await action({ type: 'create', on: 'project', body: { name: 'alpha' } });
+
+    // create:card (single) — the server assigns id and sub-state.
+    const created = await action({
+      type: 'create',
+      on: 'card',
+      projectId: 'P-1',
+      body: { title: 'Board drag & drop', type: 'coding' },
+    });
+    expect(created).toEqual({ status: 200, json: { ok: true } });
+
+    // create:card (bulk) — blockedBy references the existing card.
+    const bulk = await action({
+      type: 'create',
+      on: 'card',
+      projectId: 'P-1',
+      body: { cards: [{ title: 'dependent', type: 'coding', blockedBy: ['T-1'] }] },
+    });
+    expect(bulk).toEqual({ status: 200, json: { ok: true } });
+
+    // update:card (stage) — the drag.
+    const moved = await action({
+      type: 'update',
+      on: 'card',
+      projectId: 'P-1',
+      body: { id: 'T-1', stage: 'validation' },
+    });
+    expect(moved.json).toEqual({ ok: true });
+
+    // update:card (subState) — the checklist.
+    const subState = await action({
+      type: 'update',
+      on: 'card',
+      projectId: 'P-1',
+      body: { id: 'T-1', subState: { stage: 'runValidation', status: 'ok' } },
+    });
+    expect(subState.json).toEqual({ ok: true });
+
+    // update:automation — the lane toggle.
+    const automation = await action({
+      type: 'update',
+      on: 'automation',
+      projectId: 'P-1',
+      body: { lane: 'validation', on: false },
+    });
+    expect(automation.json).toEqual({ ok: true });
+
+    // update:card (type) — resets sub-state; validation is not a design lane.
+    const typeChange = await action({
+      type: 'update',
+      on: 'card',
+      projectId: 'P-1',
+      body: { id: 'T-1', type: 'design' },
+    });
+    expect(typeChange.json).toEqual({ ok: true });
+
+    // delete:card — archive.
+    const archived = await action({
+      type: 'delete',
+      on: 'card',
+      projectId: 'P-1',
+      body: { id: 'T-2' },
+    });
+    expect(archived.json).toEqual({ ok: true });
+
+    // update:card with two mutation fields is malformed, not a rejection.
+    const ambiguous = await action({
+      type: 'update',
+      on: 'card',
+      projectId: 'P-1',
+      body: { id: 'T-1', stage: 'review', type: 'docs' },
+    });
+    expect(ambiguous.status).toBe(400);
+
+    const frames = await framesPromise;
+    expect(frames.map((frame) => frame['eventType'])).toEqual([
+      'projectCreated',
+      'projectActivated',
+      'cardCreated',
+      'cardCreated',
+      'dependencyStateChanged',
+      'cardMoved',
+      'subStateUpdated',
+      'automationToggled',
+      'cardTypeChanged',
+      'cardArchived',
+    ]);
+    const dependent = frames[3]?.body as { card: { id: string; blockedBy: string[]; subState: Record<string, string> } };
+    expect(dependent.card).toMatchObject({ id: 'T-2', blockedBy: ['T-1'] });
+    expect(dependent.card.subState).toEqual(subStateFor('coding'));
+  }, 15_000);
 
   it('a_created_project_replays_in_the_snapshot_and_streams_live', async () => {
     const created = await action({

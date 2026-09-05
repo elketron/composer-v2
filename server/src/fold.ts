@@ -4,6 +4,7 @@
 
 import type { EventBodyMap, EventName } from './wire/events.js';
 import type { EventEnvelope } from './wire/envelope.js';
+import { isLaneValid, subStateFor } from './wire/models.js';
 import type { Pipeline, Project, Stage } from './wire/models.js';
 
 /** Where a card's pipeline run is (keyed by card id, one per card). */
@@ -111,8 +112,7 @@ function projectStateOf(state: State, projectId: string): ProjectState {
  */
 export function apply(state: State, envelope: EventEnvelope): void {
   const name = envelope.name as EventName;
-  const projectId = envelope.projectId;
-  void projectId;
+  const projectId = envelope.projectId ?? '';
 
   switch (name) {
     case 'projectCreated': {
@@ -129,6 +129,56 @@ export function apply(state: State, envelope: EventEnvelope): void {
     }
     case 'projectActivated': {
       // Active tab is UI state; the event exists for other subscribers.
+      break;
+    }
+    case 'cardCreated': {
+      const body = envelope.body as EventBodyMap['cardCreated'];
+      const cards = projectStateOf(state, projectId).cards;
+      cards.set(body.card.id, structuredClone(body.card));
+      break;
+    }
+    case 'cardMoved': {
+      const body = envelope.body as EventBodyMap['cardMoved'];
+      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      if (!card) break;
+      card.stage = body.to;
+      // Dragging to New unassigns (v1 design.md §3.4).
+      if (body.to === 'new') card.assignee = undefined;
+      // The move's comment is the rejection comment of an approval →
+      // implement-lane drag; every move carries it (possibly empty).
+      if (body.comment !== undefined) card.rejectionComment = body.comment;
+      card.updatedAt = envelope.occurredAt;
+      break;
+    }
+    case 'cardTypeChanged': {
+      const body = envelope.body as EventBodyMap['cardTypeChanged'];
+      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      if (!card) break;
+      card.type = body.to;
+      card.subState = subStateFor(body.to);
+      if (!isLaneValid(body.to, card.stage)) card.stage = 'new';
+      card.updatedAt = envelope.occurredAt;
+      break;
+    }
+    case 'cardArchived': {
+      const body = envelope.body as EventBodyMap['cardArchived'];
+      projectStateOf(state, projectId).cards.delete(body.cardId);
+      break;
+    }
+    case 'subStateUpdated': {
+      const body = envelope.body as EventBodyMap['subStateUpdated'];
+      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      if (!card) break;
+      card.subState[body.stage] = body.status;
+      card.updatedAt = envelope.occurredAt;
+      break;
+    }
+    case 'dependencyStateChanged':
+      // Derived state; clients fold blocked-ness from card data themselves.
+      break;
+    case 'automationToggled': {
+      const body = envelope.body as EventBodyMap['automationToggled'];
+      projectStateOf(state, projectId).automation.set(body.lane as Stage, body.on);
       break;
     }
     default:

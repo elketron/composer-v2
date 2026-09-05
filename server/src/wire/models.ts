@@ -175,3 +175,24 @@ export function implementLaneFor(type: CardType): Stage {
 export function isLaneValid(type: CardType, stage: Stage): boolean {
   return lanesFor(type).includes(stage);
 }
+
+/** The C# enum member name — v1's rejection messages interpolate these. */
+const STAGE_CS_NAMES: Record<Stage, string> = {
+  new: 'New',
+  coding: 'Coding',
+  design: 'Design',
+  docs: 'Docs',
+  validation: 'Validation',
+  review: 'Review',
+  security: 'Security',
+  approval: 'Approval',
+  done: 'Done',
+};
+
+export function stageCsName(stage: Stage): string {
+  return STAGE_CS_NAMES[stage];
+}
+
+export function cardTypeCsName(type: CardType): string {
+  return type === 'coding' ? 'Coding' : type === 'design' ? 'Design' : 'Docs';
+}
