@@ -65,22 +65,27 @@ export async function boot(config: Config): Promise<{
   const boundPort = typeof address === 'object' && address !== null ? address.port : Number(port);
   const url = `http://${hostname === '0.0.0.0' ? '127.0.0.1' : hostname}:${boundPort}`;
 
-  // The planning turn (S2) and the pipeline runner (S3) share the engine.
+  // The engine (real opencode, or the scripted fake) is shared by the
+  // planning turn and the pipeline runner. The kill switch gates only the
+  // planner; user-authored pipelines always run.
   const plannerEnabled = config.plannerEnabled ?? process.env['COMPOSER_PLANNER_ENABLED'] !== '0';
+  const makeEngine = (): AgentEngine =>
+    config.engineFactory?.(processor) ??
+    (process.env['COMPOSER_FAKE_ENGINE'] === '1'
+      ? new FakeEngine(processor)
+      : new OpenCodeEngine());
   let stopPlanning: () => void = () => undefined;
   let stopRunner: () => void = () => undefined;
-  if (plannerEnabled) {
-    const engine =
-      config.engineFactory?.(processor) ??
-      (process.env['COMPOSER_FAKE_ENGINE'] === '1'
-        ? new FakeEngine(processor)
-        : new OpenCodeEngine());
-    const orchestrator = new PlanningOrchestrator(bus, engine, {
-      serverUrl: url,
-      mcpScriptPath: mcpScriptPath(),
-    });
-    orchestrator.start();
-    stopPlanning = () => orchestrator.stop();
+  {
+    const engine = makeEngine();
+    if (plannerEnabled) {
+      const orchestrator = new PlanningOrchestrator(bus, engine, {
+        serverUrl: url,
+        mcpScriptPath: mcpScriptPath(),
+      });
+      orchestrator.start();
+      stopPlanning = () => orchestrator.stop();
+    }
     const runner = new PipelineRunner(bus, processor, engine, {
       serverUrl: url,
       mcpScriptPath: mcpScriptPath(),

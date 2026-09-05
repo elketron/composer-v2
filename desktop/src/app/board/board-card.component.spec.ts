@@ -1,5 +1,11 @@
 import { TestBed } from '@angular/core/testing';
 
+import {
+  FakeEventsClient,
+  provideFakeEventsClient,
+  seedProject,
+  wireEvent,
+} from '../core/events/events-client.fake';
 import { Assignee, Card, CardData } from '../core/models/board.models';
 import { BoardCardComponent } from './board-card.component';
 
@@ -21,8 +27,14 @@ function card(overrides: Partial<CardData> = {}): Card {
 }
 
 describe('BoardCardComponent', () => {
+  let events: FakeEventsClient;
+
   beforeEach(async () => {
-    await TestBed.configureTestingModule({ imports: [BoardCardComponent] }).compileComponents();
+    events = new FakeEventsClient();
+    await TestBed.configureTestingModule({
+      imports: [BoardCardComponent],
+      providers: [provideFakeEventsClient(events)],
+    }).compileComponents();
   });
 
   async function render(c: Card, blocked = false) {
@@ -63,6 +75,32 @@ describe('BoardCardComponent', () => {
     const el = (await render(card({ assignee: Assignee.human() })))
       .nativeElement as HTMLElement;
     expect(el.textContent).toContain('you');
+  });
+
+  it('shows the run chip while a pipeline works the card, pulsing at the gate', async () => {
+    const fixture = await render(card());
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.run-chip')).toBeNull();
+
+    // The run selector keys on the shell's active tab; the seed
+    // auto-activates the project (services subscribed at render).
+    seedProject(events, 'P-1');
+    events.emit(wireEvent('pipelineRunStarted', { cardId: 'T-1', pipelineId: 'PL-1' }));
+    await fixture.whenStable();
+    const chip = el.querySelector('.run-chip');
+    expect(chip?.textContent).toContain('queued');
+    expect(chip?.classList).not.toContain('waiting');
+
+    events.emit(
+      wireEvent('pipelineStepStarted', { cardId: 'T-1', pipelineId: 'PL-1', stepId: 'st-3', kind: 'human' }),
+    );
+    await fixture.whenStable();
+    expect(el.querySelector('.run-chip')?.textContent).toContain('approval');
+    expect(el.querySelector('.run-chip')?.classList).toContain('waiting');
+
+    events.emit(wireEvent('pipelineRunEnded', { cardId: 'T-1', pipelineId: 'PL-1', status: 'completed' }));
+    await fixture.whenStable();
+    expect(el.querySelector('.run-chip')).toBeNull();
   });
 
   it('renders the lock chip with blocker count when blocked', async () => {

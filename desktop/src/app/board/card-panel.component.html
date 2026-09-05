@@ -72,6 +72,68 @@
       }
 
       <div class="field">
+        <span class="label">pipeline run</span>
+        @if (run(); as runState) {
+          <div class="run-progress" [class.waiting]="runState.status === 'waiting'">
+            <div class="run-row">
+              <span class="run-name">{{ runPipeline()?.name ?? runState.pipelineId }}</span>
+              <span class="run-status">
+                @if (runState.status === 'waiting') {
+                  <span class="gate-label">waiting at the gate</span>
+                } @else {
+                  {{ runStep() ? runStep()!.id : 'working…' }}
+                }
+              </span>
+              <button class="run-stop" (click)="stopPipeline()" title="stop the run">
+                <lucide-icon [img]="icons.stop" [size]="10" />
+                stop
+              </button>
+            </div>
+            @if (runStep(); as step) {
+              <p class="run-detail">
+                {{ step.kind === 'agent' ? 'agent' : step.kind === 'command' ? 'command' : 'approval gate' }}
+                @if (step.kind === 'agent' && step.agentKind) { · composer-{{ step.agentKind }} }
+                @if (step.kind === 'command' && step.command) { · {{ step.command }} }
+                @if (step.kind === 'human' && step.description) { · {{ step.description }} }
+              </p>
+            }
+            @if (runState.status === 'waiting') {
+              <div class="gate">
+                <input
+                  class="gate-comment"
+                  type="text"
+                  placeholder="comment (optional)"
+                  [ngModel]="gateComment()"
+                  (ngModelChange)="gateComment.set($event)"
+                />
+                <button class="gate-approve" (click)="approveGate()">approve</button>
+                <button class="gate-reject" (click)="rejectGate()">reject</button>
+              </div>
+            }
+          </div>
+        } @else if (pipelineOptions().length > 0) {
+          <div class="run-start">
+            <select [(ngModel)]="selectedPipelineId">
+              <option value="" disabled>run a pipeline…</option>
+              @for (pipeline of pipelineOptions(); track pipeline.id) {
+                <option [value]="pipeline.id">{{ pipeline.name }}</option>
+              }
+            </select>
+            <button
+              class="run-button"
+              [disabled]="selectedPipelineId() === ''"
+              (click)="startPipeline()"
+            >
+              <lucide-icon [img]="icons.run" [size]="10" />
+              run
+            </button>
+          </div>
+        } @else {
+          <span class="none">no pipelines — author one in the pipelines view</span>
+        }
+      </div>
+
+      <div class="field">
         <span class="label">session</span>
         <div class="meta-rows">
           <div class="meta-row">

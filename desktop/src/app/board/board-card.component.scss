@@ -168,3 +168,21 @@
 .files .del {
   color: var(--err);
 }
+
+.run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  color: var(--run);
+  background: color-mix(in srgb, var(--run) 14%, transparent);
+
+  &.waiting {
+    color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 14%, transparent);
+  }
+}

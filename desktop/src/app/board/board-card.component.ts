@@ -1,15 +1,16 @@
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { LucideAngularModule } from 'lucide-angular';
-import { Lock, MessageSquare } from 'lucide-angular';
+import { Bot, Lock, MessageSquare, SquareCheck, Terminal } from 'lucide-angular';
 
 import { AgePipe } from '../core/age.pipe';
 import { Card } from '../core/models/board.models';
+import { PipelineService } from '../pipelines/pipeline.service';
 
 /**
  * Card anatomy (design.md §3.2): type icon + accent bar, id, tags, title,
  * two-line snippet, assignee + age, session link + file stats, dependency
- * lock chip, pulse indicator while an agent works the card. Click or Enter
- * opens the card in the detail panel.
+ * lock chip, run chip while a pipeline works the card (pulsing at a gate).
+ * Click or Enter opens the card in the detail panel.
  */
 @Component({
   selector: 'app-board-card',
@@ -25,6 +26,8 @@ import { Card } from '../core/models/board.models';
   },
 })
 export class BoardCardComponent {
+  private readonly pipelines = inject(PipelineService);
+
   readonly card = input.required<Card>();
   readonly blocked = input(false);
 
@@ -33,6 +36,35 @@ export class BoardCardComponent {
 
   protected readonly meta = computed(() => this.card().meta);
   protected readonly working = computed(() => this.card().isWorking());
+
+  /** The card's pipeline run, if any (the board's progress projection). */
+  protected readonly run = computed(() => this.pipelines.runForCard(this.card().id));
+
+  protected readonly runLabel = computed(() => {
+    const run = this.run();
+    if (run === undefined) return null;
+    switch (run.stepKind) {
+      case 'agent':
+        return 'agent';
+      case 'command':
+        return 'command';
+      case 'human':
+        return 'approval';
+      default:
+        return 'queued';
+    }
+  });
+
+  protected readonly runIcon = computed(() => {
+    switch (this.run()?.stepKind) {
+      case 'command':
+        return Terminal;
+      case 'human':
+        return SquareCheck;
+      default:
+        return Bot;
+    }
+  });
 
   protected readonly hasStats = computed(() => {
     const stats = this.card().fileStats;

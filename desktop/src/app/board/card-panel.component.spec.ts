@@ -5,9 +5,17 @@ import {
   provideFakeEventsClient,
   seedCard,
   seedProject,
+  wireEvent,
 } from '../core/events/events-client.fake';
-import { WireCardType, WireStage, WireSubStateStatus } from '../core/events/wire';
+import {
+  WireCardType,
+  WirePipelineRunStatus,
+  WirePipelineStepKind,
+  WireStage,
+  WireSubStateStatus,
+} from '../core/events/wire';
 import { Card } from '../core/models/board.models';
+import { PipelineService } from '../pipelines/pipeline.service';
 import { BoardService } from './board.service';
 import { CardPanelComponent } from './card-panel.component';
 
@@ -22,6 +30,7 @@ describe('CardPanelComponent', () => {
       providers: [provideFakeEventsClient(events)],
     }).compileComponents();
     service = TestBed.inject(BoardService);
+    TestBed.inject(PipelineService);
     seedProject(events, 'P-1');
     seedCards();
   });
@@ -188,5 +197,96 @@ describe('CardPanelComponent', () => {
     service.recordRejectionComment('needs more tests');
     const fixture = await render('T-131');
     expect(el(fixture).querySelector('.rejection')?.textContent).toContain('needs more tests');
+  });
+
+  it('shows the run with the gate affordance and answers it', async () => {
+    // A pipeline waiting at its gate on T-148.
+    events.emit(
+      wireEvent('pipelineSaved', {
+        pipeline: {
+          id: 'PL-1',
+          projectId: 'P-1',
+          name: 'Standard coding card',
+          steps: [
+            { id: 'st-1', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_AGENT, agentKind: 'coder', instructions: 'x' },
+            { id: 'st-2', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_HUMAN, description: 'Approval' },
+          ],
+          updatedAt: '',
+        },
+      }),
+    );
+    events.emit(wireEvent('pipelineRunStarted', { cardId: 'T-148', pipelineId: 'PL-1' }));
+    events.emit(
+      wireEvent('pipelineStepStarted', {
+        cardId: 'T-148',
+        pipelineId: 'PL-1',
+        stepId: 'st-2',
+        kind: WirePipelineStepKind.PIPELINE_STEP_KIND_HUMAN,
+      }),
+    );
+
+    const fixture = await render('T-148');
+    const view = el(fixture);
+    expect(view.querySelector('.run-progress')?.classList).toContain('waiting');
+    expect(view.textContent).toContain('waiting at the gate');
+
+    // Approving publishes the gate response with the comment.
+    const comment = view.querySelector<HTMLInputElement>('.gate-comment')!;
+    comment.value = 'ship it';
+    comment.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    view.querySelector<HTMLButtonElement>('.gate-approve')!.click();
+    await fixture.whenStable();
+
+    expect(events.lastCommand('requestPipelineGateRespond')).toMatchObject({
+      requestPipelineGateRespond: { cardId: 'T-148', approved: true, comment: 'ship it' },
+    });
+  });
+
+  it('offers run and stop for the card', async () => {
+    events.emit(
+      wireEvent('pipelineSaved', {
+        pipeline: {
+          id: 'PL-1',
+          projectId: 'P-1',
+          name: 'Standard coding card',
+          steps: [{ id: 'st-1', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_AGENT, agentKind: 'coder', instructions: 'x' }],
+          updatedAt: '',
+        },
+      }),
+    );
+
+    const fixture = await render('T-148');
+    const view = el(fixture);
+    // No run yet: the start affordance.
+    expect(view.querySelector('.run-progress')).toBeNull();
+    const select = view.querySelector<HTMLSelectElement>('.run-start select')!;
+    select.value = 'PL-1';
+    select.dispatchEvent(new Event('change'));
+    await fixture.whenStable();
+    view.querySelector<HTMLButtonElement>('.run-button')!.click();
+    await fixture.whenStable();
+    expect(events.lastCommand('requestPipelineRun')).toMatchObject({
+      requestPipelineRun: { pipelineId: 'PL-1', cardId: 'T-148' },
+    });
+
+    // Once running: the stop affordance replaces the start affordance.
+    events.emit(wireEvent('pipelineRunStarted', { cardId: 'T-148', pipelineId: 'PL-1' }));
+    events.emit(
+      wireEvent('pipelineStepStarted', {
+        cardId: 'T-148',
+        pipelineId: 'PL-1',
+        stepId: 'st-1',
+        kind: WirePipelineStepKind.PIPELINE_STEP_KIND_AGENT,
+      }),
+    );
+    const running = await render('T-148');
+    const runningView = el(running);
+    expect(runningView.querySelector('.run-progress')?.classList).not.toContain('waiting');
+    runningView.querySelector<HTMLButtonElement>('.run-stop')!.click();
+    await running.whenStable();
+    expect(events.lastCommand('requestPipelineStop')).toMatchObject({
+      requestPipelineStop: { cardId: 'T-148' },
+    });
   });
 });

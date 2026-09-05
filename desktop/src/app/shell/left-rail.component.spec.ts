@@ -19,25 +19,23 @@ describe('LeftRailComponent', () => {
     expect(entries.length).toBe(7); // board, plan, agent, canvas, library + account, settings
   });
 
-  it('wires board, plan and settings as links', async () => {
+  it('wires board, plan, pipelines, coding and settings as links', async () => {
     const fixture = TestBed.createComponent(LeftRailComponent);
     await fixture.whenStable();
     const links = [...(fixture.nativeElement as HTMLElement).querySelectorAll('a.entry')];
     const labels = links.map((a) => a.getAttribute('aria-label'));
 
-    expect(labels).toEqual(['board', 'plan', 'settings']);
+    expect(labels).toEqual(['board', 'plan', 'pipelines', 'coding', 'settings']);
   });
 
-  it('renders agent, canvas, library and account as disabled stubs', async () => {
+  it('renders canvas and account as disabled stubs', async () => {
     const fixture = TestBed.createComponent(LeftRailComponent);
     await fixture.whenStable();
     const disabled = [...(fixture.nativeElement as HTMLElement).querySelectorAll('.entry.disabled')];
     const labels = disabled.map((el) => el.getAttribute('title'));
 
     expect(labels).toEqual([
-      'agent · lands in M2',
       'canvas · lands in M2',
-      'library · lands in M2',
       'account · lands in M2',
     ]);
     for (const el of disabled) {

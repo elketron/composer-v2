@@ -1,0 +1,157 @@
+<div class="editor">
+  <header class="head">
+    <lucide-icon [img]="icons.workflow" [size]="14" />
+    <h1>pipelines</h1>
+    @if (editing() === null && canEdit()) {
+      <button class="new" (click)="newPipeline()">
+        <lucide-icon [img]="icons.plus" [size]="12" />
+        new pipeline
+      </button>
+    }
+  </header>
+
+  @if (projectId() === null) {
+    <p class="empty">open a project first</p>
+  } @else if (editing(); as draft) {
+    <!-- The step builder -->
+    <section class="form">
+      <label class="name-row">
+        <span class="label">name</span>
+        <input
+          type="text"
+          placeholder="Standard coding card"
+          [ngModel]="draft.name"
+          (ngModelChange)="updateName($event)"
+        />
+      </label>
+
+      <p class="hint">steps run in order · agent = the runtime · command = a shell step · gate = waits for approval</p>
+
+      <div class="steps">
+        @for (step of draft.steps; track $index) {
+          <div class="step" [class.invalid]="validate(draft.name, draft.steps) !== null">
+            <div class="step-head">
+              <span class="index">{{ $index + 1 }}</span>
+              <select
+                [ngModel]="step.kind"
+                (ngModelChange)="updateStep($index, { kind: $event })"
+              >
+                @for (kind of kinds; track kind) {
+                  <option [value]="kind">{{ kindLabel(kind) }}</option>
+                }
+              </select>
+              <input
+                class="step-id"
+                type="text"
+                placeholder="step id"
+                [ngModel]="step.id"
+                (ngModelChange)="updateStep($index, { id: $event })"
+              />
+              <span class="spacer"></span>
+              <button class="mini" (click)="moveStep($index, -1)" [disabled]="$index === 0" title="move up">
+                <lucide-icon [img]="icons.up" [size]="11" />
+              </button>
+              <button class="mini" (click)="moveStep($index, 1)" [disabled]="$index === draft.steps.length - 1" title="move down">
+                <lucide-icon [img]="icons.down" [size]="11" />
+              </button>
+              <button class="mini danger" (click)="removeStep($index)" title="remove step">
+                <lucide-icon [img]="icons.trash" [size]="11" />
+              </button>
+            </div>
+
+            @switch (step.kind) {
+              @case ('agent') {
+                <div class="step-fields">
+                  <input
+                    type="text"
+                    placeholder="agent kind (coder)"
+                    [ngModel]="step.agentKind"
+                    (ngModelChange)="updateStep($index, { agentKind: $event })"
+                  />
+                  <input
+                    type="text"
+                    placeholder="instructions — what to do with the card"
+                    [ngModel]="step.instructions"
+                    (ngModelChange)="updateStep($index, { instructions: $event })"
+                  />
+                </div>
+              }
+              @case ('command') {
+                <div class="step-fields">
+                  <input
+                    type="text"
+                    placeholder="shell command (npm test)"
+                    [ngModel]="step.command"
+                    (ngModelChange)="updateStep($index, { command: $event })"
+                  />
+                  <input
+                    class="narrow"
+                    type="number"
+                    min="0"
+                    placeholder="retries"
+                    [ngModel]="step.retries"
+                    (ngModelChange)="updateStepRetries($index, $event)"
+                  />
+                </div>
+              }
+              @case ('human') {
+                <div class="step-fields">
+                  <input
+                    type="text"
+                    placeholder="approval prompt shown at the gate"
+                    [ngModel]="step.description"
+                    (ngModelChange)="updateStep($index, { description: $event })"
+                  />
+                </div>
+              }
+            }
+          </div>
+        }
+      </div>
+
+      <div class="add-row">
+        <button class="add" (click)="addStep()">
+          <lucide-icon [img]="icons.plus" [size]="12" />
+          add step
+        </button>
+      </div>
+
+      @if (draft.rejection; as rejection) {
+        <p class="rejection">{{ rejection }}</p>
+      }
+
+      <footer class="form-actions">
+        <button class="save" (click)="save()">
+          <lucide-icon [img]="icons.save" [size]="12" />
+          save
+        </button>
+        <button class="cancel" (click)="cancel()">
+          <lucide-icon [img]="icons.close" [size]="12" />
+          cancel
+        </button>
+      </footer>
+    </section>
+  } @else {
+    <!-- The list -->
+    <section class="list">
+      @if (list().length === 0) {
+        <p class="empty">no pipelines yet — author the first one</p>
+      }
+      @for (pipeline of list(); track pipeline.id) {
+        <article class="row">
+          <div class="row-main">
+            <span class="row-name">{{ pipeline.name }}</span>
+            <span class="row-id">{{ pipeline.id }}</span>
+            <span class="row-steps">{{ stepSummary(pipeline) }}</span>
+          </div>
+          <div class="row-actions">
+            <button class="mini" (click)="edit(pipeline)" title="edit">edit</button>
+            <button class="mini danger" (click)="remove(pipeline.id)" title="delete">
+              <lucide-icon [img]="icons.trash" [size]="11" />
+            </button>
+          </div>
+        </article>
+      }
+    </section>
+  }
+</div>

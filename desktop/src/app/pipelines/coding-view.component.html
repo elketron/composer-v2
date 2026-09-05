@@ -1,0 +1,32 @@
+<div class="coding">
+  <header class="head">
+    <lucide-icon [img]="icons.bot" [size]="14" />
+    <h1>coding sessions</h1>
+  </header>
+
+  @if (projectId() === null) {
+    <p class="empty">open a project first</p>
+  } @else if (sessions().length === 0) {
+    <p class="empty">no agent sessions yet — run a pipeline on a card</p>
+  } @else {
+    <section class="list">
+      @for (session of sessions(); track session.sessionId) {
+        <article class="row" [class.failed]="session.status === 'failed'">
+          <span class="dot" [class.pulse]="session.status === 'running'"></span>
+          <span class="session-id">{{ session.sessionId }}</span>
+          <span class="card">{{ cardLabel(session.cardId) }}</span>
+          <span class="kind">composer-{{ session.agentKind }}</span>
+          <span class="status {{ session.status }}">{{ session.status }}</span>
+          @if (session.error; as error) {
+            <span class="error" [title]="error">{{ error }}</span>
+          }
+        </article>
+      }
+    </section>
+    <p class="attach">
+      <lucide-icon [img]="icons.attach" [size]="11" />
+      to watch a session live, run <code>opencode attach</code> against the
+      runtime in the project directory — the transcript lives there.
+    </p>
+  }
+</div>

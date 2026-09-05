@@ -255,15 +255,52 @@ Research notes for later slices:
 - `Set.add` returns the set — v1's `!seen.insert(..)` duplicate-check
   idiom does not transliterate (caught by the validation suite).
 
-## S4 — Desktop completion  ·  planned
+## S4 — Desktop completion  ·  done (2026-09-05)
 
-The visible-product slice: the pipeline step editor (from-scratch
-authoring per the ownership rule — pipelines are user-authored), run
-progress on the board, the approval-gate affordance, and the coding-tab
-question (likely an `opencode attach` link before any transcript UI).
+The visible-product slice: the pipeline step editor, run progress on the
+board, the approval-gate affordance, and the coding tab.
 
-Exit criteria: author → run → watch → approve without leaving the app;
-desktop specs for the editor and the progress folds.
+- Pipeline models (`core/models/pipeline.models.ts`): `Pipeline`,
+  `PipelineStep` (with the per-kind `missingField()` pre-validation the
+  server re-checks), `RunProgress`. Wire: `requestPipelineSave/Delete`
+  join the publish DTOs and route to `create`/`delete:pipeline`.
+- Pipeline service (`pipelines/pipeline.service.ts`): folds
+  `pipelineSaved/Deleted`, the run lifecycle (`pipelineRunStarted` →
+  `StepStarted` → `RunEnded`; a human step parks `waiting`),
+  `agentSessionStarted/Ended` (the coding tab's list). Commands:
+  save/remove/run/stop/gateRespond; a rejection resolves `false`.
+- Board: cards show a run chip (step kind, pulsing `waiting` at the
+  gate); the card panel shows the run (pipeline, current step, stop),
+  the gate affordance (approve/reject with an optional comment), and the
+  start affordance (pipeline picker + run) when no run is active.
+- Pipeline editor (`/pipelines`, rail entry replaces the dormant
+  `library` stub): from-scratch authoring per the ownership rule — name +
+  ordered step builder (kind, per-kind fields, reorder, remove),
+  client-side validation, delete; edits upsert by id.
+- Coding tab (`/coding`, the `agent` stub lands): cards with agent
+  sessions, newest first, status + error; the `opencode attach` hint —
+  the transcript lives in the runtime, this view is the pointer.
+
+Exit criteria (met): author → run → watch → approve without leaving the
+app — the editor spec authors and publishes `requestPipelineSave`, the
+panel specs drive run/stop and the gate answer, and the wire-level smoke
+ran the exact action sequence the UI publishes against a live server:
+authored pipeline (fresh id) → `start:pipeline` → parked at the gate →
+`update:pipelineGate approved` → card `done` (state survives restart).
+`pnpm verify`: server 65, desktop 144 (13 new specs).
+
+Research notes:
+
+- The desktop specs drive folds by emitting wire events through the
+  `FakeEventsClient`; **services subscribe at construction**, so emit
+  order matters — construct/inject the service under test *before*
+  emitting events, and re-render (a fresh `render()` is fine) after
+  emits when a template `@if` branch switches.
+- `PipelineService` keys on the shell's active tab; seeding a project
+  (a `projectCreated` emit) auto-activates the first tab.
+- Boot wiring: the engine is shared by planner + runner; the runner is
+  **not** gated by `COMPOSER_PLANNER_ENABLED` (only the planner is) — a
+  run's agent step needs the runner alive even when planning is off.
 
 ## Testing strategy
 

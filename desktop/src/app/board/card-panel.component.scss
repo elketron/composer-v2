@@ -340,3 +340,146 @@
 .spacer {
   flex: 1;
 }
+
+// ---- Pipeline run (S4) ----
+
+.run-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--run) 40%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--run) 6%, transparent);
+
+  &.waiting {
+    border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+  }
+}
+
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.run-name {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.run-status {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.gate-label {
+  color: var(--warn);
+}
+
+.run-stop {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--err);
+  color: var(--err);
+  background: transparent;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, var(--err) 14%, transparent);
+  }
+}
+
+.run-detail {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.gate {
+  display: flex;
+  gap: 6px;
+}
+
+.gate-comment {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.gate-approve,
+.gate-reject {
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.gate-approve {
+  border: 1px solid var(--ok);
+  color: var(--ok);
+  background: transparent;
+
+  &:hover {
+    background: color-mix(in srgb, var(--ok) 16%, transparent);
+  }
+}
+
+.gate-reject {
+  border: 1px solid var(--err);
+  color: var(--err);
+  background: transparent;
+
+  &:hover {
+    background: color-mix(in srgb, var(--err) 16%, transparent);
+  }
+}
+
+.run-start {
+  display: flex;
+  gap: 6px;
+
+  select {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 11px;
+    padding: 3px 6px;
+  }
+}
+
+.run-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--ok);
+  color: var(--ok);
+  background: transparent;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ok) 16%, transparent);
+  }
+}

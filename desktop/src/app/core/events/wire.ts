@@ -354,6 +354,11 @@ export type CommandKind =
   | 'requestAutomationToggle'
   | 'requestPlanningSessionCreate'
   | 'requestUserMessage'
+  | 'requestPipelineSave'
+  | 'requestPipelineDelete'
+  | 'requestPipelineRun'
+  | 'requestPipelineStop'
+  | 'requestPipelineGateRespond'
   | 'requestAgentSessionStart'
   | 'requestAgentSessionStop';
 
@@ -378,6 +383,8 @@ export interface PublishRequestJson {
   readonly requestAutomationToggle?: { readonly lane: WireStage; readonly on: boolean };
   readonly requestPlanningSessionCreate?: { readonly projectId: string };
   readonly requestUserMessage?: { readonly sessionId: string; readonly text: string };
+  readonly requestPipelineSave?: { readonly pipeline: PipelineJson };
+  readonly requestPipelineDelete?: { readonly pipelineId: string };
   readonly requestPipelineRun?: { readonly pipelineId: string; readonly cardId: string };
   readonly requestPipelineStop?: { readonly cardId: string };
   readonly requestPipelineGateRespond?: {
@@ -471,6 +478,17 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
       sessionId: request.requestUserMessage.sessionId,
       text: request.requestUserMessage.text,
     });
+  }
+  if (request.requestPipelineSave) {
+    const pipeline = request.requestPipelineSave.pipeline;
+    return env('create', 'pipeline', {
+      id: pipeline.id,
+      name: pipeline.name,
+      steps: pipeline.steps,
+    });
+  }
+  if (request.requestPipelineDelete) {
+    return env('delete', 'pipeline', { id: request.requestPipelineDelete.pipelineId });
   }
   if (request.requestPipelineRun) {
     return env('start', 'pipeline', {

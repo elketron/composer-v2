@@ -20,6 +20,16 @@
         {{ card().blockedBy.length }}
       </span>
     }
+    @if (run(); as runState) {
+      <span
+        class="run-chip"
+        [class.waiting]="runState.status === 'waiting'"
+        [title]="runState.status === 'waiting' ? 'waiting at the approval gate' : 'pipeline running'"
+      >
+        <lucide-icon [img]="runIcon()" [size]="10" />
+        {{ runLabel() }}
+      </span>
+    }
   </div>
 
   <div class="title">{{ card().title }}</div>

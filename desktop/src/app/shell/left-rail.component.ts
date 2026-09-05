@@ -4,12 +4,12 @@ import {
   Bot,
   CircleUser,
   Kanban,
-  Library,
   LucideAngularModule,
   LucideIconData,
   MessageSquare,
   PenTool,
   Settings,
+  Workflow,
 } from 'lucide-angular';
 
 interface RailEntry {
@@ -36,9 +36,9 @@ export class LeftRailComponent {
   protected readonly viewEntries: readonly RailEntry[] = [
     { id: 'board', label: 'board', icon: Kanban, route: '/board' },
     { id: 'plan', label: 'plan', icon: MessageSquare, route: '/plan' },
-    { id: 'agent', label: 'agent', icon: Bot },
+    { id: 'pipelines', label: 'pipelines', icon: Workflow, route: '/pipelines' },
+    { id: 'agent', label: 'coding', icon: Bot, route: '/coding' },
     { id: 'canvas', label: 'canvas', icon: PenTool },
-    { id: 'library', label: 'library', icon: Library },
   ];
 
   protected readonly bottomEntries: readonly RailEntry[] = [
