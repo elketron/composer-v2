@@ -9,13 +9,13 @@ import { streamSSE } from 'hono/streaming';
 import type { Bus } from './bus.js';
 import type { Processor } from './processor.js';
 import type { Command } from './wire/commands.js';
-import type { Card, CardType, Pipeline, PipelineStep, Stage, SubStateStatus } from './wire/models.js';
+import type { Card, CardType, Pipeline, PipelineStep, ProposalItem, Stage, SubStateStatus } from './wire/models.js';
 import { ALL_STAGES } from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
 import type { ComposerSettings, EventStore, SettingsPatch } from './store.js';
 import { dashboardProjects } from './dashboard.js';
 import {
-  ASSISTANT_TOOL_NAMES,
+  ASSISTANT_MCP_TOOL_NAMES,
   executeAssistantTool,
   type AssistantToolName,
 } from './assistant-tools.js';
@@ -26,8 +26,8 @@ const MCP_COMMAND_TYPES: ReadonlySet<string> = new Set([
   'requestTicketsCreate',
 ]);
 
-/** The assistant's read-tool whitelist (the MCP child's only surface). */
-const ASSISTANT_READ_TOOLS: ReadonlySet<string> = new Set<string>(ASSISTANT_TOOL_NAMES);
+/** The assistant's MCP tool whitelist (reads + the proposal draft). */
+const ASSISTANT_MCP_TOOLS: ReadonlySet<string> = new Set(ASSISTANT_MCP_TOOL_NAMES);
 
 export function router(bus: Bus, processor: Processor, store?: EventStore): Hono {
   const app = new Hono();
@@ -128,8 +128,24 @@ export function router(bus: Bus, processor: Processor, store?: EventStore): Hono
     const tool = typeof body?.tool === 'string' ? body.tool : '';
     const args =
       typeof body?.args === 'object' && body?.args !== null ? (body!.args as Record<string, unknown>) : {};
-    if (threadId === '' || !ASSISTANT_READ_TOOLS.has(tool)) {
+    if (threadId === '' || !ASSISTANT_MCP_TOOLS.has(tool)) {
       return context.json({ error: 'malformed read', detail: 'unknown read tool' }, 400);
+    }
+    // The one non-read tool on the assistant surface: drafting a proposal
+    // lands on the validated processor (never creates cards directly).
+    if (tool === 'propose_cards') {
+      const rawItems = Array.isArray(args['items']) ? (args['items'] as unknown[]) : [];
+      const outcome = await processor.execute(undefined, {
+        type: 'requestProposalDraft',
+        threadId,
+        items: rawItems.map((item) => normalizeProposalItem(item)),
+      });
+      if (!outcome.ok) {
+        return context.json({ ok: false, error: outcome.rejection.message });
+      }
+      const proposals = bus.state.proposals;
+      const proposal = [...proposals.values()].at(-1);
+      return context.json({ ok: true, proposalId: proposal?.id, itemCount: proposal?.items.length ?? 0 });
     }
     const result = await executeAssistantTool(
       { state: bus.state },
@@ -374,6 +390,17 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
       return { type: 'requestAssistantThreadStop', threadId: str('id') ?? '' };
     case 'retry:assistantThread':
       return { type: 'requestAssistantRetry', threadId: str('id') ?? '' };
+    case 'update:proposal': {
+      const items = body['items'];
+      if (!Array.isArray(items)) return null;
+      return {
+        type: 'requestProposalConfirm',
+        proposalId: str('id') ?? '',
+        items: items.map((item) => normalizeProposalItem(item)),
+      };
+    }
+    case 'delete:proposal':
+      return { type: 'requestProposalDiscard', proposalId: str('id') ?? '' };
     default:
       return null;
   }
@@ -502,6 +529,23 @@ function readPipelineStep(json: unknown): PipelineStep {
 function readNumber(record: Record<string, unknown>, key: string): number {
   const value = record[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/** The proposal item the client meant — defaults where absent (Phase 8). */
+function normalizeProposalItem(json: unknown): ProposalItem {
+  const record = typeof json === 'object' && json !== null ? (json as Record<string, unknown>) : {};
+  const cardType = readString(record, 'cardType');
+  const key = readString(record, 'key');
+  return {
+    id: readString(record, 'id') ?? '',
+    projectId: readString(record, 'projectId') ?? '',
+    title: readString(record, 'title') ?? '',
+    description: readString(record, 'description') ?? '',
+    cardType: cardType === 'design' || cardType === 'docs' ? cardType : 'coding',
+    ...(key !== undefined && key !== '' ? { key } : {}),
+    blockedBy: readStringArray(record, 'blockedBy'),
+    included: record['included'] !== false,
+  };
 }
 
 function readScope(action: unknown): string | undefined {

@@ -359,4 +359,81 @@ describe('AssistantService', () => {
     expect(service.isSending()).toBe(true);
     expect(await sent).toBe(true);
   });
+
+  // ---- Work proposals (Phase 8) ----
+
+  function emitDraft(): void {
+    events.emit(
+      wireGlobalEvent('proposalDrafted', {
+        proposal: {
+          id: 'PR-1',
+          threadId: 'TH-1',
+          createdAt: new Date().toISOString(),
+          status: 'drafted',
+          items: [
+            { id: 'pi-1', projectId: 'P-1', title: 'First', description: '', cardType: 'coding', key: 'a', blockedBy: [], included: true },
+            { id: 'pi-2', projectId: 'P-1', title: 'Second', description: '', cardType: 'coding', blockedBy: ['a'], included: true },
+          ],
+        },
+      }),
+    );
+  }
+
+  it('a drafted proposal surfaces for its thread; confirm publishes the edited items', async () => {
+    emitThread();
+    emitDraft();
+    expect(service.draftProposal()?.id).toBe('PR-1');
+    expect(service.proposals().length).toBe(1);
+
+    const failure = await service.confirmProposal('PR-1', [
+      { ...service.draftProposal()!.items[0]!, included: false },
+      { ...service.draftProposal()!.items[1]!, title: 'Second (edited)' },
+    ]);
+    expect(failure).toBeNull();
+    expect(events.lastCommand('requestProposalConfirm')).toMatchObject({
+      projectId: '',
+      requestProposalConfirm: { proposalId: 'PR-1' },
+    });
+    const payload = events.lastCommand('requestProposalConfirm')?.requestProposalConfirm;
+    expect(payload?.items[0]?.included).toBe(false);
+    expect(payload?.items[1]?.title).toBe('Second (edited)');
+
+    // The outcomes fold back onto the proposal.
+    events.emit(
+      wireGlobalEvent('proposalConfirmed', {
+        proposalId: 'PR-1',
+        items: [],
+        outcomes: [{ projectId: 'P-1', ok: true, cardIds: ['T-1', 'T-2'] }],
+        confirmedAt: new Date().toISOString(),
+      }),
+    );
+    expect(service.draftProposal()).toBeNull();
+    expect(service.proposals()[0]?.outcomes?.[0]).toMatchObject({ ok: true, cardIds: ['T-1', 'T-2'] });
+  });
+
+  it('discarding removes the draft and proposals from other threads never surface', async () => {
+    emitThread();
+    emitDraft();
+    await service.discardProposal('PR-1');
+    expect(events.lastCommand('requestProposalDiscard')).toMatchObject({
+      projectId: '',
+      requestProposalDiscard: { proposalId: 'PR-1' },
+    });
+    events.emit(wireGlobalEvent('proposalDiscarded', { proposalId: 'PR-1' }));
+    expect(service.draftProposal()).toBeNull();
+    expect(service.proposals()).toEqual([]);
+
+    events.emit(
+      wireGlobalEvent('proposalDrafted', {
+        proposal: {
+          id: 'PR-2',
+          threadId: 'TH-OTHER',
+          createdAt: new Date().toISOString(),
+          status: 'drafted',
+          items: [],
+        },
+      }),
+    );
+    expect(service.draftProposal()).toBeNull();
+  });
 });

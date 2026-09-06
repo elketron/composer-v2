@@ -417,8 +417,7 @@ describe('assistant thread commands', () => {
     }
   });
 
-  it('the_assistant_snapshot_replays_into_equal_state', async () => {
-    const alpha = await createProject('alpha');
+  it('the_assistant_snapshot_replays_into_equal_state', async () => {    const alpha = await createProject('alpha');
     const id = await createThread('portfolio');
     await processor.execute(undefined, {
       type: 'requestAssistantThreadScope',
@@ -776,5 +775,206 @@ describe('the assistant turn', () => {
     // The second reply answers the edited message — the new branch.
     expect(secondReply.parentId).toBe(edited.id);
     expect(engine.toolCalls[1]?.prompt).toContain('edited');
+  });
+});
+
+// ---- Work proposals (Phase 8) ----
+
+describe('work proposals', () => {
+  type Draft = { projectId: string; title: string; description?: string; key?: string; blockedBy?: string[] };
+
+  async function scopedThread(scope: string[]): Promise<string> {
+    await processor.execute(undefined, { type: 'requestAssistantThreadCreate', name: 'proposals' });
+    await processor.execute(undefined, {
+      type: 'requestAssistantThreadScope',
+      threadId: 'TH-1',
+      projectIds: scope,
+    });
+    return 'TH-1';
+  }
+
+  async function propose(threadId: string, items: Draft[]): Promise<import('../src/wire/commands.js').CommandOutcome> {
+    return processor.execute(undefined, {
+      type: 'requestProposalDraft',
+      threadId,
+      items: items.map((raw) => ({
+        id: '',
+        projectId: raw.projectId,
+        title: raw.title,
+        description: raw.description ?? '',
+        cardType: 'coding' as const,
+        key: raw.key,
+        blockedBy: raw.blockedBy ?? [],
+        included: true,
+      })),
+    });
+  }
+
+  function drafted(): { id: string; items: { id: string; title: string }[] } {
+    const frame = recorded.find((entry) => entry.eventType === 'proposalDrafted');
+    if (frame === undefined) throw new Error('no proposalDrafted recorded');
+    const body = frame.body as { proposal: { id: string; items: { id: string; title: string }[] } };
+    return body.proposal;
+  }
+
+  it('draft_allocates_PR_ids_and_validates_scope_shape_and_deps', async () => {
+    const alpha = await createProject('alpha');
+    const beta = await createProject('beta');
+    await processor.execute(alpha, {
+      type: 'requestCardCreate',
+      card: { id: '', projectId: alpha, type: 'coding', title: 'Existing', description: '', tags: [], stage: 'new', blockedBy: [], subState: {}, retries: {}, createdAt: '', updatedAt: '' },
+    });
+    const id = await scopedThread([alpha]); // beta is OUT of scope
+
+    expect((await propose(id, [])).ok).toBe(false);
+    const outside = await propose(id, [{ projectId: beta, title: 'outside' }]);
+    expect(outside.ok).toBe(false);
+    expect(outside.ok ? null : outside.rejection.message).toContain('is not in thread');
+    expect((await propose(id, [{ projectId: alpha, title: '   ' }])).ok).toBe(false);
+    expect(
+      (await propose(id, [{ projectId: alpha, title: 'a', key: 'k' }, { projectId: alpha, title: 'b', key: 'k' }])).ok,
+    ).toBe(false);
+    expect((await propose(id, [{ projectId: alpha, title: 'a', blockedBy: ['T-99'] }])).ok).toBe(false);
+    expect(
+      (await propose(id, [{ projectId: alpha, title: 'Self', key: 'me', blockedBy: ['me'] }])).ok,
+    ).toBe(false);
+
+    const valid = await propose(id, [
+      { projectId: alpha, title: 'First', key: 'a', blockedBy: ['T-1'] },
+      { projectId: alpha, title: 'Second', blockedBy: ['a'] },
+    ]);
+    expect(valid.ok).toBe(true);
+    const proposal = drafted();
+    expect(proposal.id).toBe('PR-1');
+    expect(proposal.items.every((item) => item.id !== '' && item.included)).toBe(true);
+  });
+
+  it('confirm_creates_cards_per_project_with_key_remap_and_excludes_items', async () => {
+    const alpha = await createProject('alpha');
+    const id = await scopedThread([alpha]);
+    await propose(id, [
+      { projectId: alpha, title: 'First', description: 'the first', key: 'a' },
+      { projectId: alpha, title: 'Second', blockedBy: ['a'] },
+      { projectId: alpha, title: 'Excluded' },
+    ]);
+    const proposal = drafted();
+
+    const confirmed = await processor.execute(undefined, {
+      type: 'requestProposalConfirm',
+      proposalId: proposal.id,
+      items: proposal.items.map((item, index) => ({ ...item, included: index !== 2 })),
+    } as never);
+    expect(confirmed.ok).toBe(true);
+
+    // Two cards landed; the key remapped onto the fresh ids.
+    const cards = bus.state.byProject.get(alpha)?.cards;
+    expect([...(cards?.keys() ?? [])]).toEqual(['T-1', 'T-2']);
+    expect(cards?.get('T-2')?.blockedBy).toEqual(['T-1']);
+    expect(recorded.filter((frame) => frame.eventType === 'cardsCommitted')).toHaveLength(1);
+    expect(recorded.filter((frame) => frame.eventType === 'dependencyStateChanged')).toHaveLength(1);
+
+    const confirmedFrame = recorded.find((frame) => frame.eventType === 'proposalConfirmed');
+    expect((confirmedFrame?.body as { outcomes: { ok: boolean; cardIds: string[] }[] }).outcomes).toEqual([
+      { projectId: alpha, ok: true, cardIds: ['T-1', 'T-2'] },
+    ]);
+    // Double-confirm rejects.
+    const again = await processor.execute(undefined, {
+      type: 'requestProposalConfirm',
+      proposalId: proposal.id,
+      items: proposal.items,
+    } as never);
+    expect(again.ok).toBe(false);
+    expect(again.ok ? null : again.rejection.message).toContain('already confirmed');
+  });
+
+  it('confirm_reports_partial_failures_per_project', async () => {
+    const alpha = await createProject('alpha');
+    const beta = await createProject('beta');
+    await processor.execute(beta, {
+      type: 'requestCardCreate',
+      card: { id: '', projectId: beta, type: 'coding', title: 'Dep', description: '', tags: [], stage: 'new', blockedBy: [], subState: {}, retries: {}, createdAt: '', updatedAt: '' },
+    });
+    const id = await scopedThread([alpha, beta]);
+    await propose(id, [
+      { projectId: alpha, title: 'Valid one' },
+      { projectId: beta, title: 'Broken', blockedBy: ['T-1'] },
+    ]);
+    const proposal = drafted();
+
+    // State drifts between draft and confirm: the dep card disappears.
+    await processor.execute(beta, { type: 'requestCardArchive', cardId: 'T-1' });
+
+    const confirmed = await processor.execute(undefined, {
+      type: 'requestProposalConfirm',
+      proposalId: proposal.id,
+      items: proposal.items,
+    } as never);
+    expect(confirmed.ok).toBe(true);
+
+    const outcomes = (recorded.find((frame) => frame.eventType === 'proposalConfirmed')?.body as {
+      outcomes: { projectId: string; ok: boolean; error?: string }[];
+    }).outcomes;
+    expect(outcomes).toEqual([
+      { projectId: alpha, ok: true, cardIds: ['T-1'] },
+      { projectId: beta, ok: false, error: expect.stringContaining('neither an existing card') },
+    ]);
+    // Alpha's cards landed; beta's did not.
+    expect([...(bus.state.byProject.get(alpha)?.cards.keys() ?? [])]).toEqual(['T-1']);
+    expect(bus.state.byProject.get(beta)?.cards.size ?? 0).toBe(0);
+  });
+
+  it('discard_closes_a_draft_and_confirmed_proposals_reject_discard', async () => {
+    const alpha = await createProject('alpha');
+    const id = await scopedThread([alpha]);
+    await propose(id, [{ projectId: alpha, title: 'One' }]);
+    const proposal = drafted();
+
+    const discarded = await processor.execute(undefined, {
+      type: 'requestProposalDiscard',
+      proposalId: proposal.id,
+    });
+    expect(discarded.ok).toBe(true);
+
+    const rejectedConfirm = await processor.execute(undefined, {
+      type: 'requestProposalConfirm',
+      proposalId: proposal.id,
+      items: proposal.items,
+    } as never);
+    expect(rejectedConfirm.ok).toBe(false);
+    expect(rejectedConfirm.ok ? null : rejectedConfirm.rejection.message).toContain('already discarded');
+    expect(
+      (await processor.execute(undefined, { type: 'requestProposalDiscard', proposalId: proposal.id })).ok,
+    ).toBe(false);
+    expect(
+      (await processor.execute(undefined, { type: 'requestProposalDiscard', proposalId: 'PR-9' })).ok,
+    ).toBe(false);
+  });
+
+  it('proposals_survive_the_snapshot_round_trip', async () => {
+    const alpha = await createProject('alpha');
+    const id = await scopedThread([alpha]);
+    await propose(id, [{ projectId: alpha, title: 'One', key: 'a' }]);
+    const proposal = drafted();
+    await processor.execute(undefined, {
+      type: 'requestProposalConfirm',
+      proposalId: proposal.id,
+      items: proposal.items,
+    } as never);
+
+    const snapshot = snapshotEvents(bus.state);
+    const replayed: State = newState();
+    for (const frame of snapshot) {
+      apply(replayed, {
+        id: frame.id,
+        ...(frame.projectId !== undefined ? { projectId: frame.projectId } : {}),
+        occurredAt: frame.occurredAt,
+        name: frame.eventType,
+        body: frame.body,
+      });
+    }
+    expect(replayed.proposals).toEqual(bus.state.proposals);
+    const carried = replayed.proposals.get(proposal.id);
+    expect(carried?.status).toBe('confirmed');
+    expect(carried?.outcomes?.[0]?.ok).toBe(true);
   });
 });

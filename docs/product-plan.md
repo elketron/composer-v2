@@ -215,6 +215,8 @@ alternate branch; it never silently rewrites persisted history.
 
 ## Phase 8 - Work proposals
 
+Status: implemented 2026-09-06 (S23).
+
 The assistant drafts editable board-ready cards instead of creating cards
 directly.
 

@@ -156,6 +156,44 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
     threadId: 'TH-1',
     message: { id: 'am-3', index: 3, role: 'user', text: 'what needs me today?', at: TS },
   },
+  proposalDrafted: {
+    proposal: {
+      id: 'PR-1',
+      threadId: 'TH-1',
+      createdAt: TS,
+      status: 'drafted',
+      items: [
+        {
+          id: 'pi-1',
+          projectId: 'P-1',
+          title: 'Add a status strip filter',
+          description: 'Filter the board by assignee.',
+          cardType: 'coding',
+          key: 'filter',
+          blockedBy: [],
+          included: true,
+        },
+      ],
+    },
+  },
+  proposalConfirmed: {
+    proposalId: 'PR-1',
+    items: [
+      {
+        id: 'pi-1',
+        projectId: 'P-1',
+        title: 'Add a status strip filter',
+        description: 'Filter the board by assignee.',
+        cardType: 'coding',
+        key: 'filter',
+        blockedBy: [],
+        included: true,
+      },
+    ],
+    outcomes: [{ projectId: 'P-1', ok: true, cardIds: ['T-9'] }],
+    confirmedAt: TS,
+  },
+  proposalDiscarded: { proposalId: 'PR-1' },
 };
 
 const frames = EVENT_NAMES.map((name, index) =>

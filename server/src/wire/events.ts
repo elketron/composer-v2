@@ -10,6 +10,7 @@ import type {
   AssistantThreadStatus,
   Assignee,
   Card,
+  CardProposal,
   CardType,
   ChatMessage,
   Pipeline,
@@ -17,6 +18,7 @@ import type {
   PipelineStepKind,
   PlanningSession,
   Project,
+  ProposalOutcome,
   Stage,
   SubStateStatus,
 } from './models.js';
@@ -280,6 +282,25 @@ export interface AssistantResent {
   message: ChatMessage;
 }
 
+// ---- Work proposals (Phase 8) ----
+
+/** The assistant's draft; the creation event carries the full proposal. */
+export interface ProposalDrafted {
+  proposal: CardProposal;
+}
+
+/** Confirmation lands the (possibly edited) items and the batch outcomes. */
+export interface ProposalConfirmed {
+  proposalId: string;
+  items: CardProposal['items'];
+  outcomes: ProposalOutcome[];
+  confirmedAt: string;
+}
+
+export interface ProposalDiscarded {
+  proposalId: string;
+}
+
 // ---- The catalog: name → payload shape (the one registry both sides use) ----
 
 export interface EventBodyMap {
@@ -327,6 +348,9 @@ export interface EventBodyMap {
   assistantThreadStatusChanged: AssistantThreadStatusChanged;
   assistantThreadRenamed: AssistantThreadRenamed;
   assistantResent: AssistantResent;
+  proposalDrafted: ProposalDrafted;
+  proposalConfirmed: ProposalConfirmed;
+  proposalDiscarded: ProposalDiscarded;
 }
 
 export type EventName = keyof EventBodyMap;
@@ -378,6 +402,9 @@ export const EVENT_NAMES = Object.keys({
   assistantThreadStatusChanged: null,
   assistantThreadRenamed: null,
   assistantResent: null,
+  proposalDrafted: null,
+  proposalConfirmed: null,
+  proposalDiscarded: null,
 }) as EventName[];
 
 /** Events that persist for the live stream but skip replay (v1 rule). */
@@ -401,6 +428,9 @@ export const GLOBAL_EVENTS: ReadonlySet<EventName> = new Set([
   'assistantThreadStatusChanged',
   'assistantThreadRenamed',
   'assistantResent',
+  'proposalDrafted',
+  'proposalConfirmed',
+  'proposalDiscarded',
 ]);
 
 /** Whether an event name is in the catalog. */

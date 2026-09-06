@@ -95,6 +95,29 @@ describe('the boot contract', () => {
       await read({ threadId: 'TH-1', tool: 'composer_card', args: { projectId: 'P-2', cardId: 'T-1' } }),
     ).toEqual({ json: { ok: false, error: expect.stringContaining('not in this thread\'s scope') }, status: 200 });
 
+    // The proposal draft rides the same route but lands on the processor.
+    const proposed = await read({
+      threadId: 'TH-1',
+      tool: 'propose_cards',
+      args: { items: [{ projectId: 'P-1', title: 'Strip the log', description: 'trim it', cardType: 'coding' }] },
+    });
+    expect(proposed.json).toMatchObject({ ok: true, proposalId: 'PR-1', itemCount: 1 });
+
+    // The user confirms with edited items; the card lands on the board.
+    const confirmed = await action({
+      type: 'update',
+      on: 'proposal',
+      projectId: '',
+      body: { id: 'PR-1', items: [{ projectId: 'P-1', title: 'Strip the log (edited)', cardType: 'coding', included: true }] },
+    });
+    expect(confirmed).toEqual({ status: 200, json: { ok: true } });
+    expect(
+      await read({ threadId: 'TH-1', tool: 'composer_card', args: { projectId: 'P-1', cardId: 'T-1' } }),
+    ).toEqual({
+      status: 200,
+      json: { ok: true, content: expect.stringContaining('Strip the log (edited)') },
+    });
+
     const archived = await action({ type: 'delete', on: 'assistantThread', projectId: '', body: { id: 'TH-1' } });
     expect(archived).toEqual({ status: 200, json: { ok: true } });
     expect(await action({ type: 'update', on: 'assistantThread', projectId: '', body: { id: 'TH-1', archived: false } })).toEqual({ status: 200, json: { ok: true } });

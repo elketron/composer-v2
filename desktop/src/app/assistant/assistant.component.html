@@ -170,6 +170,93 @@
         }
       </div>
 
+      @if (draftProposal(); as proposal) {
+        <section class="proposal">
+          <header class="proposal-header">
+            <span class="proposal-label">proposal {{ proposal.id }}</span>
+            <span class="proposal-count">{{ includedCount() }}/{{ editItems().length }} included</span>
+            <button type="button" class="proposal-discard" (click)="discardProposal()">discard</button>
+          </header>
+
+          @for (item of editItems(); track item.id) {
+            <div class="proposal-item" [class.excluded]="!item.included">
+              <input
+                type="checkbox"
+                [checked]="item.included"
+                (change)="toggleInclude($index, $event.target.checked)"
+                [attr.aria-label]="'include ' + item.title"
+              />
+              <div class="proposal-item-main">
+                <div class="proposal-item-row">
+                  <input
+                    class="proposal-title"
+                    name="title-{{ item.id }}"
+                    autocomplete="off"
+                    [ngModel]="item.title"
+                    (ngModelChange)="editTitle($index, $event)"
+                  />
+                  <select
+                    class="proposal-type"
+                    name="type-{{ item.id }}"
+                    [ngModel]="item.cardType"
+                    (ngModelChange)="editType($index, $event)"
+                  >
+                    <option value="coding">coding</option>
+                    <option value="design">design</option>
+                    <option value="docs">docs</option>
+                  </select>
+                  <span class="scope-chip">{{ projectName(item.projectId) }}</span>
+                </div>
+                <input
+                  class="proposal-description"
+                  name="desc-{{ item.id }}"
+                  autocomplete="off"
+                  placeholder="description"
+                  [ngModel]="item.description"
+                  (ngModelChange)="editDescription($index, $event)"
+                />
+                @if (item.blockedBy.length > 0) {
+                  <span class="proposal-deps">after: {{ item.blockedBy.join(', ') }}</span>
+                }
+              </div>
+            </div>
+          }
+
+          @if (confirmError(); as message) {
+            <div class="state-error">{{ message }}</div>
+          }
+
+          <footer class="proposal-footer">
+            <span class="proposal-hint">nothing is created until you confirm — each project lands as its own batch</span>
+            <button
+              type="button"
+              class="proposal-confirm"
+              [disabled]="confirming() || includedCount() === 0"
+              (click)="confirmProposal()"
+            >
+              create {{ includedCount() }} card{{ includedCount() === 1 ? '' : 's' }}
+            </button>
+          </footer>
+        </section>
+      }
+
+      @if (lastConfirmed(); as proposal) {
+        @if (proposal.outcomes; as outcomes) {
+          <div class="proposal-outcome">
+            <span class="proposal-label">{{ proposal.id }}</span>
+            @for (outcome of outcomes; track outcome.projectId) {
+              <span class="outcome-chip" [class.failed]="!outcome.ok">
+                @if (outcome.ok) {
+                  {{ projectName(outcome.projectId) }}: created {{ outcome.cardIds?.length ?? 0 }} card(s)
+                } @else {
+                  {{ projectName(outcome.projectId) }} failed: {{ outcome.error }}
+                }
+              </span>
+            }
+          </div>
+        }
+      }
+
       @if (editing(); as original) {
         <div class="editing-bar">
           <span>editing m{{ original.index }} — an alternate branch opens, the original stays</span>

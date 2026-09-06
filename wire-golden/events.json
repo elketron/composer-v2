@@ -574,5 +574,68 @@
         "at": "2026-09-04T12:00:00.123456Z"
       }
     }
+  },
+  {
+    "id": "e-45",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "proposalDrafted",
+    "body": {
+      "proposal": {
+        "id": "PR-1",
+        "threadId": "TH-1",
+        "createdAt": "2026-09-04T12:00:00.123456Z",
+        "status": "drafted",
+        "items": [
+          {
+            "id": "pi-1",
+            "projectId": "P-1",
+            "title": "Add a status strip filter",
+            "description": "Filter the board by assignee.",
+            "cardType": "coding",
+            "key": "filter",
+            "blockedBy": [],
+            "included": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "e-46",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "proposalConfirmed",
+    "body": {
+      "proposalId": "PR-1",
+      "items": [
+        {
+          "id": "pi-1",
+          "projectId": "P-1",
+          "title": "Add a status strip filter",
+          "description": "Filter the board by assignee.",
+          "cardType": "coding",
+          "key": "filter",
+          "blockedBy": [],
+          "included": true
+        }
+      ],
+      "outcomes": [
+        {
+          "projectId": "P-1",
+          "ok": true,
+          "cardIds": [
+            "T-9"
+          ]
+        }
+      ],
+      "confirmedAt": "2026-09-04T12:00:00.123456Z"
+    }
+  },
+  {
+    "id": "e-47",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "proposalDiscarded",
+    "body": {
+      "proposalId": "PR-1"
+    }
   }
 ]

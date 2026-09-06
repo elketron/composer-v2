@@ -7,6 +7,7 @@ import type {
   Card,
   CardType,
   Pipeline,
+  ProposalItem,
   Stage,
   SubStateStatus,
 } from './models.js';
@@ -45,7 +46,12 @@ export type Command =
   | { type: 'requestAssistantThreadStop'; threadId: string }
   | { type: 'requestAssistantRetry'; threadId: string }
   | { type: 'requestAssistantThreadRename'; threadId: string; name: string }
-  | { type: 'requestAssistantResend'; threadId: string; messageId: string; text: string };
+  | { type: 'requestAssistantResend'; threadId: string; messageId: string; text: string }
+  // Work proposals (Phase 8): the draft rides the assistant's MCP tool;
+  // confirm/discard come from the desktop's proposal panel.
+  | { type: 'requestProposalDraft'; threadId: string; items: ProposalItem[] }
+  | { type: 'requestProposalConfirm'; proposalId: string; items: ProposalItem[] }
+  | { type: 'requestProposalDiscard'; proposalId: string };
 
 /** One ticket the planner emits on approval; lands as an ordinary card. */
 export interface TicketEmission {
@@ -70,7 +76,8 @@ export type RejectionCode =
   | 'unknownAgentKind'
   | 'pipelineAlreadyRunning'
   | 'pipelineNotRunning'
-  | 'unknownThread';
+  | 'unknownThread'
+  | 'unknownProposal';
 
 export interface Rejection {
   code: RejectionCode;

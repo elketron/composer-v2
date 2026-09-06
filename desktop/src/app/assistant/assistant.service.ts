@@ -11,6 +11,9 @@ import {
   AssistantMessage,
   AssistantThread,
   normalizeThreadStatus,
+  proposalItemFromWire,
+  normalizeProposalStatus,
+  type CardProposal,
   type AssistantThreadStatus,
 } from '../core/models/assistant.models';
 
@@ -37,6 +40,8 @@ export class AssistantService {
   private readonly seenEventIds = new Map<string, true>();
   /** Thread id → (parentId → the active child id) for branch navigation. */
   private readonly branchChoices = signal<ReadonlyMap<string, ReadonlyMap<string, string>>>(new Map());
+  /** The thread's work proposals (Phase 8), keyed by proposal id. */
+  private readonly proposalsSignal = signal<ReadonlyMap<string, CardProposal>>(new Map());
 
   readonly threads = this.threadsSignal.asReadonly();
   readonly activeThreadId = this.activeThreadIdSignal.asReadonly();
@@ -53,6 +58,15 @@ export class AssistantService {
   readonly thread = computed(
     () => this.threadsSignal().get(this.activeThreadIdSignal() ?? '') ?? null,
   );
+  /** The active thread's proposals, newest first (discarded ones drop out). */
+  readonly proposals = computed(() => {
+    const threadId = this.activeThreadIdSignal() ?? '';
+    return [...this.proposalsSignal().values()]
+      .filter((proposal) => proposal.threadId === threadId && proposal.status !== 'DISCARDED')
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  });
+  /** The proposal awaiting confirmation, if any. */
+  readonly draftProposal = computed(() => this.proposals().find((proposal) => proposal.status === 'DRAFTED') ?? null);
   /**
    * The visible transcript: the active path through the thread's message
    * tree. Edit-and-resend creates sibling branches (immutable lineage);
@@ -134,6 +148,25 @@ export class AssistantService {
       this.isSending.set(false);
       this.error.set(response.rejectionMessage ?? 'the thread could not be retried');
     }
+  }
+
+  /** Confirms the proposal with the user's edited items (cards land per project). */
+  async confirmProposal(proposalId: string, items: CardProposal['items']): Promise<string | null> {
+    const response = await this.publish('requestProposalConfirm', { proposalId, items });
+    return response.ok ? null : (response.rejectionMessage ?? 'the proposal could not be confirmed');
+  }
+
+  async discardProposal(proposalId: string): Promise<string | null> {
+    const response = await this.publish('requestProposalDiscard', { proposalId });
+    return response.ok ? null : (response.rejectionMessage ?? 'the proposal could not be discarded');
+  }
+
+  private upsertProposal(proposal: CardProposal): void {
+    this.proposalsSignal.update((proposals) => {
+      const next = new Map(proposals);
+      next.set(proposal.id, proposal);
+      return next;
+    });
   }
 
   async renameThread(threadId: string, name: string): Promise<boolean> {
@@ -348,6 +381,54 @@ export class AssistantService {
         const payload = event.assistantThreadRenamed;
         if (!payload?.threadId) break;
         this.updateThread(payload.threadId, { name: payload.name ?? '' });
+        break;
+      }
+      case 'proposalDrafted': {
+        const payload = event.proposalDrafted;
+        const proposal = payload?.proposal;
+        if (!proposal?.id) break;
+        this.upsertProposal({
+          id: proposal.id,
+          threadId: proposal.threadId ?? '',
+          createdAt: proposal.createdAt ?? '',
+          status: normalizeProposalStatus(proposal.status as string | undefined),
+          items: (proposal.items ?? []).map(proposalItemFromWire),
+        });
+        break;
+      }
+      case 'proposalConfirmed': {
+        const payload = event.proposalConfirmed;
+        if (!payload?.proposalId) break;
+        this.proposalsSignal.update((proposals) => {
+          const existing = proposals.get(payload.proposalId);
+          if (!existing) return proposals;
+          const next = new Map(proposals);
+          next.set(payload.proposalId, {
+            ...existing,
+            status: 'CONFIRMED',
+            items: (payload.items ?? []).map(proposalItemFromWire),
+            outcomes: (payload.outcomes ?? []).map((outcome) => ({
+              projectId: outcome.projectId ?? '',
+              ok: outcome.ok === true,
+              cardIds: outcome.cardIds ?? [],
+              error: outcome.error,
+            })),
+            confirmedAt: payload.confirmedAt ?? '',
+          });
+          return next;
+        });
+        break;
+      }
+      case 'proposalDiscarded': {
+        const payload = event.proposalDiscarded;
+        if (!payload?.proposalId) break;
+        this.proposalsSignal.update((proposals) => {
+          const existing = proposals.get(payload.proposalId);
+          if (!existing) return proposals;
+          const next = new Map(proposals);
+          next.set(payload.proposalId, { ...existing, status: 'DISCARDED' });
+          return next;
+        });
         break;
       }
     }

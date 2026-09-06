@@ -46,6 +46,16 @@ export const ASSISTANT_TOOL_NAMES = [
 
 export type AssistantToolName = (typeof ASSISTANT_TOOL_NAMES)[number];
 
+/**
+ * The one write-capable tool on the assistant's MCP surface: it drafts a
+ * proposal (validated, reversible via discard) and never creates cards
+ * directly. Dispatched by the route before the read executor.
+ */
+export const ASSISTANT_PROPOSAL_TOOL = 'propose_cards' as const;
+
+/** Every tool name the assistant's MCP child may call. */
+export const ASSISTANT_MCP_TOOL_NAMES: readonly string[] = [...ASSISTANT_TOOL_NAMES, ASSISTANT_PROPOSAL_TOOL];
+
 export function isAssistantToolName(name: string): name is AssistantToolName {
   return (ASSISTANT_TOOL_NAMES as readonly string[]).includes(name);
 }

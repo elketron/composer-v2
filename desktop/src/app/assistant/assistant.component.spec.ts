@@ -343,4 +343,78 @@ describe('AssistantComponent', () => {
     expect(el.textContent).toContain('original');
     expect(el.querySelector('.branch-position')?.textContent).toContain('1/2');
   });
+
+  // ---- Proposal panel (Phase 8) ----
+
+  function emitProposalDraft(): void {
+    events.emit(
+      wireGlobalEvent('proposalDrafted', {
+        proposal: {
+          id: 'PR-1',
+          threadId: 'TH-1',
+          createdAt: new Date().toISOString(),
+          status: 'drafted',
+          items: [
+            { id: 'pi-1', projectId: 'P-1', title: 'First item', description: 'do it', cardType: 'coding', key: 'a', blockedBy: [], included: true },
+            { id: 'pi-2', projectId: 'P-1', title: 'Second item', description: '', cardType: 'docs', blockedBy: ['a'], included: true },
+          ],
+        },
+      }),
+    );
+  }
+
+  it('a drafted proposal renders editable items and confirms through the panel', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    seedProject(events, 'P-1', 'alpha');
+    emitThread();
+    emitProposalDraft();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    expect(el.querySelector('.proposal')).toBeTruthy();
+    expect(el.textContent).toContain('proposal PR-1');
+    const titles = [...el.querySelectorAll('.proposal-title')].map((input) => (input as HTMLInputElement).value);
+    expect(titles).toEqual(['First item', 'Second item']);
+
+    // Edit a title and exclude one item; confirm publishes both.
+    const titleInput = el.querySelectorAll<HTMLInputElement>('.proposal-title')[1]!;
+    titleInput.value = 'Second (edited)';
+    titleInput.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    el.querySelector<HTMLInputElement>('.proposal-item input[type="checkbox"]')?.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(el.querySelector<HTMLButtonElement>('.proposal-confirm')?.disabled).toBe(false);
+    el.querySelector<HTMLButtonElement>('.proposal-confirm')?.click();
+    await fixture.whenStable();
+    expect(events.lastCommand('requestProposalConfirm')).toMatchObject({
+      projectId: '',
+      requestProposalConfirm: { proposalId: 'PR-1' },
+    });
+    const payload = events.lastCommand('requestProposalConfirm')?.requestProposalConfirm;
+    expect(payload?.items[0]?.included).toBe(false);
+    expect(payload?.items[1]?.title).toBe('Second (edited)');
+  });
+
+  it('confirming with nothing included is blocked client-side', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    emitProposalDraft();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    for (const checkbox of el.querySelectorAll<HTMLInputElement>('.proposal-item input[type="checkbox"]')) {
+      checkbox.click();
+    }
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(el.querySelector<HTMLButtonElement>('.proposal-confirm')?.disabled).toBe(true);
+    el.querySelector<HTMLButtonElement>('.proposal-confirm')?.click();
+    await fixture.whenStable();
+    expect(events.published).toEqual([]);
+  });
 });

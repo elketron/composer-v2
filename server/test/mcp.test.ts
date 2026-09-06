@@ -197,7 +197,7 @@ describe('the assistant mcp surface', () => {
   };
   const context = { threadId: 'TH-1' };
 
-  it('tools_list_exposes_the_nine_read_tools', async () => {
+  it('tools_list_exposes_the_nine_reads_plus_the_proposal_draft', async () => {
     const response = await assistantHandleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, caller, context);
     const tools = (response!['result'] as { tools: { name: string }[] }).tools;
     expect(tools.map((tool) => tool.name)).toEqual([
@@ -210,6 +210,7 @@ describe('the assistant mcp surface', () => {
       'git_log',
       'git_diff',
       'web_fetch',
+      'propose_cards',
     ]);
   });
 

@@ -114,3 +114,63 @@ function toIso(value: string | Date | undefined): string {
   if (value instanceof Date) return value.toISOString();
   return value ?? new Date().toISOString();
 }
+
+// ---- Work proposals (Phase 8) ----
+
+export type ProposalCardType = 'coding' | 'design' | 'docs';
+export type ProposalStatus = 'DRAFTED' | 'CONFIRMED' | 'DISCARDED';
+
+export interface ProposalItem {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  cardType: ProposalCardType;
+  key?: string;
+  blockedBy: string[];
+  included: boolean;
+}
+
+export interface ProposalOutcome {
+  projectId: string;
+  ok: boolean;
+  cardIds?: string[];
+  error?: string;
+}
+
+export interface CardProposal {
+  id: string;
+  threadId: string;
+  createdAt: string;
+  status: ProposalStatus;
+  items: ProposalItem[];
+  outcomes?: ProposalOutcome[];
+  confirmedAt?: string;
+}
+
+export function normalizeProposalStatus(status: string | undefined): ProposalStatus {
+  const normalized = status?.toUpperCase();
+  if (normalized === 'CONFIRMED') return 'CONFIRMED';
+  if (normalized === 'DISCARDED') return 'DISCARDED';
+  return 'DRAFTED';
+}
+
+export function normalizeProposalCardType(value: unknown): ProposalCardType {
+  return value === 'design' || value === 'docs' ? value : 'coding';
+}
+
+export function proposalItemFromWire(value: unknown): ProposalItem {
+  const record = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+  return {
+    id: typeof record['id'] === 'string' ? record['id'] : '',
+    projectId: typeof record['projectId'] === 'string' ? record['projectId'] : '',
+    title: typeof record['title'] === 'string' ? record['title'] : '',
+    description: typeof record['description'] === 'string' ? record['description'] : '',
+    cardType: normalizeProposalCardType(record['cardType']),
+    key: typeof record['key'] === 'string' ? record['key'] : undefined,
+    blockedBy: Array.isArray(record['blockedBy'])
+      ? record['blockedBy'].filter((entry): entry is string => typeof entry === 'string')
+      : [],
+    included: record['included'] !== false,
+  };
+}

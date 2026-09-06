@@ -186,6 +186,36 @@ export const WireAssistantThreadStatus = {
 export type WireAssistantThreadStatus =
   (typeof WireAssistantThreadStatus)[keyof typeof WireAssistantThreadStatus];
 
+export type WireProposalStatus = 'drafted' | 'confirmed' | 'discarded';
+
+export interface ProposalItemJson {
+  readonly id?: string;
+  readonly projectId?: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly cardType?: WireCardType;
+  readonly key?: string;
+  readonly blockedBy?: string[];
+  readonly included?: boolean;
+}
+
+export interface ProposalOutcomeJson {
+  readonly projectId?: string;
+  readonly ok?: boolean;
+  readonly cardIds?: string[];
+  readonly error?: string;
+}
+
+export interface CardProposalJson {
+  readonly id?: string;
+  readonly threadId?: string;
+  readonly createdAt?: string;
+  readonly status?: WireProposalStatus;
+  readonly items?: ProposalItemJson[];
+  readonly outcomes?: ProposalOutcomeJson[];
+  readonly confirmedAt?: string;
+}
+
 export interface AssistantThreadJson {
   readonly id?: string;
   readonly name?: string;
@@ -337,6 +367,14 @@ export interface DomainEventJson {
   readonly assistantThreadStatusChanged?: { readonly threadId: string; readonly status: WireAssistantThreadStatus };
   readonly assistantThreadRenamed?: { readonly threadId: string; readonly name: string };
   readonly assistantResent?: { readonly threadId: string; readonly message: ChatMessageJson };
+  readonly proposalDrafted?: { readonly proposal: CardProposalJson };
+  readonly proposalConfirmed?: {
+    readonly proposalId: string;
+    readonly items: ProposalItemJson[];
+    readonly outcomes: ProposalOutcomeJson[];
+    readonly confirmedAt: string;
+  };
+  readonly proposalDiscarded?: { readonly proposalId: string };
 }
 
 /** The payload field names (the oneof members, camelCase). */
@@ -385,6 +423,9 @@ export const EVENT_KINDS = [
   'assistantThreadStatusChanged',
   'assistantThreadRenamed',
   'assistantResent',
+  'proposalDrafted',
+  'proposalConfirmed',
+  'proposalDiscarded',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -436,6 +477,8 @@ export type CommandKind =
   | 'requestAssistantRetry'
   | 'requestAssistantThreadRename'
   | 'requestAssistantResend'
+  | 'requestProposalConfirm'
+  | 'requestProposalDiscard'
   | 'requestAgentSessionStart'
   | 'requestAgentSessionStop';
 
@@ -487,6 +530,11 @@ export interface PublishRequestJson {
   readonly requestAssistantRetry?: { readonly threadId: string };
   readonly requestAssistantThreadRename?: { readonly threadId: string; readonly name: string };
   readonly requestAssistantResend?: { readonly threadId: string; readonly messageId: string; readonly text: string };
+  readonly requestProposalConfirm?: {
+    readonly proposalId: string;
+    readonly items: ProposalItemJson[];
+  };
+  readonly requestProposalDiscard?: { readonly proposalId: string };
 }
 
 /** The generic write-path envelope (`POST /action`, http.rs). */
@@ -502,7 +550,8 @@ export interface ActionEnvelopeJson {
     | 'pipelineGate'
     | 'assistantThread'
     | 'assistantMessage'
-    | 'assistantResend';
+    | 'assistantResend'
+    | 'proposal';
   readonly projectId: string;
   readonly body: Record<string, unknown>;
 }
@@ -680,6 +729,15 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
       messageId: request.requestAssistantResend.messageId,
       text: request.requestAssistantResend.text,
     });
+  }
+  if (request.requestProposalConfirm) {
+    return env('update', 'proposal', {
+      id: request.requestProposalConfirm.proposalId,
+      items: [...request.requestProposalConfirm.items],
+    });
+  }
+  if (request.requestProposalDiscard) {
+    return env('delete', 'proposal', { id: request.requestProposalDiscard.proposalId });
   }
   return null;
 }

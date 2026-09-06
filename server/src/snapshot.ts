@@ -64,6 +64,14 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     }
   }
 
+  // Work proposals (Phase 8): the creation event carries the folded record
+  // (status, possibly edited items, batch outcomes).
+  for (const proposal of [...state.proposals.values()].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  )) {
+    events.push(frame(undefined, 'proposalDrafted', { proposal: structuredClone(proposal) }, nonce, index++));
+  }
+
   const projects = [...state.projects.values()]
     .filter((project) => projectId === undefined || project.id === projectId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));

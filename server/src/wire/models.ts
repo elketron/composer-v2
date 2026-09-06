@@ -144,6 +144,45 @@ export interface Pipeline {
 
 export type PipelineRunStatus = 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
+// ---- Work proposals (Phase 8): the assistant drafts board-ready cards;
+// the user edits and confirms; confirmation creates real cards through the
+// validated processor as independent per-project batches. ----
+
+export interface ProposalItem {
+  id: string;
+  /** The project the card lands in — must be in the drafting thread's scope. */
+  projectId: string;
+  title: string;
+  description: string;
+  cardType: CardType;
+  /** Optional in-batch key other items' blockedBy can reference. */
+  key?: string;
+  /** Existing card ids of the target project or in-batch keys. */
+  blockedBy: string[];
+  /** The user's inclusion checkbox (default true). */
+  included: boolean;
+}
+
+export type ProposalStatus = 'drafted' | 'confirmed' | 'discarded';
+
+export interface ProposalOutcome {
+  projectId: string;
+  ok: boolean;
+  cardIds?: string[];
+  error?: string;
+}
+
+export interface CardProposal {
+  id: string;
+  threadId: string;
+  createdAt: string;
+  status: ProposalStatus;
+  items: ProposalItem[];
+  /** Set by confirmation (per-project batches). */
+  outcomes?: ProposalOutcome[];
+  confirmedAt?: string;
+}
+
 // ---- Lane semantics (v1 design.md §3.1) ----
 
 export const ALL_STAGES: Stage[] = [

@@ -31,6 +31,9 @@ const GLOBAL_KINDS: ReadonlySet<string> = new Set([
   'assistantThreadStatusChanged',
   'assistantThreadRenamed',
   'assistantResent',
+  'proposalDrafted',
+  'proposalConfirmed',
+  'proposalDiscarded',
 ]);
 
 const byKind = () => new Map(frames.map((frame) => [frame.eventType, frame]));

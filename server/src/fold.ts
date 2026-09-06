@@ -7,6 +7,7 @@ import type { EventEnvelope } from './wire/envelope.js';
 import { isLaneValid, subStateFor } from './wire/models.js';
 import type {
   AssistantThread,
+  CardProposal,
   ChatMessage,
   Pipeline,
   PipelineRunStatus,
@@ -84,10 +85,17 @@ export interface State {
   byProject: Map<string, ProjectState>;
   /** Global assistant threads (Phase 6) — no projectId; the scope rides the thread. */
   assistantThreads: Map<string, AssistantThread>;
+  /** The assistant's work proposals (Phase 8), keyed by proposal id. */
+  proposals: Map<string, CardProposal>;
 }
 
 export function newState(): State {
-  return { projects: new Map(), byProject: new Map(), assistantThreads: new Map() };
+  return {
+    projects: new Map(),
+    byProject: new Map(),
+    assistantThreads: new Map(),
+    proposals: new Map(),
+  };
 }
 
 /** The card sub-state stage a pipeline step kind works in (v1, M3). */
@@ -466,6 +474,30 @@ export function apply(state: State, envelope: EventEnvelope): void {
       const body = envelope.body as EventBodyMap['assistantThreadRenamed'];
       const thread = state.assistantThreads.get(body.threadId);
       if (thread) thread.name = body.name;
+      break;
+    }
+
+    // ---- Work proposals (Phase 8) ----
+
+    case 'proposalDrafted': {
+      const body = envelope.body as EventBodyMap['proposalDrafted'];
+      state.proposals.set(body.proposal.id, structuredClone(body.proposal));
+      break;
+    }
+    case 'proposalConfirmed': {
+      const body = envelope.body as EventBodyMap['proposalConfirmed'];
+      const proposal = state.proposals.get(body.proposalId);
+      if (!proposal) break;
+      proposal.items = structuredClone(body.items);
+      proposal.outcomes = structuredClone(body.outcomes);
+      proposal.status = 'confirmed';
+      proposal.confirmedAt = body.confirmedAt;
+      break;
+    }
+    case 'proposalDiscarded': {
+      const body = envelope.body as EventBodyMap['proposalDiscarded'];
+      const proposal = state.proposals.get(body.proposalId);
+      if (proposal) proposal.status = 'discarded';
       break;
     }
     default:

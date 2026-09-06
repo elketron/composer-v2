@@ -17,11 +17,14 @@ import {
   type AssistantThread,
   type Assignee,
   type Card,
+  type CardProposal,
   type CardType,
   type ChatMessage,
   type Pipeline,
   type PipelineStep,
   type PlanningSession,
+  type ProposalItem,
+  type ProposalOutcome,
   type Project,
   type Stage,
   type SubStateStatus,
@@ -120,6 +123,12 @@ export class Processor {
         return this.renameAssistantThread(command.threadId, command.name);
       case 'requestAssistantResend':
         return this.resendAssistantMessage(command.threadId, command.messageId, command.text);
+      case 'requestProposalDraft':
+        return this.draftProposal(command.threadId, command.items);
+      case 'requestProposalConfirm':
+        return this.confirmProposal(command.proposalId, command.items);
+      case 'requestProposalDiscard':
+        return this.discardProposal(command.proposalId);
       default: {
         const unknown = command as { type: string };
         return rejected('invalidCommand', `${unknown.type} is not implemented yet`);
@@ -943,6 +952,155 @@ export class Processor {
     return ok();
   }
 
+  // ---- Work proposals (Phase 8) ----
+
+  private static readonly MAX_PROPOSAL_ITEMS = 50;
+
+  /**
+   * Records the assistant's draft (the propose_cards MCP tool lands here).
+   * Everything is validated up front — scope, shape, and dependencies — so
+   * the tool result can teach the model before the user ever sees it.
+   */
+  private async draftProposal(threadId: string, items: ProposalItem[]): Promise<CommandOutcome> {
+    const thread = this.assistantThreads().get(threadId);
+    if (!thread) {
+      return rejected('unknownThread', `Unknown thread ${threadId}`);
+    }
+    if (thread.archivedAt !== undefined) {
+      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
+    }
+    if (items.length === 0) {
+      return rejected('invalidCommand', 'No proposal items provided');
+    }
+    if (items.length > Processor.MAX_PROPOSAL_ITEMS) {
+      return rejected('invalidCommand', `A proposal carries at most ${Processor.MAX_PROPOSAL_ITEMS} items`);
+    }
+    const keys = items.filter((item) => item.key !== undefined).map((item) => item.key!);
+    if (new Set(keys).size !== keys.length) {
+      return rejected('invalidCommand', 'Proposal item keys must be unique');
+    }
+    const keySet = new Set(keys);
+    for (const item of items) {
+      if (!thread.projectIds.includes(item.projectId)) {
+        return rejected('invalidCommand', `project ${item.projectId} is not in thread ${threadId}'s scope`);
+      }
+      const error = validateProposalItem(item, this.cardsOf(item.projectId), keySet);
+      if (error !== null) return rejected('invalidCommand', error);
+    }
+
+    const proposal: CardProposal = {
+      id: allocateId(this.bus.state.proposals.keys(), 'PR'),
+      threadId,
+      createdAt: nowIso(),
+      status: 'drafted',
+      items: items.map((item) => ({
+        ...item,
+        id: randomUUID(),
+        included: true,
+      })),
+    };
+    await this.bus.publish(undefined, 'proposalDrafted', { proposal });
+    return ok();
+  }
+
+  /**
+   * Confirms a proposal: the (possibly edited) items land as cards through
+   * the validated processor, as one independent batch per target project —
+   * a project that fails validation reports an explicit error while the
+   * others proceed. Everything is re-validated against current state.
+   */
+  private async confirmProposal(proposalId: string, items: ProposalItem[]): Promise<CommandOutcome> {
+    const proposal = this.bus.state.proposals.get(proposalId);
+    if (!proposal) {
+      return rejected('unknownProposal', `Unknown proposal ${proposalId}`);
+    }
+    if (proposal.status !== 'drafted') {
+      return rejected('invalidCommand', `Proposal ${proposalId} was already ${proposal.status}`);
+    }
+    const included = items.filter((item) => item.included);
+    if (included.length === 0) {
+      return rejected('invalidCommand', 'No proposal items are included');
+    }
+    for (const item of items) {
+      if (!this.bus.state.projects.has(item.projectId)) {
+        return rejected('invalidCommand', `Unknown project ${item.projectId}`);
+      }
+    }
+
+    const outcomes: ProposalOutcome[] = [];
+    for (const projectId of [...new Set(included.map((item) => item.projectId))]) {
+      const batch = included.filter((item) => item.projectId === projectId);
+      const keys = batch.filter((item) => item.key !== undefined).map((item) => item.key!);
+      const keySet = new Set(keys);
+      let rejection: string | null = null;
+      for (const item of batch) {
+        const error = validateProposalItem(item, this.cardsOf(projectId), keySet);
+        if (error !== null) {
+          rejection = error;
+          break;
+        }
+      }
+
+      if (rejection !== null) {
+        outcomes.push({ projectId, ok: false, error: rejection });
+        continue;
+      }
+
+      const cards = this.cardsOf(projectId);
+      const first = Number(allocateId(cards.keys(), 'T').slice(2));
+      const ids: string[] = batch.map((_, offset) => `T-${first + offset}`);
+      const cardIdByKey = new Map<string, string>();
+      batch.forEach((item, offset) => {
+        if (item.key !== undefined) cardIdByKey.set(item.key, ids[offset]!);
+      });
+      const now = nowIso();
+      const created: Card[] = batch.map((item, offset) => ({
+        id: ids[offset]!,
+        projectId,
+        type: item.cardType,
+        title: item.title,
+        description: item.description,
+        tags: [],
+        stage: 'new',
+        blockedBy: item.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
+        subState: subStateFor(item.cardType),
+        retries: {},
+        createdAt: now,
+        updatedAt: now,
+      }));
+      await this.bus.publish(projectId, 'cardsCommitted', { cards: created });
+      for (const card of created) {
+        if (card.blockedBy.length === 0) continue;
+        await this.bus.publish(projectId, 'dependencyStateChanged', {
+          cardId: card.id,
+          blocked: true,
+          blockedBy: card.blockedBy,
+        });
+      }
+      outcomes.push({ projectId, ok: true, cardIds: ids });
+    }
+
+    await this.bus.publish(undefined, 'proposalConfirmed', {
+      proposalId,
+      items,
+      outcomes,
+      confirmedAt: nowIso(),
+    });
+    return ok();
+  }
+
+  private async discardProposal(proposalId: string): Promise<CommandOutcome> {
+    const proposal = this.bus.state.proposals.get(proposalId);
+    if (!proposal) {
+      return rejected('unknownProposal', `Unknown proposal ${proposalId}`);
+    }
+    if (proposal.status !== 'drafted') {
+      return rejected('invalidCommand', `Proposal ${proposalId} was already ${proposal.status}`);
+    }
+    await this.bus.publish(undefined, 'proposalDiscarded', { proposalId });
+    return ok();
+  }
+
   private assistantThreads(): Map<string, AssistantThread> {
     return this.bus.state.assistantThreads;
   }
@@ -1033,6 +1191,36 @@ function nextMessageIndex(session: PlanningSession): number {
 /** One past the highest assistant message index. */
 function nextAssistantMessageIndex(thread: AssistantThread): number {
   return thread.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
+}
+
+/**
+ * One proposal item's domain validation: shape, key self-reference, and
+ * deps that must name an in-batch key or an existing card of the item's
+ * target project (missing blockers don't block — unknown ones reject).
+ */
+function validateProposalItem(
+  item: ProposalItem,
+  projectCards: Map<string, Card>,
+  keySet: Set<string>,
+): string | null {
+  if (item.title.trim() === '') {
+    return `Proposal item '${item.title || item.projectId}': a title is required`;
+  }
+  if (item.cardType !== 'coding' && item.cardType !== 'design' && item.cardType !== 'docs') {
+    return `Proposal item '${item.title}': card type must be coding, design, or docs`;
+  }
+  if (item.key !== undefined && item.key.trim() === '') {
+    return `Proposal item '${item.title}': key must not be empty`;
+  }
+  for (const dep of item.blockedBy) {
+    if (dep === item.key) {
+      return `Proposal item '${item.title}': a proposal item cannot block itself`;
+    }
+    if (!keySet.has(dep) && !projectCards.has(dep)) {
+      return `Proposal item '${item.title}': blockedBy entry ${dep} is neither an existing card nor a proposal key`;
+    }
+  }
+  return null;
 }
 
 /** The per-kind fields a pipeline step must carry (v1 M3). */

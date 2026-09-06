@@ -121,6 +121,32 @@ const TOOLS: McpToolDefinition[] = [
       required: ['url'],
     },
   },
+  {
+    name: 'propose_cards',
+    description:
+      'Drafts board-ready card proposals for the user to review and confirm — it NEVER creates cards. Items: projectId (in scope), title, description, cardType (coding|design|docs), optional in-batch key, blockedBy (existing card ids of the target project or in-batch keys). Only propose when the user asks for work items or approves a plan.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              projectId: { type: 'string' },
+              title: { type: 'string' },
+              description: { type: 'string' },
+              cardType: { type: 'string', enum: ['coding', 'design', 'docs'] },
+              key: { type: 'string' },
+              blockedBy: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['projectId', 'title'],
+          },
+        },
+      },
+      required: ['items'],
+    },
+  },
 ];
 
 

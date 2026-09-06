@@ -914,6 +914,53 @@ Research notes for later slices:
   the serve process, whose static env cannot carry the per-turn
   `COMPOSER_PROJECT_ID/SESSION_ID` the planner/coder MCP children need.
 
+## S23 — Work proposals  ·  done (2026-09-06)
+
+Phase 8, the plan's final slice: the assistant drafts board-ready cards;
+the user edits and confirms; cards land through the validated processor.
+
+- **Domain** (3 global events, 45–47, golden regenerated):
+  `proposalDrafted` (the record rides the event), `proposalConfirmed`
+  (the possibly-edited items + per-project batch outcomes),
+  `proposalDiscarded`. `CardProposal {id PR-N, threadId, status
+  drafted|confirmed|discarded, items, outcomes?}`; items carry projectId,
+  title, description, cardType, an optional in-batch key, blockedBy, and
+  the user's `included` flag. Commands: `requestProposalDraft` (MCP
+  only), `requestProposalConfirm` / `requestProposalDiscard` (desktop,
+  actions `update:`/`delete:proposal`); new `unknownProposal` rejection.
+- **Draft validation** happens at draft time (scope: every projectId must
+  be in the thread's scope; shape; keys unique; deps = in-batch keys or
+  existing cards of the target project; self-blocks reject) so the tool
+  result teaches the model before the user sees anything.
+- **Confirm** re-validates against current state and executes one
+  independent batch per target project — a project whose validation fails
+  (state drifted since the draft) records an explicit error outcome while
+  the others create cards; key remap and the `cardsCommitted` →
+  `dependencyStateChanged` sequence are the planner's ticket-emission
+  semantics without a planning session. Confirm runs once per proposal;
+  discarding only closes drafts.
+- **MCP**: the assistant's surface gains `propose_cards` — the one
+  write-capable tool, dispatched on `/mcp/read` to the processor; the
+  shipped agent definition tells the model it only drafts. The route's
+  whitelist and the executor's stay separate (the read executor cannot be
+  reached with the draft tool).
+- **Desktop**: the proposal panel sits between transcript and composer —
+  per-item inclusion checkbox, editable title/description/type, project
+  chip, dep summary; confirm publishes the edited items (edits ride the
+  confirm command; a reload mid-edit drops them), discard closes the
+  draft; confirmation renders per-project outcome chips (created N cards
+  / failed: reason). Nothing is created until confirm.
+
+Exit criteria (met): `pnpm verify` (server 145, desktop 225); the server
+suite covers draft validation, per-project key remap, exclusion, partial
+failures via state drift (dep card archived between draft and confirm),
+double-confirm/discard rules, and the snapshot round-trip; the http e2e
+drives propose_cards → confirm → the created card read back; the desktop
+specs drive the panel (edit, include toggle, confirm payload, empty
+confirm blocked) and outcome folding; a live smoke on the real stack
+drafted PR-1 over `/mcp/read`, confirmed it over `/action`, and read back
+the created cards with deps remapped.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { renderMarkdown } from '../core/markdown';
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
-import { AssistantMessage } from '../core/models/assistant.models';
+import { AssistantMessage, type ProposalCardType, type ProposalItem } from '../core/models/assistant.models';
 import { AssistantService } from './assistant.service';
 
 /**
@@ -33,6 +33,20 @@ export class AssistantComponent {
   protected readonly error = this.assistant.error;
 
   protected readonly projects = this.shell.activeProjects;
+
+  /** The thread's proposals (Phase 8) and the local edits on the draft. */
+  protected readonly proposals = this.assistant.proposals;
+  protected readonly draftProposal = this.assistant.draftProposal;
+  protected readonly editItems = signal<ProposalItem[]>([]);
+  private readonly lastDraftId = signal('');
+  protected readonly confirmError = signal<string | null>(null);
+  protected readonly confirming = signal(false);
+  protected readonly lastConfirmed = computed(
+    () => this.proposals().find((proposal) => proposal.status === 'CONFIRMED') ?? null,
+  );
+  protected readonly includedCount = computed(
+    () => this.editItems().filter((item) => item.included).length,
+  );
   /** The active thread's scope as project names, for the header chips. */
   protected readonly scope = computed(() => {
     const ids = this.thread()?.projectIds ?? [];
@@ -76,6 +90,17 @@ export class AssistantComponent {
       if (!this.pinned()) return;
       const pane = this.transcriptEl()?.nativeElement;
       if (pane) pane.scrollTop = pane.scrollHeight;
+    });
+    // A fresh draft seeds the editable copies (edits ride the confirm).
+    effect(() => {
+      const draft = this.draftProposal();
+      if (draft && draft.id !== this.lastDraftId()) {
+        this.lastDraftId.set(draft.id);
+        this.confirmError.set(null);
+        this.editItems.set(draft.items.map((item) => ({ ...item })));
+      } else if (!draft) {
+        this.lastDraftId.set('');
+      }
     });
   }
 
@@ -169,8 +194,61 @@ export class AssistantComponent {
       .sort((a, b) => a.index - b.index);
   }
 
-  protected startEdit(message: AssistantMessage): void {
-    if (this.sending()) return;
+  // ---- Proposal panel (Phase 8) ----
+
+  protected projectName(projectId: string): string {
+    return this.shell.tabs().find((project) => project.id === projectId)?.name ?? projectId;
+  }
+
+  protected toggleInclude(index: number, checked: boolean): void {
+    this.editItems.update((items) =>
+      items.map((item, at) => (at === index ? { ...item, included: checked } : item)),
+    );
+  }
+
+  protected editTitle(index: number, title: string): void {
+    this.editItems.update((items) =>
+      items.map((item, at) => (at === index ? { ...item, title } : item)),
+    );
+  }
+
+  protected editDescription(index: number, description: string): void {
+    this.editItems.update((items) =>
+      items.map((item, at) => (at === index ? { ...item, description } : item)),
+    );
+  }
+
+  protected editType(index: number, cardType: string): void {
+    this.editItems.update((items) =>
+      items.map((item, at) =>
+        at === index ? { ...item, cardType: cardType as ProposalCardType } : item,
+      ),
+    );
+  }
+
+  protected async confirmProposal(): Promise<void> {
+    const proposal = this.draftProposal();
+    if (!proposal || this.confirming()) return;
+    if (this.includedCount() === 0) {
+      this.confirmError.set('nothing is included');
+      return;
+    }
+    this.confirming.set(true);
+    this.confirmError.set(null);
+    const items: ProposalItem[] = this.editItems().map((item) => ({ ...item }));
+    const failure = await this.assistant.confirmProposal(proposal.id, items);
+    this.confirming.set(false);
+    if (failure) this.confirmError.set(failure);
+  }
+
+  protected async discardProposal(): Promise<void> {
+    const proposal = this.draftProposal();
+    if (!proposal) return;
+    const failure = await this.assistant.discardProposal(proposal.id);
+    if (failure) this.confirmError.set(failure);
+  }
+
+  protected startEdit(message: AssistantMessage): void {    if (this.sending()) return;
     this.editing.set(message);
     this.draft.set(message.text);
     const area = this.composerArea()?.nativeElement;
