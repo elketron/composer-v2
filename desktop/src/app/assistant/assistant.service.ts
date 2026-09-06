@@ -35,6 +35,8 @@ export class AssistantService {
   private readonly activeThreadIdSignal = signal<string | null>(null);
   private readonly pendingCreate = new Set<string>();
   private readonly seenEventIds = new Map<string, true>();
+  /** Thread id → (parentId → the active child id) for branch navigation. */
+  private readonly branchChoices = signal<ReadonlyMap<string, ReadonlyMap<string, string>>>(new Map());
 
   readonly threads = this.threadsSignal.asReadonly();
   readonly activeThreadId = this.activeThreadIdSignal.asReadonly();
@@ -51,15 +53,16 @@ export class AssistantService {
   readonly thread = computed(
     () => this.threadsSignal().get(this.activeThreadIdSignal() ?? '') ?? null,
   );
+  /**
+   * The visible transcript: the active path through the thread's message
+   * tree. Edit-and-resend creates sibling branches (immutable lineage);
+   * the newest sibling shows by default and `switchBranch` navigates.
+   * Transcripts without ids (pre-S21 logs) stay linear.
+   */
   readonly messages = computed(() => {
-    const messages = this.thread()?.messages ?? [];
-    // Re-delivered events can land the same slot twice; each (role, index)
-    // renders once — the latest write wins.
-    const seen = new Map<string, AssistantMessage>();
-    for (const message of messages) {
-      seen.set(`${message.role}-${message.index}`, message);
-    }
-    return [...seen.values()];
+    const thread = this.thread();
+    if (!thread) return [];
+    return visibleTranscript(thread.messages, this.branchChoices().get(thread.id));
   });
   readonly streamingMessage = signal<AssistantMessage | null>(null);
   readonly isSending = signal(false);
@@ -142,6 +145,57 @@ export class AssistantService {
     return true;
   }
 
+  /**
+   * Edit-and-resend: the edited message becomes a sibling of the original
+   * (immutable lineage) and a turn runs for it. The send-lock clears on
+   * the reply's completion.
+   */
+  async resendMessage(threadId: string, messageId: string, text: string): Promise<boolean> {
+    const value = text.trim();
+    if (value === '' || this.isSending()) return false;
+    this.error.set(null);
+    this.isSending.set(true);
+    const response = await this.publish('requestAssistantResend', {
+      threadId,
+      messageId,
+      text: value,
+    });
+    if (!response.ok) {
+      this.isSending.set(false);
+      this.error.set(response.rejectionMessage ?? 'the message could not be resent');
+      return false;
+    }
+    return true;
+  }
+
+  /** The sibling versions of a forked message (branch navigation). */
+  branchOf(threadId: string, message: AssistantMessage): { position: number; count: number } | null {
+    if (message.id === '') return null;
+    const siblings = visibleSiblings(this.threadsSignal().get(threadId)?.messages ?? [], message.parentId);
+    if (siblings.length <= 1) return null;
+    return { position: siblings.findIndex((entry) => entry.id === message.id) + 1, count: siblings.length };
+  }
+
+  /** Shows the given sibling of a forked message (the subtree below follows). */
+  switchBranch(threadId: string, parentId: string | null, childId: string): void {
+    const key = parentId ?? '';
+    this.branchChoices.update((choices) => {
+      const forThread = new Map(choices.get(threadId) ?? new Map());
+      forThread.set(key, childId);
+      const next = new Map(choices);
+      next.set(threadId, forThread);
+      return next;
+    });
+  }
+
+  private openStreamingBubble(threadId: string, message: AssistantMessage): void {
+    if (threadId === this.activeThreadIdSignal()) {
+      this.streamingMessage.set(
+        new AssistantMessage({ index: message.index + 1, role: 'agent', text: '' }),
+      );
+    }
+  }
+
   /** requestAssistantMessage; the reply arrives on the stream. */
   async sendMessage(text: string): Promise<boolean> {
     const value = text.trim();
@@ -218,9 +272,20 @@ export class AssistantService {
         if (!payload?.threadId || !payload.message) break;
         const message = asMessage(payload.message);
         this.upsertMessage(payload.threadId, message, 'RUNNING');
-        if (payload.threadId === this.activeThreadIdSignal()) {
-          this.streamingMessage.set(new AssistantMessage({ index: message.index + 1, role: 'agent', text: '' }));
+        this.openStreamingBubble(payload.threadId, message);
+        break;
+      }
+      case 'assistantResent': {
+        // The edited message opens a sibling branch; it is the turn's parent.
+        const payload = event.assistantResent;
+        if (!payload?.threadId || !payload.message) break;
+        const message = asMessage(payload.message);
+        this.upsertMessage(payload.threadId, message, 'RUNNING');
+        // The new branch becomes the visible one (its sibling stays navigable).
+        if (message.id !== '') {
+          this.switchBranch(payload.threadId, message.parentId, message.id);
         }
+        this.openStreamingBubble(payload.threadId, message);
         break;
       }
       case 'assistantMessageDelta': {
@@ -271,8 +336,7 @@ export class AssistantService {
           this.streamingMessage.set(new AssistantMessage({ index: next, role: 'agent', text: '' }));
         }
         break;
-      }
-      case 'assistantThreadStatusChanged': {
+      }      case 'assistantThreadStatusChanged': {
         const payload = event.assistantThreadStatusChanged;
         if (!payload?.threadId) break;
         this.updateThread(payload.threadId, {
@@ -359,6 +423,8 @@ export class AssistantService {
               role: message.role,
               text: message.text,
               at: message.at,
+              id: message.id,
+              parentId: message.parentId ?? undefined,
             })
           : message;
       const messages = thread.messages.filter((entry) => entry.index !== healed.index);
@@ -410,7 +476,52 @@ function asMessage(value: unknown): AssistantMessage {
     role: typeof record['role'] === 'string' ? record['role'] : 'user',
     text: typeof record['text'] === 'string' ? record['text'] : '',
     at: typeof record['at'] === 'string' ? record['at'] : undefined,
+    id: typeof record['id'] === 'string' ? record['id'] : undefined,
+    parentId: typeof record['parentId'] === 'string' ? record['parentId'] : undefined,
   });
+}
+
+// ---- Branch lineage (the visible transcript) ----
+
+/** The siblings of one fork point, in log order. */
+function visibleSiblings(
+  messages: readonly AssistantMessage[],
+  parentId: string | null,
+): AssistantMessage[] {
+  return messages
+    .filter((message) => message.parentId === parentId)
+    .sort((a, b) => a.index - b.index);
+}
+
+/**
+ * The active path through the message tree: from the root, at every fork
+ * follow the chosen child (default the newest). Transcripts without ids
+ * (pre-S21 logs) render linearly, deduped by (role, index).
+ */
+function visibleTranscript(
+  messages: readonly AssistantMessage[],
+  choices: ReadonlyMap<string, string> | undefined,
+): AssistantMessage[] {
+  if (messages.length === 0) return [];
+  if (messages.some((message) => message.id === '')) {
+    const seen = new Map<string, AssistantMessage>();
+    for (const message of [...messages].sort((a, b) => a.index - b.index)) {
+      seen.set(`${message.role}-${message.index}`, message);
+    }
+    return [...seen.values()];
+  }
+  const path: AssistantMessage[] = [];
+  let parentId: string | null = null;
+  for (;;) {
+    const siblings: AssistantMessage[] = visibleSiblings(messages, parentId);
+    if (siblings.length === 0) break;
+    const chosen: string | undefined = choices?.get(parentId ?? '');
+    const node: AssistantMessage =
+      siblings.find((entry) => entry.id === chosen) ?? siblings[siblings.length - 1]!;
+    path.push(node);
+    parentId = node.id;
+  }
+  return path;
 }
 
 function arrayOfStrings(value: unknown): string[] {

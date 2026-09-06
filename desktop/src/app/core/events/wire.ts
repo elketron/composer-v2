@@ -120,6 +120,8 @@ export interface ChatMessageJson {
   readonly role?: string;
   readonly text?: string;
   readonly at?: string;
+  readonly id?: string;
+  readonly parentId?: string;
 }
 
 export interface PlanningSessionJson {
@@ -334,6 +336,7 @@ export interface DomainEventJson {
   readonly assistantRetryRequested?: { readonly threadId: string };
   readonly assistantThreadStatusChanged?: { readonly threadId: string; readonly status: WireAssistantThreadStatus };
   readonly assistantThreadRenamed?: { readonly threadId: string; readonly name: string };
+  readonly assistantResent?: { readonly threadId: string; readonly message: ChatMessageJson };
 }
 
 /** The payload field names (the oneof members, camelCase). */
@@ -381,6 +384,7 @@ export const EVENT_KINDS = [
   'assistantRetryRequested',
   'assistantThreadStatusChanged',
   'assistantThreadRenamed',
+  'assistantResent',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -431,6 +435,7 @@ export type CommandKind =
   | 'requestAssistantThreadStop'
   | 'requestAssistantRetry'
   | 'requestAssistantThreadRename'
+  | 'requestAssistantResend'
   | 'requestAgentSessionStart'
   | 'requestAgentSessionStop';
 
@@ -481,6 +486,7 @@ export interface PublishRequestJson {
   readonly requestAssistantThreadStop?: { readonly threadId: string };
   readonly requestAssistantRetry?: { readonly threadId: string };
   readonly requestAssistantThreadRename?: { readonly threadId: string; readonly name: string };
+  readonly requestAssistantResend?: { readonly threadId: string; readonly messageId: string; readonly text: string };
 }
 
 /** The generic write-path envelope (`POST /action`, http.rs). */
@@ -495,7 +501,8 @@ export interface ActionEnvelopeJson {
     | 'pipeline'
     | 'pipelineGate'
     | 'assistantThread'
-    | 'assistantMessage';
+    | 'assistantMessage'
+    | 'assistantResend';
   readonly projectId: string;
   readonly body: Record<string, unknown>;
 }
@@ -665,6 +672,13 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
     return env('update', 'assistantThread', {
       id: request.requestAssistantThreadRename.threadId,
       name: request.requestAssistantThreadRename.name,
+    });
+  }
+  if (request.requestAssistantResend) {
+    return env('create', 'assistantResend', {
+      threadId: request.requestAssistantResend.threadId,
+      messageId: request.requestAssistantResend.messageId,
+      text: request.requestAssistantResend.text,
     });
   }
   return null;

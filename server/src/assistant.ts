@@ -11,6 +11,7 @@
 // messages are durable, so context survives a restart's fresh runtime
 // session).
 
+import { randomUUID } from 'node:crypto';
 import type { Bus } from './bus.js';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
@@ -59,6 +60,8 @@ export class AssistantOrchestrator {
   private readonly controllers = new Map<string, AbortController>();
   /** Thread id → the streaming message being accumulated (for stop's partial text). */
   private readonly streaming = new Map<string, { messageId: string; text: string }>();
+  /** Thread id → the user message id the in-flight turn answers (reply lineage). */
+  private readonly turnParents = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
 
   constructor(bus: Bus, engine: AgentEngine, options: AssistantOptions = {}) {
@@ -87,7 +90,7 @@ export class AssistantOrchestrator {
     const body = frame.body as { threadId?: string };
     const threadId = body?.threadId;
     if (threadId === undefined) return Promise.resolve();
-    if (frame.eventType === 'assistantUserMessage') {
+    if (frame.eventType === 'assistantUserMessage' || frame.eventType === 'assistantResent') {
       const message = (frame.body as { message?: { text?: string } }).message;
       return this.onUserMessage(threadId, message?.text ?? '');
     }
@@ -176,6 +179,11 @@ export class AssistantOrchestrator {
       };
       const controller = new AbortController();
       this.controllers.set(threadId, controller);
+      // The turn answers the thread's newest user message — that is the
+      // reply's parent (a resent edit is the newest user message, so the
+      // reply opens the new branch).
+      const parent = [...thread.messages].reverse().find((message) => message.role === 'user');
+      if (parent?.id !== undefined) this.turnParents.set(threadId, parent.id);
       const outcome = await this.engine.run(
         { ...spec, signal: controller.signal },
         (event) => this.onEngineEvent(threadId, event),
@@ -189,8 +197,9 @@ export class AssistantOrchestrator {
           // A user stop: the partial reply (if any) lands as the turn's
           // content; the thread keeps its canonical `stopped` status.
           const stream = this.streaming.get(threadId);
-          const text = stream?.text !== undefined && stream.text !== '' ? stream.text : 'stopped.';
-          await this.publishAssistantMessage(threadId, stream?.messageId ?? `stopped:${threadId}`, text);
+          const stoppedText =
+            stream?.text !== undefined && stream.text !== '' ? stream.text : 'stopped.';
+          await this.publishAssistantMessage(threadId, stream?.messageId ?? `stopped:${threadId}`, stoppedText);
           this.streaming.delete(threadId);
           return;
         }
@@ -246,7 +255,7 @@ export class AssistantOrchestrator {
 
   private async publishAssistantMessage(
     threadId: string,
-    messageId: string,
+    engineMessageId: string,
     text: string,
   ): Promise<void> {
     const thread = this.threadOf(threadId);
@@ -255,14 +264,22 @@ export class AssistantOrchestrator {
     // folded onto the delta's reserved index must not be stolen by the
     // reply (the transcript sorts by index). The watermark advances so the
     // next reservation doesn't reuse the bumped index.
-    const reserved = this.reserveIndex(threadId, messageId, thread);
+    const reserved = this.reserveIndex(threadId, engineMessageId, thread);
     const index = Math.max(reserved, nextMessageIndex(thread));
     if (index > (this.lastReserved.get(threadId) ?? 0)) {
       this.lastReserved.set(threadId, index);
     }
+    const parentId = this.turnParents.get(threadId);
     await this.bus.publish(undefined, 'assistantMessageComplete', {
       threadId,
-      message: { index, role: 'agent', text, at: nowIso() },
+      message: {
+        id: randomUUID(),
+        ...(parentId !== undefined ? { parentId } : {}),
+        index,
+        role: 'agent',
+        text,
+        at: nowIso(),
+      },
     });
   }
 
@@ -329,6 +346,8 @@ export async function resumeStrandedThreads(bus: Bus): Promise<number> {
     await bus.publish(undefined, 'assistantMessageComplete', {
       threadId: thread.id,
       message: {
+        id: randomUUID(),
+        ...(last.id !== undefined ? { parentId: last.id } : {}),
         index: nextMessageIndex(thread),
         role: 'agent',
         text: 'the server restarted before this turn could run — send your message again',

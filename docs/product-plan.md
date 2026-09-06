@@ -194,9 +194,9 @@ enumerates project-scoped events.
 
 ## Phase 7 - Assistant conversation UX
 
-Status: controls implemented 2026-09-06 (S20: stop, retry, explicit
-statuses, rename, safe markdown). Edit-and-resend with branch lineage and
-the branch navigator are next (S21).
+Status: implemented 2026-09-06 (S20: stop, retry, explicit statuses,
+rename, safe markdown; S21: edit-and-resend with immutable branch
+lineage and the branch navigator).
 
 The assistant surface contains a thread sidebar, transcript, visible project
 scope picker, composer, and contextual proposal panel.

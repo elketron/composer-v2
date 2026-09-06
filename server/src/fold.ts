@@ -423,8 +423,9 @@ export function apply(state: State, envelope: EventEnvelope): void {
       if (thread) thread.projectIds = [...body.projectIds];
       break;
     }
-    case 'assistantUserMessage': {
-      const body = envelope.body as EventBodyMap['assistantUserMessage'];
+    case 'assistantUserMessage':
+    case 'assistantResent': {
+      const body = envelope.body as EventBodyMap['assistantUserMessage' | 'assistantResent'];
       const thread = state.assistantThreads.get(body.threadId);
       if (!thread) break;
       foldThreadMessage(thread, body.message);

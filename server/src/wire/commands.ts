@@ -44,7 +44,8 @@ export type Command =
   // Conversation controls (Phase 7).
   | { type: 'requestAssistantThreadStop'; threadId: string }
   | { type: 'requestAssistantRetry'; threadId: string }
-  | { type: 'requestAssistantThreadRename'; threadId: string; name: string };
+  | { type: 'requestAssistantThreadRename'; threadId: string; name: string }
+  | { type: 'requestAssistantResend'; threadId: string; messageId: string; text: string };
 
 /** One ticket the planner emits on approval; lands as an ordinary card. */
 export interface TicketEmission {

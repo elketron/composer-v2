@@ -7,6 +7,8 @@ export interface AssistantMessageData {
   readonly role: MessageRole | string;
   readonly text: string;
   readonly at?: string | Date;
+  readonly id?: string;
+  readonly parentId?: string;
 }
 
 export class AssistantMessage {
@@ -14,12 +16,18 @@ export class AssistantMessage {
   readonly role: MessageRole;
   readonly text: string;
   readonly at: string;
+  /** Stable message id (branch lineage); '' for pre-S21 transcripts. */
+  readonly id: string;
+  /** The message this one follows; null = thread root. */
+  readonly parentId: string | null;
 
   constructor(data: AssistantMessageData) {
     this.index = data.index;
     this.role = normalizeMessageRole(data.role);
     this.text = data.text;
     this.at = toIso(data.at);
+    this.id = data.id ?? '';
+    this.parentId = data.parentId ?? null;
   }
 
   get isUser(): boolean {

@@ -5,6 +5,7 @@ import {
   provideFakeEventsClient,
   wireGlobalEvent,
 } from '../core/events/events-client.fake';
+import { AssistantMessage } from '../core/models/assistant.models';
 import { AssistantService } from './assistant.service';
 
 /**
@@ -269,5 +270,93 @@ describe('AssistantService', () => {
     });
     events.emit(wireGlobalEvent('assistantThreadRenamed', { threadId: 'TH-1', name: 'portfolio' }));
     expect(service.thread()?.name).toBe('portfolio');
+  });
+
+  // ---- Branch lineage (S21) ----
+
+  interface Msg {
+    id: string;
+    parentId?: string;
+    index: number;
+    role: 'user' | 'agent';
+    text: string;
+  }
+  function emitMessages(list: Msg[]): void {
+    for (const message of list) {
+      const kind = message.role === 'user' ? 'assistantUserMessage' : 'assistantMessageComplete';
+      events.emit(wireGlobalEvent(kind as never, { threadId: 'TH-1', message: { ...message, at: '' } }));
+    }
+  }
+
+  it('a resent edit opens a sibling branch and the view follows it', () => {
+    emitThread();
+    emitMessages([
+      { id: 'u1', index: 1, role: 'user', text: 'original' },
+      { id: 'a1', parentId: 'u1', index: 2, role: 'agent', text: 'first answer' },
+    ]);
+    // The user edits-and-resends m1: a sibling of u1 opens (its own event).
+    events.emit(
+      wireGlobalEvent('assistantResent', {
+        threadId: 'TH-1',
+        message: { id: 'u2', index: 3, role: 'user', text: 'edited', at: '' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: { id: 'a2', parentId: 'u2', index: 4, role: 'agent', text: 'second answer', at: '' },
+      }),
+    );
+
+    // The visible path followed the new branch; the old one stays folded.
+    expect(service.messages().map((message) => message.text)).toEqual(['edited', 'second answer']);
+    expect(service.thread()?.messages).toHaveLength(4);
+
+    // Navigating back shows the original branch.
+    service.switchBranch('TH-1', null, 'u1');
+    expect(service.messages().map((message) => message.text)).toEqual(['original', 'first answer']);
+  });
+
+  it('branchOf reports fork positions for the switcher', () => {
+    emitThread();
+    emitMessages([
+      { id: 'u1', index: 1, role: 'user', text: 'original' },
+      { id: 'u2', index: 3, role: 'user', text: 'edited' },
+    ]);
+    const u1 = service.thread()!.messages.find((message) => message.id === 'u1')!;
+    const u2 = service.thread()!.messages.find((message) => message.id === 'u2')!;
+    expect(service.branchOf('TH-1', u1)).toEqual({ position: 1, count: 2 });
+    expect(service.branchOf('TH-1', u2)).toEqual({ position: 2, count: 2 });
+    // A message without an id (pre-S21 transcript) has no fork info.
+    expect(service.branchOf('TH-1', new AssistantMessage({ index: 9, role: 'user', text: 'x' }))).toBeNull();
+  });
+
+  it('transcripts without ids stay linear (pre-S21 logs)', () => {
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { index: 1, role: 'user', text: 'old question', at: '' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: { index: 2, role: 'agent', text: 'old answer', at: '' },
+      }),
+    );
+    expect(service.messages().map((message) => message.text)).toEqual(['old question', 'old answer']);
+  });
+
+  it('resendMessage publishes the edited message and locks the composer', async () => {
+    emitThread();
+    emitMessages([{ id: 'u1', index: 1, role: 'user', text: 'original' }]);
+    const sent = service.resendMessage('TH-1', 'u1', '  edited  ');
+    expect(events.lastCommand('requestAssistantResend')).toMatchObject({
+      projectId: '',
+      requestAssistantResend: { threadId: 'TH-1', messageId: 'u1', text: 'edited' },
+    });
+    expect(service.isSending()).toBe(true);
+    expect(await sent).toBe(true);
   });
 });

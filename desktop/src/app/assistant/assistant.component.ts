@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { renderMarkdown } from '../core/markdown';
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
+import { AssistantMessage } from '../core/models/assistant.models';
 import { AssistantService } from './assistant.service';
 
 /**
@@ -51,6 +52,8 @@ export class AssistantComponent {
   protected readonly draft = signal('');
   protected readonly renaming = signal(false);
   protected readonly nameDraft = signal('');
+  /** The user message being edited in the composer (edit-and-resend). */
+  protected readonly editing = signal<AssistantMessage | null>(null);
 
   /** A retry is possible when the thread has a user message and is not running. */
   protected readonly canRetry = computed(() => {
@@ -115,6 +118,61 @@ export class AssistantComponent {
     return renderMarkdown(text);
   }
 
+  /** Branch navigation: the sibling versions of a forked message. */
+  protected branchOf(message: AssistantMessage): { position: number; count: number } | null {
+    const thread = this.thread();
+    if (!thread) return null;
+    return this.assistant.branchOf(thread.id, message);
+  }
+
+  protected switchBranch(message: AssistantMessage, direction: -1 | 1): void {
+    const thread = this.thread();
+    if (!thread) return;
+    const siblings = this.siblingsOf(thread.id, message);
+    const at = siblings.findIndex((entry) => entry.id === message.id);
+    const next = siblings[at + direction];
+    if (next === undefined) return;
+    this.assistant.switchBranch(thread.id, message.parentId, next.id);
+  }
+
+  private siblingsOf(threadId: string, message: AssistantMessage): AssistantMessage[] {
+    const all = this.assistant.threads().get(threadId)?.messages ?? [];
+    return all
+      .filter((entry) => entry.parentId === message.parentId)
+      .sort((a, b) => a.index - b.index);
+  }
+
+  protected startEdit(message: AssistantMessage): void {
+    if (this.sending()) return;
+    this.editing.set(message);
+    this.draft.set(message.text);
+    const area = this.composerArea()?.nativeElement;
+    if (area) {
+      area.focus();
+      area.style.height = 'auto';
+      area.style.height = `${Math.min(area.scrollHeight, 180)}px`;
+    }
+  }
+
+  protected cancelEdit(): void {
+    this.editing.set(null);
+    this.draft.set('');
+  }
+
+  protected saveEdit(): void {
+    const thread = this.thread();
+    const original = this.editing();
+    if (!thread || !original) return;
+    const text = this.draft();
+    if (text.trim() === '' || text === original.text) {
+      this.cancelEdit();
+      return;
+    }
+    void this.assistant.resendMessage(thread.id, original.id, text).then((sent) => {
+      if (sent) this.cancelEdit();
+    });
+  }
+
   protected openScopePicker(): void {
     this.scopeDraft.set(new Set(this.thread()?.projectIds ?? []));
   }
@@ -143,6 +201,10 @@ export class AssistantComponent {
   }
 
   protected send(): void {
+    if (this.editing()) {
+      this.saveEdit();
+      return;
+    }
     const text = this.draft();
     void this.assistant.sendMessage(text).then((sent) => {
       if (sent) {

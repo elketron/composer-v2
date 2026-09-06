@@ -139,16 +139,23 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
   assistantThreadArchived: { threadId: 'TH-1', archivedAt: TS },
   assistantThreadRestored: { threadId: 'TH-1', restoredAt: TS },
   assistantThreadScopeChanged: { threadId: 'TH-1', projectIds: ['P-1'] },
-  assistantUserMessage: { threadId: 'TH-1', message: message(1, 'user', 'what needs me?') },
+  assistantUserMessage: {
+    threadId: 'TH-1',
+    message: { id: 'am-1', index: 1, role: 'user', text: 'what needs me?', at: TS },
+  },
   assistantMessageDelta: { threadId: 'TH-1', messageIndex: 2, delta: 'Two projects' },
   assistantMessageComplete: {
     threadId: 'TH-1',
-    message: message(2, 'agent', 'Two projects have waiting approvals.'),
+    message: { id: 'am-2', parentId: 'am-1', index: 2, role: 'agent', text: 'Two projects have waiting approvals.', at: TS },
   },
   assistantThreadStopped: { threadId: 'TH-1' },
   assistantRetryRequested: { threadId: 'TH-1' },
   assistantThreadStatusChanged: { threadId: 'TH-1', status: 'failed' },
   assistantThreadRenamed: { threadId: 'TH-1', name: 'portfolio' },
+  assistantResent: {
+    threadId: 'TH-1',
+    message: { id: 'am-3', index: 3, role: 'user', text: 'what needs me today?', at: TS },
+  },
 };
 
 const frames = EVENT_NAMES.map((name, index) =>

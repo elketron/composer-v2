@@ -292,6 +292,55 @@ describe('assistant thread commands', () => {
     expect(empty.ok ? null : empty.rejection.message).toContain('name is required');
   });
 
+  it('resend_opens_a_sibling_branch_of_the_original_user_message', async () => {
+    const id = await createThread();
+    await processor.execute(undefined, { type: 'requestAssistantMessage', threadId: id, text: 'original question' });
+    const original = threadOf(id).messages[0]!;
+    expect(original.id).toBeTruthy();
+
+    // An unknown message id rejects.
+    const unknown = await processor.execute(undefined, {
+      type: 'requestAssistantResend',
+      threadId: id,
+      messageId: 'nope',
+      text: 'x',
+    });
+    expect(unknown.ok).toBe(false);
+    expect(unknown.ok ? null : unknown.rejection.code).toBe('unknownSession');
+
+    await bus.publish(undefined, 'assistantMessageComplete', {
+      threadId: id,
+      message: { id: 'agent-1', parentId: original.id, index: 2, role: 'agent', text: 'reply', at: new Date().toISOString() },
+    });
+    const agentReply = threadOf(id).messages.find((message) => message.id === 'agent-1')!;
+    const resendAgent = await processor.execute(undefined, {
+      type: 'requestAssistantResend',
+      threadId: id,
+      messageId: agentReply.id!,
+      text: 'edited',
+    });
+    expect(resendAgent.ok).toBe(false);
+    expect(resendAgent.ok ? null : resendAgent.rejection.message).toContain('Only a user message');
+
+    const resent = await processor.execute(undefined, {
+      type: 'requestAssistantResend',
+      threadId: id,
+      messageId: original.id!,
+      text: 'edited question',
+    });
+    expect(resent.ok).toBe(true);
+    const sibling = threadOf(id).messages.at(-1)!;
+    expect(sibling.role).toBe('user');
+    expect(sibling.text).toBe('edited question');
+    // The sibling branches from the same parent as the original (the root).
+    expect(sibling.parentId).toBe(original.parentId);
+    expect(sibling.id).not.toBe(original.id);
+    // The original message is untouched (immutable lineage).
+    expect(threadOf(id).messages.find((message) => message.id === original.id)?.text).toBe(
+      'original question',
+    );
+  });
+
   it('replayGlobal_reads_the_global_slice_and_skips_ephemeral_deltas', async () => {
     const id = await createThread();
     await processor.execute(undefined, {
@@ -684,5 +733,48 @@ describe('the assistant turn', () => {
       role: 'agent',
       text: 'The assistant turn failed: boom',
     });
+  });
+
+  it('a_reply_carries_stable_ids_and_lineage', async () => {
+    const id = await createThread();
+    engine.enqueue(async ({ emit }) => {
+      emit({ kind: 'messageDelta', messageId: 'm1', delta: 'reply' });
+      return 'the answer';
+    });
+
+    await processor.execute(undefined, { type: 'requestAssistantMessage', threadId: id, text: 'question' });
+    await waitUntil(() => threadOf(id).messages.filter((message) => message.role === 'agent').length === 1);
+
+    const [user, reply] = threadOf(id).messages;
+    expect(user?.id).toBeTruthy();
+    expect(reply?.id).toBeTruthy();
+    // The reply follows the user message it answers.
+    expect(reply?.parentId).toBe(user?.id);
+  });
+
+  it('a_resend_runs_a_turn_for_the_edited_message_and_the_reply_opens_the_new_branch', async () => {
+    const id = await createThread();
+    engine.enqueue(async () => 'first answer');
+    engine.enqueue(async () => 'second answer');
+
+    await processor.execute(undefined, { type: 'requestAssistantMessage', threadId: id, text: 'original' });
+    await waitUntil(() => threadOf(id).messages.filter((message) => message.role === 'agent').length === 1);
+    const original = threadOf(id).messages.find((message) => message.role === 'user')!;
+
+    const resent = await processor.execute(undefined, {
+      type: 'requestAssistantResend',
+      threadId: id,
+      messageId: original.id!,
+      text: 'edited',
+    });
+    expect(resent.ok).toBe(true);
+    await waitUntil(() => threadOf(id).messages.filter((message) => message.text === 'second answer').length === 1);
+
+    const edited = threadOf(id).messages.find((message) => message.text === 'edited')!;
+    const secondReply = threadOf(id).messages.find((message) => message.text === 'second answer')!;
+    expect(edited.parentId).toBe(original.parentId);
+    // The second reply answers the edited message — the new branch.
+    expect(secondReply.parentId).toBe(edited.id);
+    expect(engine.toolCalls[1]?.prompt).toContain('edited');
   });
 });

@@ -345,6 +345,13 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
         threadId: str('threadId') ?? '',
         text: str('text') ?? '',
       };
+    case 'create:assistantResend':
+      return {
+        type: 'requestAssistantResend',
+        threadId: str('threadId') ?? '',
+        messageId: str('messageId') ?? '',
+        text: str('text') ?? '',
+      };
     case 'update:assistantThread': {
       const threadId = str('id') ?? '';
       if (bool('archived') === false) {

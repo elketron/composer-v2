@@ -117,6 +117,30 @@
             <header class="message-meta">
               <span class="role">{{ message.isUser ? 'YOU' : 'ASSISTANT' }}</span>
               <span class="message-index">m{{ message.index }}</span>
+              @if (message.isUser && !sending()) {
+                <span class="message-tools">
+                  @if (branchOf(message); as branch) {
+                    <button
+                      type="button"
+                      class="branch-nav"
+                      [disabled]="branch.position <= 1"
+                      (click)="switchBranch(message, -1)"
+                      aria-label="previous version"
+                    >‹</button>
+                    <span class="branch-position">{{ branch.position }}/{{ branch.count }}</span>
+                    <button
+                      type="button"
+                      class="branch-nav"
+                      [disabled]="branch.position >= branch.count"
+                      (click)="switchBranch(message, 1)"
+                      aria-label="next version"
+                    >›</button>
+                  }
+                  @if (editing()?.id !== message.id) {
+                    <button type="button" class="edit" (click)="startEdit(message)">edit</button>
+                  }
+                </span>
+              }
             </header>
             @if (message.isAgent) {
               <div class="message-text markdown" [innerHTML]="markdown(message.text)"></div>
@@ -142,6 +166,13 @@
         }
       </div>
 
+      @if (editing(); as original) {
+        <div class="editing-bar">
+          <span>editing m{{ original.index }} — an alternate branch opens, the original stays</span>
+          <button type="button" class="cancel-edit" (click)="cancelEdit()">cancel</button>
+        </div>
+      }
+
       <form class="composer" (submit)="$event.preventDefault(); send()">
         <textarea
           #composer
@@ -151,11 +182,13 @@
           [ngModel]="draft()"
           (ngModelChange)="draft.set($event); resize(composer)"
           (keydown)="keydown($event)"
-          placeholder="ask across the selected projects…"
+          [placeholder]="editing() ? 'edit your message — resend opens an alternate branch…' : 'ask across the selected projects…'"
           [disabled]="sending()"
         ></textarea>
-        <span class="hint">enter to send · shift+enter for a newline</span>
-        <button type="submit" class="send" [disabled]="sending() || !draft().trim()">send</button>
+        <span class="hint">enter to {{ editing() ? 'resend' : 'send' }} · shift+enter for a newline</span>
+        <button type="submit" class="send" [disabled]="sending() || !draft().trim()">
+          {{ editing() ? 'resend' : 'send' }}
+        </button>
       </form>
     } @else {
       <div class="state-empty full">

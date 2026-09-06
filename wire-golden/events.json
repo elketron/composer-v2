@@ -492,6 +492,7 @@
     "body": {
       "threadId": "TH-1",
       "message": {
+        "id": "am-1",
         "index": 1,
         "role": "user",
         "text": "what needs me?",
@@ -516,6 +517,8 @@
     "body": {
       "threadId": "TH-1",
       "message": {
+        "id": "am-2",
+        "parentId": "am-1",
         "index": 2,
         "role": "agent",
         "text": "Two projects have waiting approvals.",
@@ -555,6 +558,21 @@
     "body": {
       "threadId": "TH-1",
       "name": "portfolio"
+    }
+  },
+  {
+    "id": "e-44",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantResent",
+    "body": {
+      "threadId": "TH-1",
+      "message": {
+        "id": "am-3",
+        "index": 3,
+        "role": "user",
+        "text": "what needs me today?",
+        "at": "2026-09-04T12:00:00.123456Z"
+      }
     }
   }
 ]

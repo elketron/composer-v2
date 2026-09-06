@@ -3,6 +3,7 @@
 // the same emitted event lists as v1 for the domains v2 keeps. Human drags
 // are never blocked by automation toggles.
 
+import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { isAbsolute, join, normalize } from 'node:path';
 import type { Bus } from './bus.js';
@@ -117,6 +118,8 @@ export class Processor {
         return this.retryAssistantThread(command.threadId);
       case 'requestAssistantThreadRename':
         return this.renameAssistantThread(command.threadId, command.name);
+      case 'requestAssistantResend':
+        return this.resendAssistantMessage(command.threadId, command.messageId, command.text);
       default: {
         const unknown = command as { type: string };
         return rejected('invalidCommand', `${unknown.type} is not implemented yet`);
@@ -887,12 +890,56 @@ export class Processor {
       return rejected('invalidCommand', 'Message text is required');
     }
     const message: ChatMessage = {
+      id: randomUUID(),
       index: nextAssistantMessageIndex(thread),
       role: 'user',
       text,
       at: nowIso(),
     };
     await this.bus.publish(undefined, 'assistantUserMessage', { threadId, message });
+    return ok();
+  }
+
+  /**
+   * Edit-and-resend (Phase 7): publishes the edited user message as a
+   * sibling of the original (same `parentId`, fresh id and index) — the
+   * prior branch stays intact and the orchestrator runs a turn for the new
+   * message.
+   */
+  private async resendAssistantMessage(
+    threadId: string,
+    messageId: string,
+    text: string,
+  ): Promise<CommandOutcome> {
+    const thread = this.assistantThreads().get(threadId);
+    if (!thread) {
+      return rejected('unknownThread', `Unknown thread ${threadId}`);
+    }
+    if (thread.archivedAt !== undefined) {
+      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
+    }
+    if (text.trim() === '') {
+      return rejected('invalidCommand', 'Message text is required');
+    }
+    const original = thread.messages.find((message) => message.id === messageId);
+    if (original === undefined) {
+      return rejected('unknownSession', `Unknown message ${messageId}`);
+    }
+    if (thread.status === 'running') {
+      return rejected('invalidCommand', `Thread ${threadId} is already running`);
+    }
+    if (original.role !== 'user') {
+      return rejected('invalidCommand', 'Only a user message can be edited and resent');
+    }
+    const message: ChatMessage = {
+      id: randomUUID(),
+      ...(original.parentId !== undefined ? { parentId: original.parentId } : {}),
+      index: nextAssistantMessageIndex(thread),
+      role: 'user',
+      text,
+      at: nowIso(),
+    };
+    await this.bus.publish(undefined, 'assistantResent', { threadId, message });
     return ok();
   }
 

@@ -264,9 +264,20 @@ export interface AssistantThreadStatusChanged {
   status: AssistantThreadStatus;
 }
 
+/** Replaces the thread's name. */
 export interface AssistantThreadRenamed {
   threadId: string;
   name: string;
+}
+
+/**
+ * Edit-and-resend (Phase 7): the edited user message opens a sibling
+ * branch — its `parentId` matches the original's, so the prior branch
+ * stays navigable and nothing in the transcript is rewritten.
+ */
+export interface AssistantResent {
+  threadId: string;
+  message: ChatMessage;
 }
 
 // ---- The catalog: name → payload shape (the one registry both sides use) ----
@@ -315,6 +326,7 @@ export interface EventBodyMap {
   assistantRetryRequested: AssistantRetryRequested;
   assistantThreadStatusChanged: AssistantThreadStatusChanged;
   assistantThreadRenamed: AssistantThreadRenamed;
+  assistantResent: AssistantResent;
 }
 
 export type EventName = keyof EventBodyMap;
@@ -365,6 +377,7 @@ export const EVENT_NAMES = Object.keys({
   assistantRetryRequested: null,
   assistantThreadStatusChanged: null,
   assistantThreadRenamed: null,
+  assistantResent: null,
 }) as EventName[];
 
 /** Events that persist for the live stream but skip replay (v1 rule). */
@@ -387,6 +400,7 @@ export const GLOBAL_EVENTS: ReadonlySet<EventName> = new Set([
   'assistantRetryRequested',
   'assistantThreadStatusChanged',
   'assistantThreadRenamed',
+  'assistantResent',
 ]);
 
 /** Whether an event name is in the catalog. */

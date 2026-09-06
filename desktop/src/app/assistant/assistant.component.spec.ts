@@ -257,4 +257,68 @@ describe('AssistantComponent', () => {
     expect(bubble.querySelector('script')).toBeNull();
     expect(bubble.textContent).toContain('<script>');
   });
+
+  it('edit loads the message into the composer and resend publishes the sibling', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { id: 'u1', index: 1, role: 'user', text: 'original question', at: '' },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    el.querySelector<HTMLElement>('.message-tools .edit')?.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(el.querySelector('.editing-bar')).toBeTruthy();
+    const area = el.querySelector<HTMLTextAreaElement>('.composer textarea')!;
+    expect(area.value).toBe('original question');
+
+    area.value = 'edited question';
+    area.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    el.querySelector<HTMLButtonElement>('.composer .send')?.click();
+    await fixture.whenStable();
+
+    expect(events.lastCommand('requestAssistantResend')).toMatchObject({
+      projectId: '',
+      requestAssistantResend: { threadId: 'TH-1', messageId: 'u1', text: 'edited question' },
+    });
+  });
+
+  it('the branch switcher navigates between sibling versions', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { id: 'u1', index: 1, role: 'user', text: 'original', at: '' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantResent', {
+        threadId: 'TH-1',
+        message: { id: 'u2', index: 3, role: 'user', text: 'edited', at: '' },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    let el = fixture.nativeElement as HTMLElement;
+
+    // The newest sibling shows by default (2/2).
+    expect(el.textContent).toContain('edited');
+    expect(el.querySelector('.branch-position')?.textContent).toContain('2/2');
+
+    el.querySelector<HTMLElement>('.branch-nav[aria-label="previous version"]')?.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    el = fixture.nativeElement as HTMLElement;
+    expect(el.textContent).toContain('original');
+    expect(el.querySelector('.branch-position')?.textContent).toContain('1/2');
+  });
 });

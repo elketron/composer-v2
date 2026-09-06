@@ -59,11 +59,19 @@ export interface Project {
   archivedAt?: string;
 }
 
+/**
+ * One transcript message. Assistant-thread messages (Phase 7) carry a
+ * stable `id` and the `parentId` they follow (absent = the thread root) —
+ * edit-and-resend creates sibling branches; nothing is ever rewritten.
+ * Planning-session messages predate ids and leave both absent.
+ */
 export interface ChatMessage {
   index: number;
   role: string;
   text: string;
   at?: string;
+  id?: string;
+  parentId?: string;
 }
 
 export type PlanningSessionStatus = 'drafting' | 'done';

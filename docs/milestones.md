@@ -807,6 +807,43 @@ Research notes for later slices:
   heal renumbers, so indexes are not fully stable) and `parentId`
   lineage; both are additive ChatMessage fields.
 
+## S21 — Branch lineage: edit-and-resend  ·  done (2026-09-06)
+
+Phase 7's last slice: the transcript becomes a tree, and editing an
+earlier user message opens an immutable alternate branch instead of
+rewriting history.
+
+- **Wire**: `ChatMessage` gains optional `id` / `parentId` (assistant
+  threads only; planning messages stay id-less and linear); new event
+  `assistantResent` (44th, global, golden regenerated), new command
+  `requestAssistantResend` (action `create:assistantResend`).
+- **Processor**: the resend validates thread/archive/text, finds the
+  original by message id, and publishes the edited text as a sibling —
+  same `parentId`, fresh id and index (the running check comes after the
+  lookup so an unknown id reports `unknownSession`). The ordinary
+  `assistantUserMessage` now carries a stable id too.
+- **Orchestrator**: every turn records the user message it answers, so
+  replies publish `parentId` (a resent edit is the newest user message,
+  hence the reply opens the new branch); the stop/failure/stranded paths
+  attach to the same parent. `assistantResent` triggers turns exactly
+  like a user message.
+- **Fold**: `assistantResent` folds like a user message; indexes stay the
+  append-order log, the tree is client-derived.
+- **Desktop**: `AssistantMessage` carries id/parentId; the visible
+  transcript is the active path through the tree (newest sibling by
+  default, `switchBranch` navigates; id-less transcripts fall back to the
+  linear dedupe). User bubbles gain an edit affordance (loads the composer
+  with "resend" mode and an immutable-lineage hint) and a `‹ k/n ›`
+  sibling switcher when forked.
+
+Exit criteria (met): `pnpm verify` (server 135, desktop 220); the
+processor suite covers the resend rules (sibling lineage, agent-message
+and unknown-id rejections, immutable original); the orchestrator e2e runs
+a turn for the edited message with the reply's `parentId` on the new
+branch; the desktop specs drive the edit flow, the switcher, and the
+linear fallback; the live smoke showed both branches in the fold with
+replies attached to their own user messages.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).
