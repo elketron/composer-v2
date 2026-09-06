@@ -93,6 +93,28 @@ describe('AssistantComponent', () => {
     });
   });
 
+  it('a failed create surfaces the rejection even with no thread to show', async () => {
+    events.respondWith({
+      ok: false,
+      rejectionCode: 'invalidCommand',
+      rejectionMessage: 'requestAssistantThreadCreate is not implemented yet',
+    });
+    const fixture = TestBed.createComponent(AssistantComponent);
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    el.querySelector<HTMLElement>('.new-thread')?.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const alert = el.querySelector<HTMLElement>('.conversation .state-error');
+    expect(alert).toBeTruthy();
+    expect(alert?.textContent).toContain('not implemented yet');
+    // The empty state stays visible (no thread landed).
+    expect(el.querySelector('.conversation .state-empty')).toBeTruthy();
+  });
+
   it('sending publishes the message and clears the draft', async () => {
     const fixture = TestBed.createComponent(AssistantComponent);
     emitThread();

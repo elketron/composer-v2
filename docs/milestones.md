@@ -844,6 +844,18 @@ branch; the desktop specs drive the edit flow, the switcher, and the
 linear fallback; the live smoke showed both branches in the fold with
 replies attached to their own user messages.
 
+Research notes for later slices:
+
+- **Stale-server skew** (hit live): the desktop's gateway attaches to
+  whatever answers `/health` and never respawns, so after an upgrade the
+  renderer can spend hours talking to a server that predates the new
+  commands — unknown actions 400, and the pane's rejection was invisible
+  (the error rendered only when a thread existed). Fixed the invisible
+  half (the assistant error alert now sits above the thread branch); the
+  restart half is operational (kill the stale server; the reconnect
+  respawns the current dist). A `/health` version pin in the gateway
+  would make this automatic if it bites again.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

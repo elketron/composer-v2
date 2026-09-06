@@ -43,6 +43,10 @@
   </aside>
 
   <main class="conversation">
+    @if (error(); as message) {
+      <div class="state-error">{{ message }}</div>
+    }
+
     @if (thread(); as current) {
       <header class="conversation-header">
         <div class="title-block">
@@ -99,10 +103,6 @@
           </div>
         </details>
       </header>
-
-      @if (error(); as message) {
-        <div class="state-error">{{ message }}</div>
-      }
 
       <div class="transcript">
         @if (messages().length === 0 && !streamingMessage()) {
