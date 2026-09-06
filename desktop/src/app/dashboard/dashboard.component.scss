@@ -124,7 +124,7 @@
 
 .action-item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto);
   align-items: center;
   gap: 9px;
   padding: 9px 10px;
@@ -140,12 +140,16 @@
     border-color: var(--accent);
   }
 
-  strong {
+  strong,
+  > span:last-child {
     overflow: hidden;
-    color: var(--text);
-    font-weight: 400;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  strong {
+    color: var(--text);
+    font-weight: 400;
   }
 }
 
@@ -213,6 +217,15 @@
   flex-direction: column;
   gap: 4px;
 
+  // The card body is a button; stretch (not start) keeps the single-line
+  // rows at the card's width so their ellipsis actually engages — a
+  // fit-content child of a nowrap line would spill past the card edge.
+  strong,
+  .directory,
+  .commit {
+    max-width: 100%;
+  }
+
   strong {
     overflow: hidden;
     color: var(--text);
@@ -224,7 +237,6 @@
 }
 
 .project-open {
-  align-items: start;
   border: 0;
   background: transparent;
   color: inherit;
@@ -273,11 +285,23 @@
 
 .health-line {
   display: flex;
+  max-width: 100%;
   min-height: 18px;
   align-items: center;
   gap: 8px;
+  overflow: hidden;
   color: var(--text-faint);
   font-size: 12px;
+  white-space: nowrap;
+
+  // Chips truncate individually; a long branch name ellipsizes instead of
+  // wrapping the row or pushing its neighbours out of the card.
+  > span {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
   .git.clean {
     color: var(--ok);

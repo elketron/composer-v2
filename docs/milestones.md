@@ -488,6 +488,11 @@ First slice of the product plan's Phase 5 (cross-application UX refinement):
   the plan-document spec covers the empty state, literal escaping of injected
   tags, and inert link schemes — verified live in the Electron renderer with
   no console errors.
+- **Card text containment**: long project names, directories, branch chips,
+  commit subjects, and action-item titles ellipsize inside their cards instead
+  of spilling across the grid — the card body's rows are width-capped
+  (`max-width: 100%`, stretch instead of fit-content) and the health chips
+  truncate individually.
 
 ## Testing strategy
 
