@@ -165,4 +165,96 @@ describe('AssistantComponent', () => {
       requestAssistantThreadArchive: { threadId: 'TH-1' },
     });
   });
+
+  it('a running thread offers stop; an idle one offers retry', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { index: 1, role: 'user', text: 'long question', at: '' },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    let el = fixture.nativeElement as HTMLElement;
+
+    el.querySelector<HTMLElement>('.control.stop')?.click();
+    await fixture.whenStable();
+    expect(events.lastCommand('requestAssistantThreadStop')).toMatchObject({
+      projectId: '',
+      requestAssistantThreadStop: { threadId: 'TH-1' },
+    });
+
+    // The stop lands: the thread is no longer running and the retry shows.
+    events.emit(wireGlobalEvent('assistantThreadStopped', { threadId: 'TH-1' }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.control.stop')).toBeNull();
+    el.querySelector<HTMLElement>('.control:not(.stop)')?.click();
+    await fixture.whenStable();
+    expect(events.lastCommand('requestAssistantRetry')).toMatchObject({
+      projectId: '',
+      requestAssistantRetry: { threadId: 'TH-1' },
+    });
+  });
+
+  it('the thread title starts an inline rename that publishes on commit', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread({ name: 'Thread 1' });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    el.querySelector<HTMLElement>('.thread-title')?.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const input = el.querySelector<HTMLInputElement>('.rename-input')!;
+    expect(input).toBeTruthy();
+    input.value = 'portfolio';
+    input.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await fixture.whenStable();
+
+    expect(events.lastCommand('requestAssistantThreadRename')).toMatchObject({
+      projectId: '',
+      requestAssistantThreadRename: { threadId: 'TH-1', name: 'portfolio' },
+    });
+  });
+
+  it('agent replies render as safe markdown; injected tags stay literal', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { index: 1, role: 'user', text: 'explain', at: '' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: {
+          index: 2,
+          role: 'agent',
+          text: 'Use **bold**.\n\n```ts\nconst x = 1;\n```\n\n<script>alert(1)</script>',
+          at: '',
+        },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const bubble = el.querySelector<HTMLElement>('.message.agent .message-text.markdown')!;
+    expect(bubble).toBeTruthy();
+    expect(bubble.querySelector('strong')?.textContent).toBe('bold');
+    expect(bubble.querySelector('pre code')).toBeTruthy();
+    // Raw HTML was escaped before parsing: no script element exists.
+    expect(bubble.querySelector('script')).toBeNull();
+    expect(bubble.textContent).toContain('<script>');
+  });
 });

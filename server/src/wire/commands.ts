@@ -40,7 +40,11 @@ export type Command =
   | { type: 'requestAssistantThreadArchive'; threadId: string }
   | { type: 'requestAssistantThreadRestore'; threadId: string }
   | { type: 'requestAssistantThreadScope'; threadId: string; projectIds: string[] }
-  | { type: 'requestAssistantMessage'; threadId: string; text: string };
+  | { type: 'requestAssistantMessage'; threadId: string; text: string }
+  // Conversation controls (Phase 7).
+  | { type: 'requestAssistantThreadStop'; threadId: string }
+  | { type: 'requestAssistantRetry'; threadId: string }
+  | { type: 'requestAssistantThreadRename'; threadId: string; name: string };
 
 /** One ticket the planner emits on approval; lands as an ordinary card. */
 export interface TicketEmission {

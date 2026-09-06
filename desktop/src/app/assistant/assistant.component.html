@@ -46,11 +46,31 @@
     @if (thread(); as current) {
       <header class="conversation-header">
         <div class="title-block">
-          <span class="thread-title">{{ current.name || 'Thread' }}</span>
-          <span class="thread-status" [class.running]="current.isRunning">
-            {{ current.isRunning ? 'running' : 'idle' }}
+          @if (renaming()) {
+            <input
+              class="rename-input"
+              name="threadName"
+              autocomplete="off"
+              [ngModel]="nameDraft()"
+              (ngModelChange)="nameDraft.set($event)"
+              (keydown.enter)="$event.preventDefault(); saveRename()"
+              (blur)="saveRename()"
+            />
+          } @else {
+            <button type="button" class="thread-title" title="rename thread" (click)="startRename()">
+              {{ current.name || 'Thread' }}
+            </button>
+          }
+          <span class="thread-status" [class.running]="current.isRunning" [class.failed]="current.status === 'FAILED'" [class.stopped]="current.status === 'STOPPED'">
+            {{ current.status.toLowerCase() }}
           </span>
         </div>
+
+        @if (current.isRunning) {
+          <button type="button" class="control stop" (click)="stop()">stop</button>
+        } @else if (canRetry()) {
+          <button type="button" class="control" (click)="retry()">retry</button>
+        }
 
         <details class="scope-picker" (toggle)="openScopePicker()">
           <summary>
@@ -98,7 +118,11 @@
               <span class="role">{{ message.isUser ? 'YOU' : 'ASSISTANT' }}</span>
               <span class="message-index">m{{ message.index }}</span>
             </header>
-            <div class="message-text">{{ message.text }}</div>
+            @if (message.isAgent) {
+              <div class="message-text markdown" [innerHTML]="markdown(message.text)"></div>
+            } @else {
+              <div class="message-text">{{ message.text }}</div>
+            }
           </article>
         }
 
@@ -109,7 +133,7 @@
               <span class="message-index">m{{ message.index }}</span>
             </header>
             @if (message.text) {
-              <div class="message-text">{{ message.text }}</div>
+              <div class="message-text markdown" [innerHTML]="markdown(message.text)"></div>
             } @else {
               <div class="message-text thinking">thinking…</div>
             }

@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal, viewChild, ElementRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { renderMarkdown } from '../core/markdown';
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
 import { AssistantService } from './assistant.service';
@@ -48,13 +49,16 @@ export class AssistantComponent {
 
   // A signal so clearing it after send repaints under zoneless CD.
   protected readonly draft = signal('');
+  protected readonly renaming = signal(false);
+  protected readonly nameDraft = signal('');
+
+  /** A retry is possible when the thread has a user message and is not running. */
+  protected readonly canRetry = computed(() => {
+    const thread = this.thread();
+    return thread !== null && !thread.isRunning && thread.messages.some((message) => message.isUser);
+  });
 
   private readonly composerArea = viewChild<ElementRef<HTMLTextAreaElement>>('composer');
-
-  constructor() {
-    // Opening the picker drafts from the thread's current scope.
-    // (The draft is rebuilt on open; toggles publish immediately on save.)
-  }
 
   protected select(threadId: string): void {
     this.assistant.select(threadId);
@@ -78,6 +82,37 @@ export class AssistantComponent {
 
   protected restore(threadId: string): void {
     void this.assistant.restoreThread(threadId);
+  }
+
+  protected stop(): void {
+    const thread = this.thread();
+    if (thread) void this.assistant.stopThread(thread.id);
+  }
+
+  protected retry(): void {
+    const thread = this.thread();
+    if (thread) void this.assistant.retryThread(thread.id);
+  }
+
+  protected startRename(): void {
+    const thread = this.thread();
+    if (!thread) return;
+    this.nameDraft.set(thread.name);
+    this.renaming.set(true);
+  }
+
+  protected async saveRename(): Promise<void> {
+    const thread = this.thread();
+    if (!thread) return;
+    const name = this.nameDraft().trim();
+    this.renaming.set(false);
+    if (name === '' || name === thread.name) return;
+    await this.assistant.renameThread(thread.id, name);
+  }
+
+  /** Agent replies render as safe markdown; user messages stay plain text. */
+  protected markdown(text: string): string {
+    return renderMarkdown(text);
   }
 
   protected openScopePicker(): void {

@@ -522,5 +522,39 @@
         "at": "2026-09-04T12:00:00.123456Z"
       }
     }
+  },
+  {
+    "id": "e-40",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantThreadStopped",
+    "body": {
+      "threadId": "TH-1"
+    }
+  },
+  {
+    "id": "e-41",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantRetryRequested",
+    "body": {
+      "threadId": "TH-1"
+    }
+  },
+  {
+    "id": "e-42",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantThreadStatusChanged",
+    "body": {
+      "threadId": "TH-1",
+      "status": "failed"
+    }
+  },
+  {
+    "id": "e-43",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantThreadRenamed",
+    "body": {
+      "threadId": "TH-1",
+      "name": "portfolio"
+    }
   }
 ]

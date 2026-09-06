@@ -194,4 +194,80 @@ describe('AssistantService', () => {
     expect(service.error()).toBe('Message text is required');
     expect(service.isSending()).toBe(false);
   });
+
+  it('a stop marks the thread stopped; the partial completion never un-marks it', () => {
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { index: 1, role: 'user', text: 'long question', at: '' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantMessageDelta', { threadId: 'TH-1', messageIndex: 2, delta: 'partial' }),
+    );
+    events.emit(wireGlobalEvent('assistantThreadStopped', { threadId: 'TH-1' }));
+    // The stop clears the live stream and the send lock immediately.
+    expect(service.thread()?.status).toBe('STOPPED');
+    expect(service.streamingMessage()).toBeNull();
+    expect(service.isSending()).toBe(false);
+    // The partial reply lands afterwards and keeps the stopped status.
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: { index: 2, role: 'agent', text: 'partial', at: '' },
+      }),
+    );
+    expect(service.thread()?.status).toBe('STOPPED');
+    expect(service.messages().map((message) => message.text)).toEqual(['long question', 'partial']);
+  });
+
+  it('a failure marks the thread failed; a retry reopens it', () => {
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { index: 1, role: 'user', text: 'hi', at: '' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: { index: 2, role: 'agent', text: 'The assistant turn failed: boom', at: '' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantThreadStatusChanged', { threadId: 'TH-1', status: 'failed' }),
+    );
+    expect(service.thread()?.status).toBe('FAILED');
+
+    events.emit(wireGlobalEvent('assistantRetryRequested', { threadId: 'TH-1' }));
+    expect(service.thread()?.status).toBe('RUNNING');
+    expect(service.isSending()).toBe(true);
+    // The streaming bubble opens after the last folded message.
+    expect(service.streamingMessage()?.index).toBe(3);
+  });
+
+  it('stop, retry, and rename publish their commands', async () => {
+    emitThread();
+    await service.stopThread('TH-1');
+    expect(events.lastCommand('requestAssistantThreadStop')).toMatchObject({
+      projectId: '',
+      requestAssistantThreadStop: { threadId: 'TH-1' },
+    });
+
+    await service.retryThread('TH-1');
+    expect(events.lastCommand('requestAssistantRetry')).toMatchObject({
+      projectId: '',
+      requestAssistantRetry: { threadId: 'TH-1' },
+    });
+
+    expect(await service.renameThread('TH-1', 'portfolio')).toBe(true);
+    expect(events.lastCommand('requestAssistantThreadRename')).toMatchObject({
+      projectId: '',
+      requestAssistantThreadRename: { threadId: 'TH-1', name: 'portfolio' },
+    });
+    events.emit(wireGlobalEvent('assistantThreadRenamed', { threadId: 'TH-1', name: 'portfolio' }));
+    expect(service.thread()?.name).toBe('portfolio');
+  });
 });

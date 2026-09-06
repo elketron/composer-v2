@@ -11,6 +11,7 @@ import {
   AssistantMessage,
   AssistantThread,
   normalizeThreadStatus,
+  type AssistantThreadStatus,
 } from '../core/models/assistant.models';
 
 /**
@@ -114,6 +115,33 @@ export class AssistantService {
     return true;
   }
 
+  /** Stops the running response; the partial reply lands on the stream. */
+  async stopThread(threadId: string): Promise<void> {
+    const response = await this.publish('requestAssistantThreadStop', { threadId });
+    if (!response.ok) this.error.set(response.rejectionMessage ?? 'the thread could not be stopped');
+  }
+
+  /** Re-runs the thread's last user message (an alternate response appends). */
+  async retryThread(threadId: string): Promise<void> {
+    if (this.isSending()) return;
+    this.error.set(null);
+    this.isSending.set(true);
+    const response = await this.publish('requestAssistantRetry', { threadId });
+    if (!response.ok) {
+      this.isSending.set(false);
+      this.error.set(response.rejectionMessage ?? 'the thread could not be retried');
+    }
+  }
+
+  async renameThread(threadId: string, name: string): Promise<boolean> {
+    const response = await this.publish('requestAssistantThreadRename', { threadId, name });
+    if (!response.ok) {
+      this.error.set(response.rejectionMessage ?? 'the thread could not be renamed');
+      return false;
+    }
+    return true;
+  }
+
   /** requestAssistantMessage; the reply arrives on the stream. */
   async sendMessage(text: string): Promise<boolean> {
     const value = text.trim();
@@ -210,13 +238,52 @@ export class AssistantService {
         const payload = event.assistantMessageComplete;
         if (!payload?.threadId || !payload.message) break;
         const message = asMessage(payload.message);
-        this.upsertMessage(payload.threadId, message, 'IDLE');
+        // The reply closes the turn — but never un-marks a stopped or
+        // failed thread (the stop's partial completion lands here too).
+        const current = this.threadsSignal().get(payload.threadId)?.status;
+        const status = current === 'STOPPED' || current === 'FAILED' ? current : 'IDLE';
+        this.upsertMessage(payload.threadId, message, status);
         // The completion clears the live stream for the active thread (the
         // assistant is single-writer per thread).
         if (payload.threadId === this.activeThreadIdSignal()) {
           this.streamingMessage.set(null);
           this.isSending.set(false);
         }
+        break;
+      }
+      case 'assistantThreadStopped': {
+        const payload = event.assistantThreadStopped;
+        if (!payload?.threadId) break;
+        this.updateThread(payload.threadId, { status: 'STOPPED' });
+        if (payload.threadId === this.activeThreadIdSignal()) {
+          this.streamingMessage.set(null);
+          this.isSending.set(false);
+        }
+        break;
+      }
+      case 'assistantRetryRequested': {
+        const payload = event.assistantRetryRequested;
+        if (!payload?.threadId) break;
+        this.updateThread(payload.threadId, { status: 'RUNNING' });
+        if (payload.threadId === this.activeThreadIdSignal()) {
+          this.isSending.set(true);
+          const next = (this.thread()?.messages.at(-1)?.index ?? 0) + 1;
+          this.streamingMessage.set(new AssistantMessage({ index: next, role: 'agent', text: '' }));
+        }
+        break;
+      }
+      case 'assistantThreadStatusChanged': {
+        const payload = event.assistantThreadStatusChanged;
+        if (!payload?.threadId) break;
+        this.updateThread(payload.threadId, {
+          status: normalizeThreadStatus(payload.status as string | undefined),
+        });
+        break;
+      }
+      case 'assistantThreadRenamed': {
+        const payload = event.assistantThreadRenamed;
+        if (!payload?.threadId) break;
+        this.updateThread(payload.threadId, { name: payload.name ?? '' });
         break;
       }
     }
@@ -254,15 +321,18 @@ export class AssistantService {
     });
   }
 
-  private updateThread(threadId: string, changes: { archivedAt?: string | null; projectIds?: string[] }): void {
+  private updateThread(
+    threadId: string,
+    changes: { archivedAt?: string | null; projectIds?: string[]; status?: AssistantThreadStatus; name?: string },
+  ): void {
     this.threadsSignal.update((threads) => {
       const existing = threads.get(threadId);
       if (!existing) return threads;
       const next = new AssistantThread({
         id: existing.id,
-        name: existing.name,
+        name: changes.name ?? existing.name,
         createdAt: existing.createdAt,
-        status: existing.status,
+        status: changes.status ?? existing.status,
         projectIds: changes.projectIds ?? existing.projectIds,
         archivedAt: changes.archivedAt !== undefined ? changes.archivedAt : existing.archivedAt,
         messages: existing.messages,

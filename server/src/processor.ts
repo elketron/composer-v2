@@ -111,6 +111,12 @@ export class Processor {
         return this.setAssistantThreadScope(command.threadId, command.projectIds);
       case 'requestAssistantMessage':
         return this.assistantMessage(command.threadId, command.text);
+      case 'requestAssistantThreadStop':
+        return this.stopAssistantThread(command.threadId);
+      case 'requestAssistantRetry':
+        return this.retryAssistantThread(command.threadId);
+      case 'requestAssistantThreadRename':
+        return this.renameAssistantThread(command.threadId, command.name);
       default: {
         const unknown = command as { type: string };
         return rejected('invalidCommand', `${unknown.type} is not implemented yet`);
@@ -892,6 +898,62 @@ export class Processor {
 
   private assistantThreads(): Map<string, AssistantThread> {
     return this.bus.state.assistantThreads;
+  }
+
+  /**
+   * Stops a running response (Phase 7): the canonical record is the
+   * orchestrator's kill trigger; the fold marks the thread `stopped`.
+   */
+  private async stopAssistantThread(threadId: string): Promise<CommandOutcome> {
+    const thread = this.assistantThreads().get(threadId);
+    if (!thread) {
+      return rejected('unknownThread', `Unknown thread ${threadId}`);
+    }
+    if (thread.status !== 'running') {
+      return rejected('invalidCommand', `Thread ${threadId} is not running`);
+    }
+    await this.bus.publish(undefined, 'assistantThreadStopped', { threadId });
+    return ok();
+  }
+
+  /**
+   * Re-runs the thread's last user message (Phase 7): the reply appends an
+   * alternate response — nothing in the transcript is rewritten.
+   */
+  private async retryAssistantThread(threadId: string): Promise<CommandOutcome> {
+    const thread = this.assistantThreads().get(threadId);
+    if (!thread) {
+      return rejected('unknownThread', `Unknown thread ${threadId}`);
+    }
+    if (thread.archivedAt !== undefined) {
+      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
+    }
+    if (thread.status === 'running') {
+      return rejected('invalidCommand', `Thread ${threadId} is already running`);
+    }
+    const lastUser = [...thread.messages].reverse().find((message) => message.role === 'user');
+    if (lastUser === undefined) {
+      return rejected('invalidCommand', `Thread ${threadId} has no user message to retry`);
+    }
+    await this.bus.publish(undefined, 'assistantRetryRequested', { threadId });
+    return ok();
+  }
+
+  private async renameAssistantThread(threadId: string, name: string): Promise<CommandOutcome> {
+    const thread = this.assistantThreads().get(threadId);
+    if (!thread) {
+      return rejected('unknownThread', `Unknown thread ${threadId}`);
+    }
+    if (thread.archivedAt !== undefined) {
+      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
+    }
+    const trimmed = name.trim();
+    if (trimmed === '') {
+      return rejected('invalidCommand', 'Thread name is required');
+    }
+    if (trimmed === thread.name) return ok();
+    await this.bus.publish(undefined, 'assistantThreadRenamed', { threadId, name: trimmed });
+    return ok();
   }
 }
 

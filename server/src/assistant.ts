@@ -55,6 +55,10 @@ export class AssistantOrchestrator {
   private readonly lastReserved = new Map<string, number>();
   /** Thread id → the runtime's own session id (continuity, process lifetime). */
   private readonly engineSessions = new Map<string, string>();
+  /** Thread id → the in-flight turn's abort controller (the stop kill switch). */
+  private readonly controllers = new Map<string, AbortController>();
+  /** Thread id → the streaming message being accumulated (for stop's partial text). */
+  private readonly streaming = new Map<string, { messageId: string; text: string }>();
   private unsubscribe: (() => void) | null = null;
 
   constructor(bus: Bus, engine: AgentEngine, options: AssistantOptions = {}) {
@@ -79,11 +83,24 @@ export class AssistantOrchestrator {
   }
 
   private onFrame(frame: EventFrame): Promise<void> {
-    if (frame.eventType !== 'assistantUserMessage') return Promise.resolve();
     if (frame.projectId !== undefined) return Promise.resolve();
-    const body = frame.body as { threadId?: string; message?: { text?: string } };
-    if (body.threadId === undefined) return Promise.resolve();
-    return this.onUserMessage(body.threadId, body.message?.text ?? '');
+    const body = frame.body as { threadId?: string };
+    const threadId = body?.threadId;
+    if (threadId === undefined) return Promise.resolve();
+    if (frame.eventType === 'assistantUserMessage') {
+      const message = (frame.body as { message?: { text?: string } }).message;
+      return this.onUserMessage(threadId, message?.text ?? '');
+    }
+    if (frame.eventType === 'assistantRetryRequested') {
+      return this.onRetry(threadId);
+    }
+    if (frame.eventType === 'assistantThreadStopped') {
+      // The processor already marked the thread `stopped`; aborting the
+      // engine resolves the run and the partial reply lands as content.
+      this.controllers.get(threadId)?.abort();
+      return Promise.resolve();
+    }
+    return Promise.resolve();
   }
 
   private async onUserMessage(threadId: string, text: string): Promise<void> {
@@ -98,6 +115,24 @@ export class AssistantOrchestrator {
     this.inFlight.set(threadId, count);
     try {
       await this.turnLoop(threadId, count, text);
+    } finally {
+      this.inFlight.delete(threadId);
+      this.reservedIndex.delete(threadId);
+      this.lastReserved.delete(threadId);
+    }
+  }
+
+  /** A retry re-runs the thread's last user message (the reply appends). */
+  private async onRetry(threadId: string): Promise<void> {
+    const thread = this.threadOf(threadId);
+    if (!thread || thread.archivedAt !== undefined) return;
+    if (this.inFlight.has(threadId)) return;
+    const lastUser = [...thread.messages].reverse().find((message) => message.role === 'user');
+    if (lastUser === undefined) return;
+    const count = this.userMessageCount(thread);
+    this.inFlight.set(threadId, count);
+    try {
+      await this.turnLoop(threadId, count, lastUser.text);
     } finally {
       this.inFlight.delete(threadId);
       this.reservedIndex.delete(threadId);
@@ -139,11 +174,26 @@ export class AssistantOrchestrator {
         timeoutMs: this.options.timeoutMs,
         mcpTools: 'assistant',
       };
-      const outcome = await this.engine.run(spec, (event) => this.onEngineEvent(threadId, event));
+      const controller = new AbortController();
+      this.controllers.set(threadId, controller);
+      const outcome = await this.engine.run(
+        { ...spec, signal: controller.signal },
+        (event) => this.onEngineEvent(threadId, event),
+      );
+      this.controllers.delete(threadId);
       if (outcome.engineSessionId !== undefined) {
         this.engineSessions.set(threadId, outcome.engineSessionId);
       }
       if (!outcome.ok) {
+        if (controller.signal.aborted) {
+          // A user stop: the partial reply (if any) lands as the turn's
+          // content; the thread keeps its canonical `stopped` status.
+          const stream = this.streaming.get(threadId);
+          const text = stream?.text !== undefined && stream.text !== '' ? stream.text : 'stopped.';
+          await this.publishAssistantMessage(threadId, stream?.messageId ?? `stopped:${threadId}`, text);
+          this.streaming.delete(threadId);
+          return;
+        }
         // The desktop's send-lock clears on the next assistant message; a
         // failed turn publishes the failure as one so the UI unblocks.
         await this.publishAssistantMessage(
@@ -151,6 +201,10 @@ export class AssistantOrchestrator {
           `failure:${threadId}`,
           `The assistant turn failed: ${outcome.error ?? 'unknown error'}`,
         );
+        await this.bus.publish(undefined, 'assistantThreadStatusChanged', {
+          threadId,
+          status: 'failed',
+        });
         return;
       }
 
@@ -168,12 +222,23 @@ export class AssistantOrchestrator {
     if (event.kind === 'messageDelta') {
       const thread = this.threadOf(threadId);
       if (!thread) return;
+      const stream = this.streaming.get(threadId);
+      if (stream === undefined || stream.messageId !== event.messageId) {
+        this.streaming.set(threadId, { messageId: event.messageId, text: event.delta });
+      } else {
+        stream.text += event.delta;
+      }
       void this.bus.publish(undefined, 'assistantMessageDelta', {
         threadId,
         messageIndex: this.reserveIndex(threadId, event.messageId, thread),
         delta: event.delta,
       });
       return;
+    }
+    if (event.kind === 'messageComplete') {
+      // A completed part clears the stream buffer (its text landed durably).
+      const stream = this.streaming.get(threadId);
+      if (stream?.messageId === event.messageId) this.streaming.delete(threadId);
     }
     if (event.kind !== 'messageComplete') return;
     void this.publishAssistantMessage(threadId, event.messageId, event.text);

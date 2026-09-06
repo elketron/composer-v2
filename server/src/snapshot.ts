@@ -47,6 +47,13 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
           ),
         );
       }
+      // The message replays derive running/idle; a stopped or failed thread
+      // re-marks itself so its terminal status survives the snapshot.
+      if (thread.status === 'stopped' || thread.status === 'failed') {
+        events.push(
+          frame(undefined, 'assistantThreadStatusChanged', { threadId: thread.id, status: thread.status }, index++),
+        );
+      }
     }
   }
 

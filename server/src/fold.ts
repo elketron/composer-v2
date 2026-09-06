@@ -437,7 +437,34 @@ export function apply(state: State, envelope: EventEnvelope): void {
       const thread = state.assistantThreads.get(body.threadId);
       if (!thread) break;
       foldThreadMessage(thread, body.message);
-      thread.status = 'idle';
+      // The reply closes the turn — but never un-marks a stopped or failed
+      // thread (the stop's partial completion and the failure message both
+      // land through this event).
+      if (thread.status === 'running') thread.status = 'idle';
+      break;
+    }
+    case 'assistantThreadStopped': {
+      const body = envelope.body as EventBodyMap['assistantThreadStopped'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (thread) thread.status = 'stopped';
+      break;
+    }
+    case 'assistantRetryRequested': {
+      const body = envelope.body as EventBodyMap['assistantRetryRequested'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (thread) thread.status = 'running';
+      break;
+    }
+    case 'assistantThreadStatusChanged': {
+      const body = envelope.body as EventBodyMap['assistantThreadStatusChanged'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (thread) thread.status = body.status;
+      break;
+    }
+    case 'assistantThreadRenamed': {
+      const body = envelope.body as EventBodyMap['assistantThreadRenamed'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (thread) thread.name = body.name;
       break;
     }
     default:

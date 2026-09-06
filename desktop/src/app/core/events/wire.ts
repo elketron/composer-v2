@@ -179,6 +179,7 @@ export const WireAssistantThreadStatus = {
   ASSISTANT_THREAD_STATUS_IDLE: 'idle',
   ASSISTANT_THREAD_STATUS_RUNNING: 'running',
   ASSISTANT_THREAD_STATUS_FAILED: 'failed',
+  ASSISTANT_THREAD_STATUS_STOPPED: 'stopped',
 } as const;
 export type WireAssistantThreadStatus =
   (typeof WireAssistantThreadStatus)[keyof typeof WireAssistantThreadStatus];
@@ -329,6 +330,10 @@ export interface DomainEventJson {
     readonly delta: string;
   };
   readonly assistantMessageComplete?: { readonly threadId: string; readonly message: ChatMessageJson };
+  readonly assistantThreadStopped?: { readonly threadId: string };
+  readonly assistantRetryRequested?: { readonly threadId: string };
+  readonly assistantThreadStatusChanged?: { readonly threadId: string; readonly status: WireAssistantThreadStatus };
+  readonly assistantThreadRenamed?: { readonly threadId: string; readonly name: string };
 }
 
 /** The payload field names (the oneof members, camelCase). */
@@ -372,6 +377,10 @@ export const EVENT_KINDS = [
   'assistantUserMessage',
   'assistantMessageDelta',
   'assistantMessageComplete',
+  'assistantThreadStopped',
+  'assistantRetryRequested',
+  'assistantThreadStatusChanged',
+  'assistantThreadRenamed',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -419,6 +428,9 @@ export type CommandKind =
   | 'requestAssistantThreadRestore'
   | 'requestAssistantThreadScope'
   | 'requestAssistantMessage'
+  | 'requestAssistantThreadStop'
+  | 'requestAssistantRetry'
+  | 'requestAssistantThreadRename'
   | 'requestAgentSessionStart'
   | 'requestAgentSessionStop';
 
@@ -466,11 +478,14 @@ export interface PublishRequestJson {
   readonly requestAssistantThreadRestore?: { readonly threadId: string };
   readonly requestAssistantThreadScope?: { readonly threadId: string; readonly projectIds: string[] };
   readonly requestAssistantMessage?: { readonly threadId: string; readonly text: string };
+  readonly requestAssistantThreadStop?: { readonly threadId: string };
+  readonly requestAssistantRetry?: { readonly threadId: string };
+  readonly requestAssistantThreadRename?: { readonly threadId: string; readonly name: string };
 }
 
 /** The generic write-path envelope (`POST /action`, http.rs). */
 export interface ActionEnvelopeJson {
-  readonly type: 'create' | 'update' | 'delete' | 'start' | 'stop';
+  readonly type: 'create' | 'update' | 'delete' | 'start' | 'stop' | 'retry';
   readonly on:
     | 'project'
     | 'card'
@@ -638,6 +653,18 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
     return env('create', 'assistantMessage', {
       threadId: request.requestAssistantMessage.threadId,
       text: request.requestAssistantMessage.text,
+    });
+  }
+  if (request.requestAssistantThreadStop) {
+    return env('stop', 'assistantThread', { id: request.requestAssistantThreadStop.threadId });
+  }
+  if (request.requestAssistantRetry) {
+    return env('retry', 'assistantThread', { id: request.requestAssistantRetry.threadId });
+  }
+  if (request.requestAssistantThreadRename) {
+    return env('update', 'assistantThread', {
+      id: request.requestAssistantThreadRename.threadId,
+      name: request.requestAssistantThreadRename.name,
     });
   }
   return null;

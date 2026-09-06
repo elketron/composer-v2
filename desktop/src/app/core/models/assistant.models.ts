@@ -1,4 +1,4 @@
-export type AssistantThreadStatus = 'IDLE' | 'RUNNING' | 'FAILED';
+export type AssistantThreadStatus = 'IDLE' | 'RUNNING' | 'FAILED' | 'STOPPED';
 
 export type MessageRole = 'user' | 'agent';
 
@@ -94,6 +94,7 @@ export function normalizeThreadStatus(
   const normalized = status?.toUpperCase();
   if (normalized === 'RUNNING') return 'RUNNING';
   if (normalized === 'FAILED') return 'FAILED';
+  if (normalized === 'STOPPED') return 'STOPPED';
   return 'IDLE';
 }
 

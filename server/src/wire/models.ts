@@ -82,7 +82,9 @@ export type AgentSessionStatus = 'running' | 'ended' | 'failed';
 // ---- Global assistant (Phase 6): threads are global domain state, not
 // per-project — the scope is the thread's explicitly selected projects. ----
 
-export type AssistantThreadStatus = 'idle' | 'running' | 'failed';
+/** The thread's conversation state (Phase 7): a user message opens a turn,
+ * the reply closes it; the orchestrator marks failures, stops are canonical. */
+export type AssistantThreadStatus = 'idle' | 'running' | 'failed' | 'stopped';
 
 export interface AssistantThread {
   id: string;

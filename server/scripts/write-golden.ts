@@ -145,6 +145,10 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
     threadId: 'TH-1',
     message: message(2, 'agent', 'Two projects have waiting approvals.'),
   },
+  assistantThreadStopped: { threadId: 'TH-1' },
+  assistantRetryRequested: { threadId: 'TH-1' },
+  assistantThreadStatusChanged: { threadId: 'TH-1', status: 'failed' },
+  assistantThreadRenamed: { threadId: 'TH-1', name: 'portfolio' },
 };
 
 const frames = EVENT_NAMES.map((name, index) =>

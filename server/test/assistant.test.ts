@@ -221,6 +221,77 @@ describe('assistant thread commands', () => {
     expect(archived.ok ? null : archived.rejection.message).toContain('archived');
   });
 
+  it('stop_requires_a_running_thread', async () => {
+    const id = await createThread();
+    const idle = await processor.execute(undefined, {
+      type: 'requestAssistantThreadStop',
+      threadId: id,
+    });
+    expect(idle).toEqual({
+      ok: false,
+      rejection: { code: 'invalidCommand', message: `Thread ${id} is not running` },
+    });
+
+    await processor.execute(undefined, { type: 'requestAssistantMessage', threadId: id, text: 'hi' });
+    expect(threadOf(id).status).toBe('running');
+    const stopped = await processor.execute(undefined, {
+      type: 'requestAssistantThreadStop',
+      threadId: id,
+    });
+    expect(stopped.ok).toBe(true);
+    expect(threadOf(id).status).toBe('stopped');
+    // Stopping again is rejected (no longer running).
+    expect(
+      (await processor.execute(undefined, { type: 'requestAssistantThreadStop', threadId: id })).ok,
+    ).toBe(false);
+  });
+
+  it('retry_re_runs_the_last_user_message_and_rejects_when_running', async () => {
+    const id = await createThread();
+    // No user message yet.
+    expect(
+      (await processor.execute(undefined, { type: 'requestAssistantRetry', threadId: id })).ok,
+    ).toBe(false);
+
+    await processor.execute(undefined, { type: 'requestAssistantMessage', threadId: id, text: 'hi' });
+    const running = await processor.execute(undefined, {
+      type: 'requestAssistantRetry',
+      threadId: id,
+    });
+    expect(running).toEqual({
+      ok: false,
+      rejection: { code: 'invalidCommand', message: `Thread ${id} is already running` },
+    });
+
+    await bus.publish(undefined, 'assistantMessageComplete', {
+      threadId: id,
+      message: { index: 2, role: 'agent', text: 'reply', at: new Date().toISOString() },
+    });
+    const retried = await processor.execute(undefined, { type: 'requestAssistantRetry', threadId: id });
+    expect(retried.ok).toBe(true);
+    expect(threadOf(id).status).toBe('running');
+    expect(recorded.at(-1)?.eventType).toBe('assistantRetryRequested');
+  });
+
+  it('rename_replaces_the_name_and_validates', async () => {
+    const id = await createThread();
+    const renamed = await processor.execute(undefined, {
+      type: 'requestAssistantThreadRename',
+      threadId: id,
+      name: '  portfolio  ',
+    });
+    expect(renamed.ok).toBe(true);
+    expect(threadOf(id).name).toBe('portfolio');
+
+    const empty = await processor.execute(undefined, {
+      type: 'requestAssistantThreadRename',
+      threadId: id,
+      name: '   ',
+    });
+    expect(empty.ok).toBe(false);
+    expect(empty.ok ? null : empty.rejection.message).toContain('name is required');
+  });
+
   it('replayGlobal_reads_the_global_slice_and_skips_ephemeral_deltas', async () => {
     const id = await createThread();
     await processor.execute(undefined, {
@@ -539,5 +610,79 @@ describe('the assistant turn', () => {
     });
     expect(sent.ok).toBe(false);
     expect(engine.toolCalls).toHaveLength(0);
+  });
+
+  it('a_stop_aborts_the_turn_and_lands_the_partial_reply', async () => {
+    const id = await createThread();
+    engine.enqueue(async ({ spec, emit }) => {
+      emit({ kind: 'messageDelta', messageId: 'a', delta: 'partial ' });
+      emit({ kind: 'messageDelta', messageId: 'a', delta: 'answer' });
+      // The real engine dies on the abort signal; the fake follows it.
+      await new Promise<void>((resolve) => {
+        if (spec.signal?.aborted) return resolve();
+        spec.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return { error: 'aborted' };
+    });
+
+    await processor.execute(undefined, {
+      type: 'requestAssistantMessage',
+      threadId: id,
+      text: 'long question',
+    });
+    await waitUntil(() => threadOf(id).status === 'running');
+
+    const stopped = await processor.execute(undefined, {
+      type: 'requestAssistantThreadStop',
+      threadId: id,
+    });
+    expect(stopped.ok).toBe(true);
+
+    await waitUntil(() => threadOf(id).messages.some((message) => message.text.includes('partial')));
+    // The canonical stop marked the thread; the partial completion never
+    // un-marks it (the fold's complete keeps stopped/failed).
+    expect(threadOf(id).status).toBe('stopped');
+    expect(threadOf(id).messages.map((message) => `${message.role}:${message.text}`)).toEqual([
+      'user:long question',
+      'agent:partial answer',
+    ]);
+  });
+
+  it('a_retry_re_runs_the_last_user_message_and_appends_the_reply', async () => {
+    const id = await createThread();
+    engine.enqueue(async () => 'first attempt');
+    engine.enqueue(async () => 'second attempt');
+
+    await processor.execute(undefined, {
+      type: 'requestAssistantMessage',
+      threadId: id,
+      text: 'same question',
+    });
+    await waitUntil(() => threadOf(id).messages.filter((message) => message.role === 'agent').length === 1);
+
+    const retried = await processor.execute(undefined, { type: 'requestAssistantRetry', threadId: id });
+    expect(retried.ok).toBe(true);
+    await waitUntil(() => threadOf(id).messages.filter((message) => message.role === 'agent').length === 2);
+
+    // The retry appended an alternate response; the transcript was not rewritten.
+    expect(threadOf(id).messages.map((message) => `${message.role}:${message.text}`)).toEqual([
+      'user:same question',
+      'agent:first attempt',
+      'agent:second attempt',
+    ]);
+    expect(engine.toolCalls[1]?.prompt).toContain('same question');
+    expect(engine.toolCalls[1]?.engineSessionId).toBe(`fake-${id}`);
+  });
+
+  it('a_failed_turn_marks_the_thread_failed', async () => {
+    const id = await createThread();
+    engine.enqueue(async () => ({ error: 'boom' }));
+
+    await processor.execute(undefined, { type: 'requestAssistantMessage', threadId: id, text: 'hi' });
+    await waitUntil(() => threadOf(id).status === 'failed');
+    expect(threadOf(id).messages.at(-1)).toMatchObject({
+      role: 'agent',
+      text: 'The assistant turn failed: boom',
+    });
   });
 });

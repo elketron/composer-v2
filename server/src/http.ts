@@ -358,8 +358,15 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
           projectIds: projectIds.filter((id): id is string => typeof id === 'string'),
         };
       }
+      if (str('name') !== undefined) {
+        return { type: 'requestAssistantThreadRename', threadId, name: str('name') ?? '' };
+      }
       return null;
     }
+    case 'stop:assistantThread':
+      return { type: 'requestAssistantThreadStop', threadId: str('id') ?? '' };
+    case 'retry:assistantThread':
+      return { type: 'requestAssistantRetry', threadId: str('id') ?? '' };
     default:
       return null;
   }

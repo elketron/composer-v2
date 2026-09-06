@@ -7,6 +7,7 @@ import type {
   AgentSession,
   AgentSessionStatus,
   AssistantThread,
+  AssistantThreadStatus,
   Assignee,
   Card,
   CardType,
@@ -245,6 +246,29 @@ export interface AssistantMessageComplete {
   message: ChatMessage;
 }
 
+// ---- Phase 7 conversation controls ----
+
+/** The canonical stop record; the orchestrator aborts the in-flight turn. */
+export interface AssistantThreadStopped {
+  threadId: string;
+}
+
+/** The canonical retry record; the orchestrator re-runs the last user message. */
+export interface AssistantRetryRequested {
+  threadId: string;
+}
+
+/** The orchestrator's explicit status marks (failures; stops are canonical). */
+export interface AssistantThreadStatusChanged {
+  threadId: string;
+  status: AssistantThreadStatus;
+}
+
+export interface AssistantThreadRenamed {
+  threadId: string;
+  name: string;
+}
+
 // ---- The catalog: name → payload shape (the one registry both sides use) ----
 
 export interface EventBodyMap {
@@ -287,6 +311,10 @@ export interface EventBodyMap {
   assistantUserMessage: AssistantUserMessage;
   assistantMessageDelta: AssistantMessageDelta;
   assistantMessageComplete: AssistantMessageComplete;
+  assistantThreadStopped: AssistantThreadStopped;
+  assistantRetryRequested: AssistantRetryRequested;
+  assistantThreadStatusChanged: AssistantThreadStatusChanged;
+  assistantThreadRenamed: AssistantThreadRenamed;
 }
 
 export type EventName = keyof EventBodyMap;
@@ -333,6 +361,10 @@ export const EVENT_NAMES = Object.keys({
   assistantUserMessage: null,
   assistantMessageDelta: null,
   assistantMessageComplete: null,
+  assistantThreadStopped: null,
+  assistantRetryRequested: null,
+  assistantThreadStatusChanged: null,
+  assistantThreadRenamed: null,
 }) as EventName[];
 
 /** Events that persist for the live stream but skip replay (v1 rule). */
@@ -351,6 +383,10 @@ export const GLOBAL_EVENTS: ReadonlySet<EventName> = new Set([
   'assistantUserMessage',
   'assistantMessageDelta',
   'assistantMessageComplete',
+  'assistantThreadStopped',
+  'assistantRetryRequested',
+  'assistantThreadStatusChanged',
+  'assistantThreadRenamed',
 ]);
 
 /** Whether an event name is in the catalog. */

@@ -747,6 +747,66 @@ Research notes for later slices:
 - `assistantMcpScriptPath` mirrors `mcpScriptPath`'s override pattern; if
   a third MCP surface ever appears, promote the pair into one helper.
 
+## S20 — Conversation controls: stop, retry, statuses, markdown  ·  done (2026-09-06)
+
+Phase 7's first slice — the assistant transcript becomes a controlled
+conversation. Edit-and-resend with branch lineage is deliberately deferred
+to S21 (it needs stable message ids); everything else in the phase's
+control list lands here.
+
+- **Wire** (40–43, all global): `assistantThreadStopped` (the canonical
+  stop record), `assistantRetryRequested` (the canonical retry record —
+  the orchestrator re-runs the last user message), `assistantThreadStatusChanged`
+  (explicit status marks; only `failed` is published today),
+  `assistantThreadRenamed`. `AssistantThreadStatus` gains `failed` |
+  `stopped`; commands gain `requestAssistantThreadStop` /
+  `requestAssistantRetry` / `requestAssistantThreadRename` (actions
+  `stop:`/`retry:`/`update`+name; the envelope's `type` union gains
+  `retry`). Golden regenerated (e-40…e-43, unscoped).
+- **Fold**: stop → `stopped`; retry → `running`; statusChanged → the
+  carried status; renamed → the name. The complete case closes a turn
+  (`running` → `idle`) but never un-marks a `stopped`/`failed` thread —
+  the stop's partial completion and the failure message both land through
+  it. The snapshot re-marks a terminal status after its message replays
+  (the message replays derive running/idle and would clobber it).
+- **Processor**: stop requires a `running` thread (else `invalidCommand`);
+  retry requires a non-archived thread, no in-flight turn, and a last user
+  message; rename validates non-empty and no-ops on the same name.
+- **Orchestrator**: per-thread abort controllers — the stop event aborts
+  the engine (opencode's process dies with it). The streaming message is
+  accumulated, so a stop lands the partial reply as durable content
+  (`stopped.` when nothing had streamed) instead of a failure; failed
+  turns publish the failure message then `assistantThreadStatusChanged
+  failed`. Retry runs the same turn loop against the last user text
+  (engine-session continuity carries context; the reply appends —
+  nothing is rewritten).
+- **Desktop**: the header gains stop (while running) / retry (when a user
+  message exists and the thread is idle) and an inline rename (click the
+  title, Enter commits, blur cancels); the status chip shows running /
+  failed / stopped. Agent replies render as safe markdown — the S11 rule
+  extracted to `core/markdown.ts` (escape-then-parse, default
+  sanitization), shared with the plan document.
+
+Exit criteria (met): `pnpm verify` (server 132, desktop 214); the
+orchestrator stop e2e aborts a parked turn and lands the partial reply
+with the thread staying `stopped`; retry appends the alternate response
+with the transcript intact; the fold/snapshot rules are covered
+(terminal-status re-marking included); the desktop specs drive stop,
+retry, rename, and assert injected `<script>` stays literal in a styled
+bubble.
+
+Research notes for later slices:
+
+- The stop's partial-completion `messageId` falls back to
+  `stopped:<threadId>` when nothing had streamed (no reservation exists);
+  the fold's collision heal covers the rest.
+- Retry while the turn loop is between iterations is invisible to the
+  processor (in-flight is orchestrator state) — the orchestrator ignores
+  a retry when `inFlight` holds the thread, so no double turn runs.
+- S21 (branching) will want stable message ids on the wire (the index
+  heal renumbers, so indexes are not fully stable) and `parentId`
+  lineage; both are additive ChatMessage fields.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).
