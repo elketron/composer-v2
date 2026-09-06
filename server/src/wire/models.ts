@@ -94,6 +94,22 @@ export type AgentSessionStatus = 'running' | 'ended' | 'failed';
  * the reply closes it; the orchestrator marks failures, stops are canonical. */
 export type AssistantThreadStatus = 'idle' | 'running' | 'failed' | 'stopped';
 
+/**
+ * One tool call an assistant turn made (S25: the working box). The call
+ * creates the entry; the result patches its summary in place. `parentId`
+ * is the user message the turn answers — the transcript's turn grouping is
+ * client-derived, like the branch tree.
+ */
+export interface AssistantToolEntry {
+  toolCallId: string;
+  parentId?: string;
+  toolName: string;
+  args?: unknown;
+  /** The settled output's head (capped by the orchestrator). */
+  summary?: string;
+  isError?: boolean;
+}
+
 export interface AssistantThread {
   id: string;
   name: string;
@@ -104,6 +120,8 @@ export interface AssistantThread {
   projectIds: string[];
   archivedAt?: string;
   messages: ChatMessage[];
+  /** The turns' tool activity, in arrival order (absent in pre-S25 logs). */
+  toolCalls?: AssistantToolEntry[];
 }
 
 export type TranscriptEntry =

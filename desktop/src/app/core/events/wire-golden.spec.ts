@@ -31,6 +31,8 @@ const GLOBAL_KINDS: ReadonlySet<string> = new Set([
   'assistantThreadStatusChanged',
   'assistantThreadRenamed',
   'assistantResent',
+  'assistantToolCall',
+  'assistantToolResult',
   'proposalDrafted',
   'proposalConfirmed',
   'proposalDiscarded',

@@ -152,6 +152,47 @@
               <div class="message-text">{{ message.text }}</div>
             }
           </article>
+          @if (message.isUser) {
+            @if (activityFor(message); as activity) {
+              @if (activity.length > 0) {
+                <div class="tool-activity" [class.live]="isLive(message)">
+                  <button
+                    type="button"
+                    class="tool-activity-head"
+                    (click)="toggleBox(message)"
+                    [attr.aria-expanded]="isExpanded(message)"
+                  >
+                    <span class="tool-activity-label">
+                      @if (isLive(message)) {
+                        working…
+                      } @else if (activity.length === 1) {
+                        used 1 tool
+                      } @else {
+                        used {{ activity.length }} tools
+                      }
+                    </span>
+                    <span class="tool-activity-chevron">{{ isExpanded(message) ? '▾' : '▸' }}</span>
+                  </button>
+                  @if (isExpanded(message)) {
+                    <ul class="tool-list">
+                      @for (entry of activity; track entry.toolCallId) {
+                        <li class="tool-entry" [class.error]="entry.isError === true">
+                          <span class="tool-name">{{ toolLabel(entry) }}</span>
+                          @if (entry.summary; as summary) {
+                            <span class="tool-summary">{{ summary }}</span>
+                          } @else {
+                            <span class="tool-summary pending">
+                              {{ isLive(message) ? 'running…' : 'no output recorded' }}
+                            </span>
+                          }
+                        </li>
+                      }
+                    </ul>
+                  }
+                </div>
+              }
+            }
+          }
         }
 
         @if (streamingMessage(); as message) {

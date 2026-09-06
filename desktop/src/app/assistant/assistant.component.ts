@@ -4,7 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { renderMarkdown } from '../core/markdown';
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
-import { AssistantMessage, type ProposalCardType, type ProposalItem } from '../core/models/assistant.models';
+import {
+  AssistantMessage,
+  AssistantToolEntry,
+  type ProposalCardType,
+  type ProposalItem,
+} from '../core/models/assistant.models';
 import { AssistantService } from './assistant.service';
 
 /**
@@ -69,6 +74,9 @@ export class AssistantComponent {
   /** The user message being edited in the composer (edit-and-resend). */
   protected readonly editing = signal<AssistantMessage | null>(null);
 
+  /** Tool-activity boxes the user opened manually (past turns). */
+  private readonly openedBoxes = signal<ReadonlySet<string>>(new Set());
+
   /** A retry is possible when the thread has a user message and is not running. */
   protected readonly canRetry = computed(() => {
     const thread = this.thread();
@@ -83,10 +91,11 @@ export class AssistantComponent {
 
   constructor() {
     // Follow the stream: on any transcript change, snap to the bottom when
-    // the user hasn't scrolled away.
+    // the user hasn't scrolled away. Tool activity rows also grow the pane.
     effect(() => {
       this.messages();
       this.streamingMessage();
+      this.thread()?.toolCalls;
       if (!this.pinned()) return;
       const pane = this.transcriptEl()?.nativeElement;
       if (pane) pane.scrollTop = pane.scrollHeight;
@@ -168,6 +177,46 @@ export class AssistantComponent {
   /** Agent replies render as safe markdown; user messages stay plain text. */
   protected markdown(text: string): string {
     return renderMarkdown(text);
+  }
+
+  // ---- The working box (S25): a turn's tool activity ----
+
+  /** The tool entries of the turn this user message opened. */
+  protected activityFor(message: AssistantMessage): AssistantToolEntry[] {
+    const thread = this.thread();
+    if (!thread) return [];
+    return thread.toolCallsFor(message.id);
+  }
+
+  /** A running turn whose reply hasn't landed: the box is open live. */
+  protected isLive(message: AssistantMessage): boolean {
+    const thread = this.thread();
+    if (!thread || !thread.isRunning) return false;
+    const path = this.messages();
+    const at = path.findIndex((entry) => entry.id === message.id && entry.id !== '');
+    if (at < 0) return false;
+    const reply = path[at + 1];
+    return !(reply !== undefined && reply.isAgent && reply.parentId === message.id);
+  }
+
+  protected isExpanded(message: AssistantMessage): boolean {
+    return this.isLive(message) || this.openedBoxes().has(message.id);
+  }
+
+  protected toggleBox(message: AssistantMessage): void {
+    this.openedBoxes.update((open) => {
+      const next = new Set(open);
+      if (next.has(message.id)) next.delete(message.id);
+      else next.add(message.id);
+      return next;
+    });
+  }
+
+  /** The entry's row title: the tool name (unprefixed) + its first arg. */
+  protected toolLabel(entry: AssistantToolEntry): string {
+    const name = entry.toolName.replace(/^composer_/, '');
+    const digest = argDigest(entry.args);
+    return digest !== '' ? `${name} · ${digest}` : name;
   }
 
   /** Branch navigation: the sibling versions of a forked message. */
@@ -335,4 +384,18 @@ export class AssistantComponent {
     event.preventDefault();
     this.send();
   }
+}
+
+/** The first string arg (path, url, query) as the row's digest. */
+function argDigest(args: unknown): string {
+  if (typeof args !== 'object' || args === null) return '';
+  const values = Object.values(args as Record<string, unknown>);
+  const first = values.find((value) => typeof value === 'string' && value !== '');
+  if (typeof first === 'string') return truncate(first, 48);
+  if (values.length > 0) return truncate(JSON.stringify(args), 48);
+  return '';
+}
+
+function truncate(value: string, cap: number): string {
+  return value.length <= cap ? value : `${value.slice(0, cap)}…`;
 }

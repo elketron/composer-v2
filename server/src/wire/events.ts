@@ -11,7 +11,7 @@
  * catalog or commands), together with the gateway's copy in
  * desktop/electron/server-registry.js.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 import type {
   AgentSession,
@@ -292,6 +292,28 @@ export interface AssistantResent {
   message: ChatMessage;
 }
 
+/**
+ * The turn's tool activity (S25: the working box). The call event creates
+ * the entry (the orchestrator caps nothing here — args are small); the
+ * result event settles it with the output's capped head. Durable, like
+ * the run view's agentToolCall/Result: the box survives reloads and past
+ * turns stay inspectable. `parentId` is the user message the turn answers.
+ */
+export interface AssistantToolCall {
+  threadId: string;
+  parentId?: string;
+  toolCallId: string;
+  toolName: string;
+  args?: unknown;
+}
+
+export interface AssistantToolResult {
+  threadId: string;
+  toolCallId: string;
+  summary: string;
+  isError: boolean;
+}
+
 // ---- Work proposals (Phase 8) ----
 
 /** The assistant's draft; the creation event carries the full proposal. */
@@ -358,6 +380,8 @@ export interface EventBodyMap {
   assistantThreadStatusChanged: AssistantThreadStatusChanged;
   assistantThreadRenamed: AssistantThreadRenamed;
   assistantResent: AssistantResent;
+  assistantToolCall: AssistantToolCall;
+  assistantToolResult: AssistantToolResult;
   proposalDrafted: ProposalDrafted;
   proposalConfirmed: ProposalConfirmed;
   proposalDiscarded: ProposalDiscarded;
@@ -412,6 +436,8 @@ export const EVENT_NAMES = Object.keys({
   assistantThreadStatusChanged: null,
   assistantThreadRenamed: null,
   assistantResent: null,
+  assistantToolCall: null,
+  assistantToolResult: null,
   proposalDrafted: null,
   proposalConfirmed: null,
   proposalDiscarded: null,
@@ -438,6 +464,8 @@ export const GLOBAL_EVENTS: ReadonlySet<EventName> = new Set([
   'assistantThreadStatusChanged',
   'assistantThreadRenamed',
   'assistantResent',
+  'assistantToolCall',
+  'assistantToolResult',
   'proposalDrafted',
   'proposalConfirmed',
   'proposalDiscarded',

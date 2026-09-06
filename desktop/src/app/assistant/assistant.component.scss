@@ -381,6 +381,93 @@
   }
 }
 
+// The working box (S25): a turn's tool activity — a full-width strip of
+// its own between the user message and the reply. Live while the turn
+// runs, collapsed to a one-line summary once the reply lands, expandable
+// afterwards.
+.tool-activity {
+  align-self: stretch;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+
+  &.live {
+    border-color: var(--accent);
+  }
+}
+
+.tool-activity-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 4px 8px;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.live .tool-activity-label::before {
+  content: '⟳ ';
+  color: var(--accent-soft);
+}
+
+.tool-activity-chevron {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+.tool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+  max-height: 16em;
+  overflow-y: auto;
+}
+
+.tool-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+
+  & + & {
+    border-top: 1px dashed var(--border);
+  }
+
+  .tool-name {
+    color: var(--accent-soft);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+
+  .tool-summary {
+    color: var(--text-dim);
+    font-size: 10px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+
+    &.pending {
+      color: var(--text-faint);
+      font-style: italic;
+    }
+  }
+
+  &.error .tool-name {
+    color: var(--warn);
+  }
+}
+
 .message-meta {
   display: flex;
   gap: 8px;

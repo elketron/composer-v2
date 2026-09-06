@@ -1001,6 +1001,64 @@ refused alive, a recorded stale child is SIGTERMed and the pinned build
 respawns on the freed port, and a failed spawn still backs off; the
 server's boot e2e asserts the health shape. `pnpm verify` green.
 
+## S25 — Assistant tool activity: the working box  ·  done (2026-09-06)
+
+The S19 research note's answer: the assistant's tool calls stream into
+the transcript. While a turn runs, a live full-width "working…" strip
+sits between the turn's user message and its reply, listing every tool
+call and its output as they land; when the reply arrives the strip
+collapses to one line (`used N tools`), expandable afterwards — past
+turns stay inspectable.
+
+- **Wire** (48–49, global, durable like the run view's transcript — not
+  in the ephemeral set; golden regenerated, `PROTOCOL_VERSION` → 2 with
+  the gateway's copy): `assistantToolCall` (`threadId`, `parentId` — the
+  user message the turn answers, `toolCallId`, `toolName`, `args?`) and
+  `assistantToolResult` (`toolCallId`, `summary`, `isError`). The
+  orchestrator already had the turn's parent (S21's lineage map), so
+  grouping is a carried field, not a fold guess.
+- **Orchestrator**: `onEngineEvent` forwards the engine's
+  `toolCall`/`toolResult` turn events (the serve reducer already
+  announced/settled tool parts — S22) instead of dropping them. Result
+  summaries are capped at 2 000 chars (the log keeps the digest; full
+  outputs stay reachable through the tools themselves).
+- **Fold**: the call creates a per-thread entry (idempotent by
+  `toolCallId`; `AssistantThread.toolCalls` is additive — old logs fold
+  without it); the result patches the entry's summary in place. The
+  snapshot rides free: `assistantThreadCreated` carries the folded thread
+  record, toolCalls included, so reloads rebuild the box with no extra
+  replay frames.
+- **Desktop**: `AssistantService` folds the pair; the component derives
+  the per-turn strip — a full-width element between the two bubbles (not
+  inside either), open live while the thread is running and the turn's
+  reply hasn't landed, collapsed to the count otherwise, user-expandable
+  (manual opens tracked separately from the live state). Rows show the
+  tool name (`composer_` prefix stripped) + first arg digest and the
+  settled output (or `running…` / `no output recorded`); error results
+  tint the row. Streaming stick-to-bottom now follows tool rows too.
+
+Exit criteria (met): `pnpm verify` (server 146, desktop 229 + gateway 7
+— the gateway spec pins both PROTOCOL_VERSION copies together); the
+server e2e drives a scripted turn's tool events through publish, fold,
+capped summary, parent linkage, global frames, and the snapshot
+round-trip; the desktop specs cover the fold (append/settle/dedupe,
+snapshot-carried activity surviving thread rebuilds) and the box (live
+open, settled rows, collapse on reply, manual expand, no-box without
+activity). The live smoke (real opencode serve + the llama.cpp endpoint)
+streamed a real turn: the box opened `working…` with four read-tool rows
+(2× list_files, 2× read_file) landing with their outputs, collapsed to
+`used 4 tools` when the reply landed, re-expanded, and survived a
+renderer reload from the snapshot.
+
+Research notes for later slices:
+
+- The row shows the raw MCP tool result (the JSON envelope with
+  `ok`/`content`) — honest but noisy; unwrapping `content` (or
+  pretty-printing) is a display nicety if it annoys.
+- The planning chat deliberately does not stream tool activity (its
+  write tools' effects already land as document edits); retargeting this
+  slice's fold there would want `parentId` equivalents for sessions.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

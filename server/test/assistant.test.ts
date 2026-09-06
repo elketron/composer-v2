@@ -529,6 +529,58 @@ describe('the assistant turn', () => {
     expect(threadOf(id).messages.at(-1)?.text).toBe('Two projects have waiting approvals.');
   });
 
+  it('a_turns_tool_activity_streams_under_the_turn_and_survives_the_snapshot', async () => {
+    const id = await createThread();
+    engine.enqueue(async ({ emit }) => {
+      emit({ kind: 'toolCall', toolCallId: 'at-1', toolName: 'composer_overview', args: {} });
+      emit({ kind: 'toolResult', toolCallId: 'at-1', content: 'x'.repeat(3_000), isError: false });
+      emit({ kind: 'toolCall', toolCallId: 'at-2', toolName: 'read_file', args: { path: 'README.md' } });
+      return 'Two projects have waiting approvals.';
+    });
+
+    const sent = await processor.execute(undefined, {
+      type: 'requestAssistantMessage',
+      threadId: id,
+      text: 'what needs me?',
+    });
+    expect(sent.ok).toBe(true);
+    await waitUntil(() => threadOf(id).status === 'idle');
+
+    const thread = threadOf(id);
+    expect(thread.toolCalls?.map((entry) => entry.toolCallId)).toEqual(['at-1', 'at-2']);
+    const entry = thread.toolCalls?.[0];
+    expect(entry).toMatchObject({ toolName: 'composer_overview', args: {} });
+    // The entry rides the turn's user message (the working box groups by it).
+    const user = thread.messages.find((message) => message.role === 'user');
+    expect(user?.id).toBeDefined();
+    expect(entry?.parentId).toBe(user?.id);
+    // The settled summary is capped (3000 chars in, 2000 + the ellipsis out).
+    expect(entry?.summary?.length).toBe(2_001);
+    // The second call never settled: no summary, no error mark.
+    expect(thread.toolCalls?.[1]?.summary).toBeUndefined();
+
+    // Global frames (no projectId), like the rest of the thread family.
+    const callFrame = recorded.find((frame) => frame.eventType === 'assistantToolCall');
+    const resultFrame = recorded.find((frame) => frame.eventType === 'assistantToolResult');
+    expect(callFrame?.projectId).toBeUndefined();
+    expect(resultFrame?.projectId).toBeUndefined();
+
+    // The activity rides the snapshot's thread record (durable, like the
+    // run view's transcript) and re-folds idempotently.
+    const fresh = newState();
+    for (const frame of snapshotEvents(bus.state)) {
+      apply(fresh, {
+        id: frame.id,
+        ...(frame.projectId !== undefined ? { projectId: frame.projectId } : {}),
+        occurredAt: frame.occurredAt,
+        name: frame.eventType,
+        body: frame.body,
+      });
+    }
+    const replayed = fresh.assistantThreads.get(id);
+    expect(replayed?.toolCalls).toEqual(thread.toolCalls);
+  });
+
   it('the_thread_scope_rides_the_prompt_and_the_engine_session_is_kept', async () => {
     const alpha = await createProject('alpha');
     const id = await createThread();

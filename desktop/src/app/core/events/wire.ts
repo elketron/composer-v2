@@ -367,6 +367,19 @@ export interface DomainEventJson {
   readonly assistantThreadStatusChanged?: { readonly threadId: string; readonly status: WireAssistantThreadStatus };
   readonly assistantThreadRenamed?: { readonly threadId: string; readonly name: string };
   readonly assistantResent?: { readonly threadId: string; readonly message: ChatMessageJson };
+  readonly assistantToolCall?: {
+    readonly threadId: string;
+    readonly parentId?: string;
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly args?: unknown;
+  };
+  readonly assistantToolResult?: {
+    readonly threadId: string;
+    readonly toolCallId: string;
+    readonly summary: string;
+    readonly isError: boolean;
+  };
   readonly proposalDrafted?: { readonly proposal: CardProposalJson };
   readonly proposalConfirmed?: {
     readonly proposalId: string;
@@ -423,6 +436,8 @@ export const EVENT_KINDS = [
   'assistantThreadStatusChanged',
   'assistantThreadRenamed',
   'assistantResent',
+  'assistantToolCall',
+  'assistantToolResult',
   'proposalDrafted',
   'proposalConfirmed',
   'proposalDiscarded',

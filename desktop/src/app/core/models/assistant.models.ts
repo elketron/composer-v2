@@ -47,6 +47,7 @@ export interface AssistantThreadData {
   readonly projectIds?: readonly string[];
   readonly archivedAt?: string | null;
   readonly messages?: readonly (AssistantMessage | AssistantMessageData)[];
+  readonly toolCalls?: readonly (AssistantToolEntry | AssistantToolEntryData)[];
 }
 
 export class AssistantThread {
@@ -57,6 +58,7 @@ export class AssistantThread {
   readonly projectIds: readonly string[];
   readonly archivedAt: string | null;
   readonly messages: readonly AssistantMessage[];
+  readonly toolCalls: readonly AssistantToolEntry[];
 
   constructor(data: AssistantThreadData) {
     this.id = data.id;
@@ -68,6 +70,9 @@ export class AssistantThread {
     this.messages = (data.messages ?? []).map((message) =>
       message instanceof AssistantMessage ? message : new AssistantMessage(message),
     );
+    this.toolCalls = (data.toolCalls ?? [])
+      .map((entry) => toolEntryFromWire(entry))
+      .filter((entry): entry is AssistantToolEntry => entry !== null);
   }
 
   get isActive(): boolean {
@@ -92,7 +97,27 @@ export class AssistantThread {
       projectIds: this.projectIds,
       archivedAt: this.archivedAt,
       messages,
+      toolCalls: this.toolCalls,
     });
+  }
+
+  /** Rebuilds the thread with replaced tool activity (the working box). */
+  withToolCalls(toolCalls: readonly AssistantToolEntry[]): AssistantThread {
+    return new AssistantThread({
+      id: this.id,
+      name: this.name,
+      createdAt: this.createdAt,
+      status: this.status,
+      projectIds: this.projectIds,
+      archivedAt: this.archivedAt,
+      messages: this.messages,
+      toolCalls,
+    });
+  }
+
+  /** The tool activity of one turn (the user message it answers). */
+  toolCallsFor(parentId: string | null): AssistantToolEntry[] {
+    return this.toolCalls.filter((entry) => entry.parentId === parentId);
   }
 }
 
@@ -108,6 +133,42 @@ export function normalizeThreadStatus(
 
 function normalizeMessageRole(role: MessageRole | string): MessageRole {
   return role.toLowerCase() === 'agent' ? 'agent' : 'user';
+}
+
+/**
+ * One tool call an assistant turn made (S25: the working box). The call
+ * creates the entry; the result patches its summary in place. `parentId`
+ * groups entries under the user message the turn answers.
+ */
+export interface AssistantToolEntry {
+  readonly toolCallId: string;
+  readonly parentId: string | null;
+  readonly toolName: string;
+  readonly args?: unknown;
+  readonly summary?: string;
+  readonly isError?: boolean;
+}
+
+export interface AssistantToolEntryData {
+  readonly toolCallId: string;
+  readonly parentId?: string | null;
+  readonly toolName: string;
+  readonly args?: unknown;
+  readonly summary?: string;
+  readonly isError?: boolean;
+}
+
+export function toolEntryFromWire(value: unknown): AssistantToolEntry | null {
+  const record = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+  if (record === null || typeof record['toolCallId'] !== 'string') return null;
+  return {
+    toolCallId: record['toolCallId'],
+    parentId: typeof record['parentId'] === 'string' ? record['parentId'] : null,
+    toolName: typeof record['toolName'] === 'string' ? record['toolName'] : '',
+    args: record['args'],
+    summary: typeof record['summary'] === 'string' ? record['summary'] : undefined,
+    isError: record['isError'] === true ? true : undefined,
+  };
 }
 
 function toIso(value: string | Date | undefined): string {

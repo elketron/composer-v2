@@ -228,6 +228,28 @@ export class AssistantOrchestrator {
   }
 
   private onEngineEvent(threadId: string, event: AgentTurnEvent): void {
+    if (event.kind === 'toolCall') {
+      // The working box (S25): the turn's tool activity rides the thread
+      // under the user message the turn answers.
+      const parent = this.turnParents.get(threadId);
+      void this.bus.publish(undefined, 'assistantToolCall', {
+        threadId,
+        ...(parent !== undefined ? { parentId: parent } : {}),
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        ...(event.args !== undefined ? { args: event.args } : {}),
+      });
+      return;
+    }
+    if (event.kind === 'toolResult') {
+      void this.bus.publish(undefined, 'assistantToolResult', {
+        threadId,
+        toolCallId: event.toolCallId,
+        summary: capToolSummary(event.content),
+        isError: event.isError,
+      });
+      return;
+    }
     if (event.kind === 'messageDelta') {
       const thread = this.threadOf(threadId);
       if (!thread) return;
@@ -328,6 +350,16 @@ function buildAssistantPrompt(thread: AssistantThread, text: string): string {
 
 function nextMessageIndex(thread: { messages: { index: number }[] }): number {
   return thread.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
+}
+
+/**
+ * The tool output's head, for the working box's settled row. Full outputs
+ * stay reachable through the tools themselves; the log keeps the digest.
+ */
+const TOOL_SUMMARY_CAP = 2_000;
+
+function capToolSummary(content: string): string {
+  return content.length <= TOOL_SUMMARY_CAP ? content : `${content.slice(0, TOOL_SUMMARY_CAP)}…`;
 }
 
 /**

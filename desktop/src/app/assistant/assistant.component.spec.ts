@@ -417,4 +417,101 @@ describe('AssistantComponent', () => {
     await fixture.whenStable();
     expect(events.published).toEqual([]);
   });
+
+  it('the working box shows a running turn live and collapses when the reply lands', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { index: 1, role: 'user', text: 'what needs me?', at: '', id: 'am-1' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantToolCall', {
+        threadId: 'TH-1',
+        parentId: 'am-1',
+        toolCallId: 'at-1',
+        toolName: 'composer_overview',
+        args: {},
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantToolCall', {
+        threadId: 'TH-1',
+        parentId: 'am-1',
+        toolCallId: 'at-2',
+        toolName: 'read_file',
+        args: { path: 'src/app/app.ts' },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    // Live: the box is open under the turn's user message, rows stream in.
+    const box = el.querySelector('.tool-activity');
+    expect(box?.classList.contains('live')).toBe(true);
+    expect(box?.textContent).toContain('working…');
+    expect([...el.querySelectorAll('.tool-entry .tool-name')].map((name) => name.textContent?.trim())).toEqual([
+      'overview',
+      'read_file · src/app/app.ts',
+    ]);
+    expect(el.querySelector('.tool-summary.pending')).toBeTruthy();
+
+    // A settled result patches its row in place.
+    events.emit(
+      wireGlobalEvent('assistantToolResult', {
+        threadId: 'TH-1',
+        toolCallId: 'at-1',
+        summary: 'Two projects need you.',
+        isError: false,
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(box?.textContent).toContain('Two projects need you.');
+
+    // The reply lands: the box collapses to its one-line summary, as a
+    // full-width strip of its own between the two bubbles.
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: { index: 2, role: 'agent', text: 'Done.', at: '', id: 'am-2', parentId: 'am-1' },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const collapsed = el.querySelector('.tool-activity');
+    expect(collapsed?.classList.contains('live')).toBe(false);
+    expect(collapsed?.textContent).toContain('used 2 tools');
+    expect(el.querySelector('.tool-list')).toBeNull();
+    const children = [...el.querySelector('.transcript')!.children];
+    const userAt = children.findIndex((child) => child.classList.contains('user'));
+    const boxAt = children.findIndex((child) => child.classList.contains('tool-activity'));
+    const agentAt = children.findIndex((child) => child.classList.contains('agent'));
+    expect(boxAt).toBeGreaterThan(userAt);
+    expect(agentAt).toBeGreaterThan(boxAt);
+
+    // A past turn's box expands on demand and keeps its rows.
+    collapsed?.querySelector<HTMLButtonElement>('.tool-activity-head')?.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(el.querySelector('.tool-list')).toBeTruthy();
+    expect(el.querySelector('.tool-activity')?.textContent).toContain('Two projects need you.');
+  });
+
+  it('a turn with no tool activity renders no box', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { index: 1, role: 'user', text: 'hello', at: '', id: 'am-1' },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('.tool-activity')).toBeNull();
+  });
 });

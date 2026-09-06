@@ -10,6 +10,7 @@ import {
 import {
   AssistantMessage,
   AssistantThread,
+  AssistantToolEntry,
   normalizeThreadStatus,
   proposalItemFromWire,
   normalizeProposalStatus,
@@ -383,6 +384,30 @@ export class AssistantService {
         this.updateThread(payload.threadId, { name: payload.name ?? '' });
         break;
       }
+      case 'assistantToolCall': {
+        // The working box (S25): the turn's tool activity, grouped under
+        // the user message the turn answers.
+        const payload = event.assistantToolCall;
+        if (!payload?.threadId || !payload.toolCallId) break;
+        this.appendToolCall(payload.threadId, {
+          toolCallId: payload.toolCallId,
+          parentId: payload.parentId ?? null,
+          toolName: payload.toolName ?? '',
+          args: payload.args,
+        });
+        break;
+      }
+      case 'assistantToolResult': {
+        const payload = event.assistantToolResult;
+        if (!payload?.threadId || !payload.toolCallId) break;
+        this.settleToolCall(
+          payload.threadId,
+          payload.toolCallId,
+          payload.summary ?? '',
+          payload.isError === true,
+        );
+        break;
+      }
       case 'proposalDrafted': {
         const payload = event.proposalDrafted;
         const proposal = payload?.proposal;
@@ -466,6 +491,40 @@ export class AssistantService {
     });
   }
 
+  /** The call creates the working-box entry; idempotent by toolCallId. */
+  private appendToolCall(threadId: string, entry: AssistantToolEntry): void {
+    this.threadsSignal.update((threads) => {
+      const existing = threads.get(threadId);
+      if (!existing || existing.toolCalls.some((tool) => tool.toolCallId === entry.toolCallId)) {
+        return threads;
+      }
+      const next = existing.withToolCalls([...existing.toolCalls, entry]);
+      const map = new Map(threads);
+      map.set(threadId, next);
+      return map;
+    });
+  }
+
+  /** The result settles the entry's summary in place (the server capped it). */
+  private settleToolCall(threadId: string, toolCallId: string, summary: string, isError: boolean): void {
+    this.threadsSignal.update((threads) => {
+      const existing = threads.get(threadId);
+      if (!existing || !existing.toolCalls.some((tool) => tool.toolCallId === toolCallId)) {
+        return threads;
+      }
+      const settled = existing.withToolCalls(
+        existing.toolCalls.map((tool) =>
+          tool.toolCallId === toolCallId
+            ? { ...tool, summary, isError: isError || undefined }
+            : tool,
+        ),
+      );
+      const map = new Map(threads);
+      map.set(threadId, settled);
+      return map;
+    });
+  }
+
   private updateThread(
     threadId: string,
     changes: { archivedAt?: string | null; projectIds?: string[]; status?: AssistantThreadStatus; name?: string },
@@ -481,6 +540,7 @@ export class AssistantService {
         projectIds: changes.projectIds ?? existing.projectIds,
         archivedAt: changes.archivedAt !== undefined ? changes.archivedAt : existing.archivedAt,
         messages: existing.messages,
+        toolCalls: existing.toolCalls,
       });
       const map = new Map(threads);
       map.set(threadId, next);
@@ -519,6 +579,7 @@ export class AssistantService {
         projectIds: thread.projectIds,
         archivedAt: thread.archivedAt,
         messages,
+        toolCalls: thread.toolCalls,
       });
       const map = new Map(threads);
       map.set(threadId, next);
@@ -546,6 +607,7 @@ function asThread(value: unknown): AssistantThread | null {
     projectIds: arrayOfStrings(value['projectIds']),
     archivedAt: typeof value['archivedAt'] === 'string' ? value['archivedAt'] : null,
     messages: Array.isArray(value['messages']) ? (value['messages'] as never[]) : [],
+    toolCalls: Array.isArray(value['toolCalls']) ? (value['toolCalls'] as never[]) : [],
   });
 }
 

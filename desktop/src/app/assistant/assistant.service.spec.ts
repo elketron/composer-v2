@@ -436,4 +436,88 @@ describe('AssistantService', () => {
     );
     expect(service.draftProposal()).toBeNull();
   });
+
+  // ---- The working box (S25) ----
+
+  it('tool calls fold under their turn and the result settles the entry in place', () => {
+    emitThread();
+    // The turn's user message carries the id the tool calls group under.
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { index: 1, role: 'user', text: 'what needs me?', at: '', id: 'am-1' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantToolCall', {
+        threadId: 'TH-1',
+        parentId: 'am-1',
+        toolCallId: 'at-1',
+        toolName: 'composer_overview',
+        args: {},
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantToolCall', {
+        threadId: 'TH-1',
+        parentId: 'am-1',
+        toolCallId: 'at-2',
+        toolName: 'read_file',
+        args: { path: 'README.md' },
+      }),
+    );
+    let calls = service.thread()?.toolCalls ?? [];
+    expect(calls.map((entry) => entry.toolCallId)).toEqual(['at-1', 'at-2']);
+    expect(calls[0]).toMatchObject({ parentId: 'am-1', toolName: 'composer_overview' });
+    expect(calls[0]?.summary).toBeUndefined();
+
+    events.emit(
+      wireGlobalEvent('assistantToolResult', {
+        threadId: 'TH-1',
+        toolCallId: 'at-1',
+        summary: 'Two projects have waiting approvals.',
+        isError: false,
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantToolResult', {
+        threadId: 'TH-1',
+        toolCallId: 'at-2',
+        summary: 'not found',
+        isError: true,
+      }),
+    );
+    calls = service.thread()?.toolCalls ?? [];
+    expect(calls[0]).toMatchObject({ summary: 'Two projects have waiting approvals.' });
+    expect(calls[0]?.isError).toBeUndefined();
+    expect(calls[1]).toMatchObject({ summary: 'not found', isError: true });
+
+    // A re-delivered call (reconnect snapshot) does not duplicate.
+    events.emit(
+      wireGlobalEvent('assistantToolCall', {
+        threadId: 'TH-1',
+        parentId: 'am-1',
+        toolCallId: 'at-1',
+        toolName: 'composer_overview',
+      }),
+    );
+    expect((service.thread()?.toolCalls ?? []).length).toBe(2);
+  });
+
+  it('a snapshot thread carries its tool activity; rebuilds preserve it', () => {
+    emitThread({
+      messages: [{ index: 1, role: 'user', text: 'what needs me?', at: '', id: 'am-1' }],
+      toolCalls: [
+        { toolCallId: 'at-1', parentId: 'am-1', toolName: 'git_status', summary: 'clean', isError: false },
+      ],
+    });
+    const thread = service.thread();
+    expect(thread?.toolCalls.length).toBe(1);
+    expect(thread?.toolCalls[0]).toMatchObject({ toolName: 'git_status', summary: 'clean' });
+
+    // A later thread-level event (rename) must not drop the activity.
+    events.emit(wireGlobalEvent('assistantThreadRenamed', { threadId: 'TH-1', name: 'portfolio' }));
+    expect(service.thread()?.toolCalls.length).toBe(1);
+    expect(service.thread()?.name).toBe('portfolio');
+  });
 });

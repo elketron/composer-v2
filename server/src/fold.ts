@@ -476,6 +476,33 @@ export function apply(state: State, envelope: EventEnvelope): void {
       if (thread) thread.name = body.name;
       break;
     }
+    case 'assistantToolCall': {
+      // The working box (S25): the call creates the entry; idempotent by
+      // toolCallId. Old logs' threads have no toolCalls — added here.
+      const body = envelope.body as EventBodyMap['assistantToolCall'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (!thread) break;
+      thread.toolCalls ??= [];
+      if (!thread.toolCalls.some((entry) => entry.toolCallId === body.toolCallId)) {
+        thread.toolCalls.push({
+          toolCallId: body.toolCallId,
+          ...(body.parentId !== undefined ? { parentId: body.parentId } : {}),
+          toolName: body.toolName,
+          ...(body.args !== undefined ? { args: structuredClone(body.args) } : {}),
+        });
+      }
+      break;
+    }
+    case 'assistantToolResult': {
+      const body = envelope.body as EventBodyMap['assistantToolResult'];
+      const thread = state.assistantThreads.get(body.threadId);
+      const entry = thread?.toolCalls?.find((tool) => tool.toolCallId === body.toolCallId);
+      if (entry) {
+        entry.summary = body.summary;
+        entry.isError = body.isError;
+      }
+      break;
+    }
 
     // ---- Work proposals (Phase 8) ----
 

@@ -156,6 +156,19 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
     threadId: 'TH-1',
     message: { id: 'am-3', index: 3, role: 'user', text: 'what needs me today?', at: TS },
   },
+  assistantToolCall: {
+    threadId: 'TH-1',
+    parentId: 'am-1',
+    toolCallId: 'at-1',
+    toolName: 'composer_overview',
+    args: {},
+  },
+  assistantToolResult: {
+    threadId: 'TH-1',
+    toolCallId: 'at-1',
+    summary: 'Two projects have waiting approvals.',
+    isError: false,
+  },
   proposalDrafted: {
     proposal: {
       id: 'PR-1',

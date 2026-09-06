@@ -578,6 +578,29 @@
   {
     "id": "e-45",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantToolCall",
+    "body": {
+      "threadId": "TH-1",
+      "parentId": "am-1",
+      "toolCallId": "at-1",
+      "toolName": "composer_overview",
+      "args": {}
+    }
+  },
+  {
+    "id": "e-46",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantToolResult",
+    "body": {
+      "threadId": "TH-1",
+      "toolCallId": "at-1",
+      "summary": "Two projects have waiting approvals.",
+      "isError": false
+    }
+  },
+  {
+    "id": "e-47",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "proposalDrafted",
     "body": {
       "proposal": {
@@ -601,7 +624,7 @@
     }
   },
   {
-    "id": "e-46",
+    "id": "e-48",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "proposalConfirmed",
     "body": {
@@ -631,7 +654,7 @@
     }
   },
   {
-    "id": "e-47",
+    "id": "e-49",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "proposalDiscarded",
     "body": {
