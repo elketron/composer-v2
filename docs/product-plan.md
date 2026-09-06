@@ -237,7 +237,11 @@ partial failures explicitly.
 ## Cross-cutting engineering requirements
 
 - Preserve old event logs through additive fold defaults and migrations.
-- Update both wire definitions and the golden fixture for every catalog change.
+- Update both wire definitions and the golden fixture for every catalog
+  change, and bump the wire protocol version (`server/src/wire/events.ts`
+  and `desktop/electron/server-registry.js`) with it — the gateway refuses
+  a server whose `/health` pin doesn't match, so a stale server can't be
+  attached to silently after an upgrade.
 - Keep real LLM and web access out of automated tests; use `FakeEngine` and
   injected adapters.
 - Add real-store restart tests for archive state, run health, global events,

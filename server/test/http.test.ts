@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { boot } from '../src/index.js';
+import { PROTOCOL_VERSION } from '../src/wire/events.js';
 import { subStateFor } from '../src/wire/models.js';
 
 let dir: string;
@@ -55,10 +56,13 @@ async function collectFrames(url: string, minimum: number): Promise<Record<strin
 
 
 describe('the boot contract', () => {
-  it('health_returns_serving', async () => {
+  it('health_returns_serving_with_the_protocol_pin', async () => {
     const response = await fetch(`${server.url}/health`);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: 'SERVING' });
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body['status']).toBe('SERVING');
+    expect(body['protocol']).toBe(PROTOCOL_VERSION);
+    expect(Number.isInteger(body['pid'])).toBe(true);
   });
 
   it('assistant_actions_drive_a_thread_end_to_end', async () => {

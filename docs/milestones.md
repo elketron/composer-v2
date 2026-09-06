@@ -961,6 +961,46 @@ confirm blocked) and outcome folding; a live smoke on the real stack
 drafted PR-1 over `/mcp/read`, confirmed it over `/action`, and read back
 the created cards with deps remapped.
 
+## S24 — Gateway protocol pin: refuse + respawn stale servers  ·  done (2026-09-06)
+
+The restart half of S21's stale-server skew, made automatic: after an
+upgrade the desktop could spend hours attached to a server that predated
+its commands (unknown actions 400; the S21 note deferred the fix as "a
+`/health` version pin in the gateway would make this automatic if it
+bites again"). It had already bitten once — this closes the class.
+
+- **The pin**: `/health` answers `{status, protocol, pid}` — `protocol`
+  is the new `PROTOCOL_VERSION` in `server/src/wire/events.ts` (bump on
+  every wire change, with the gateway's copy in
+  `desktop/electron/server-registry.js`). The gateway's probe now demands
+  the pinned protocol: a 200 without a matching version — older, newer,
+  or predating the pin (no field) — is not a server the desktop attaches
+  to. An arbitrary 200 responder (wrong shape) is likewise refused.
+- **The respawn**: on a skewed answer the gateway replaces the stale
+  server only when it can prove it spawned that exact process — the
+  health `pid` matches the spawn record (`desktop/logs/server.json`,
+  written on each workspace-entry spawn, read across desktop restarts).
+  Proven: SIGTERM, wait for the URI to go quiet (SIGKILL past the 5s
+  grace), clear the record, then the normal spawn path takes over. Not
+  proven (a foreign or hand-run server — the WSL attach-only case):
+  nothing is killed; discovery refuses and the desktop shows `backend
+  unavailable` until the operator restarts that server. Cross-OS pid
+  spaces are exactly why ownership is never assumed from the pin alone.
+- **Unchanged**: the t11 backoff (a failed spawn still waits 30s),
+  `COMPOSER_SERVER_CMD` (never killed — its child's pid is unknowable),
+  and the renderer (discover's entry/null contract is the same; a refusal
+  surfaces as the existing offline state and `backend unavailable`
+  rejections, which is the loud failure the skew never gave).
+
+Exit criteria (met): a new desktop node suite (`desktop/test/` via
+`vitest.node.config.ts`, chained into `pnpm test`) drives the registry
+against real HTTP servers and real child processes — the pin matches the
+server constant (imported from `server/src/wire/events.ts`), a pinned
+server is accepted, a pre-pin shape and a foreign stale server are
+refused alive, a recorded stale child is SIGTERMed and the pinned build
+respawns on the freed port, and a failed spawn still backs off; the
+server's boot e2e asserts the health shape. `pnpm verify` green.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

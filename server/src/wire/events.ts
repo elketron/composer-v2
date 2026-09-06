@@ -3,6 +3,16 @@
 // The wire eventType is the catalog name; the SSE frame body is the bare
 // payload below. Event names are camelCase; enums are lowercase strings.
 
+/**
+ * The wire protocol version (S24): /health carries it, and the desktop's
+ * gateway refuses any server whose answer doesn't match — a stale server
+ * predating new commands can no longer be attached to silently (the S21
+ * skew: unknown actions 400 for hours). Bump on every wire change (event
+ * catalog or commands), together with the gateway's copy in
+ * desktop/electron/server-registry.js.
+ */
+export const PROTOCOL_VERSION = 1;
+
 import type {
   AgentSession,
   AgentSessionStatus,

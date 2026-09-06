@@ -8,7 +8,8 @@
     "start:electron:debug": "concurrently -k \"npm:start\" \"wait-on tcp:4200 && COMPOSER_DEV_SERVER_URL=http://localhost:4200 COMPOSER_DEBUG_PORT=9222 electron .\"",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "test": "ng test && npm run test:gateway",
+    "test:gateway": "vitest run --config vitest.node.config.ts"
   },
   "main": "electron/main.js",
   "private": true,
@@ -30,6 +31,7 @@
     "@angular/build": "^22.0.7",
     "@angular/cli": "^22.0.7",
     "@angular/compiler-cli": "^22.0.0",
+    "@types/node": "^22.20.1",
     "concurrently": "^10.0.3",
     "electron": "^43.2.0",
     "jsdom": "^28.0.0",

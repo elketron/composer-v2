@@ -9,6 +9,7 @@ import { streamSSE } from 'hono/streaming';
 import type { Bus } from './bus.js';
 import type { Processor } from './processor.js';
 import type { Command } from './wire/commands.js';
+import { PROTOCOL_VERSION } from './wire/events.js';
 import type { Card, CardType, Pipeline, PipelineStep, ProposalItem, Stage, SubStateStatus } from './wire/models.js';
 import { ALL_STAGES } from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
@@ -37,7 +38,12 @@ export function router(bus: Bus, processor: Processor, store?: EventStore): Hono
   // Windows.
   app.use('*', cors());
 
-  app.get('/health', (context) => context.json({ status: 'SERVING' }));
+  // The gateway's probe: the protocol pin lets it refuse (and respawn) a
+  // stale server instead of attaching to one (S24; the pid proves the
+  // recorded child's identity when the gateway kills its own spawn).
+  app.get('/health', (context) =>
+    context.json({ status: 'SERVING', protocol: PROTOCOL_VERSION, pid: process.pid }),
+  );
 
   app.get('/dashboard', async (context) =>
     context.json({ projects: await dashboardProjects(bus.state) }),

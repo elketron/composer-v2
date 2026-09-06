@@ -4,3 +4,4 @@ coverage/
 .angular/
 *.log
 .DS_Store
+desktop/logs/
