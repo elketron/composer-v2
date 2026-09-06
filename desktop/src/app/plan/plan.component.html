@@ -5,16 +5,40 @@
       <span class="session-id">{{ session()?.id ?? 'new' }}</span>
       <span class="session-status">{{ status().toLowerCase() }}</span>
     </div>
+
+    @if (narrow()) {
+      <div class="pane-tabs" role="tablist" aria-label="plan panes">
+        <button
+          type="button"
+          role="tab"
+          [class.active]="tab() === 'chat'"
+          [attr.aria-selected]="tab() === 'chat'"
+          (click)="showTab('chat')"
+        >
+          chat
+        </button>
+        <button
+          type="button"
+          role="tab"
+          [class.active]="tab() === 'doc'"
+          [attr.aria-selected]="tab() === 'doc'"
+          (click)="showTab('doc')"
+        >
+          document
+        </button>
+      </div>
+    }
+
     <button class="new-session" title="start a fresh session (the current one closes)" (click)="newSession()">
       + new session
     </button>
   </header>
 
-  <div class="plan-body">
-    <main class="chat-pane">
+  <div class="plan-body" [class.narrow]="narrow()">
+    <main class="chat-pane" [class.hidden]="narrow() && tab() !== 'chat'">
       <app-plan-chat />
     </main>
-    <section class="doc-pane">
+    <section class="doc-pane" [class.hidden]="narrow() && tab() !== 'doc'">
       <app-plan-document />
     </section>
   </div>

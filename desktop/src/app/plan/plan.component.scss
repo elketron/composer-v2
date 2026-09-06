@@ -22,6 +22,33 @@
   flex: none;
 }
 
+// Narrow windows: the pane switcher replaces the side-by-side layout.
+.pane-tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+
+  button {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-faint);
+    font: inherit;
+    font-size: 12px;
+    padding: 2px 10px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--text);
+    }
+
+    &.active {
+      color: var(--accent-soft);
+      border-color: var(--accent);
+    }
+  }
+}
+
 .plan-header .session-title {
   display: flex;
   align-items: center;
@@ -84,4 +111,21 @@
   min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--border);
+}
+
+// Narrow mode: the active tab's pane takes the full width; the hidden one
+// leaves the layout entirely (display, not visibility) so the visible pane
+// keeps its intrinsic scrolling.
+.plan-body.narrow .chat-pane.hidden,
+.plan-body.narrow .doc-pane.hidden {
+  display: none;
+}
+
+.plan-body.narrow .doc-pane.hidden {
+  border-left: 0;
+}
+
+.plan-body.narrow .chat-pane,
+.plan-body.narrow .doc-pane {
+  flex: 1;
 }

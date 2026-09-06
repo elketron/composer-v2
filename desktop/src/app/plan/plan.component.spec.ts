@@ -38,6 +38,33 @@ describe('PlanComponent', () => {
     expect(element.textContent).toContain('plan document');
   });
 
+  it('narrow windows swap the side-by-side panes for tabs', async () => {
+    const fixture = TestBed.createComponent(PlanComponent);
+    const component = fixture.componentInstance;
+    await fixture.whenStable();
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('.pane-tabs')).toBeNull();
+
+    // Simulate crossing the width threshold.
+    component['narrow'].set(true);
+    await fixture.whenStable();
+
+    const tabs = [...element.querySelectorAll<HTMLButtonElement>('.pane-tabs button')];
+    expect(tabs.map((tab) => tab.textContent!.trim())).toEqual(['chat', 'document']);
+
+    // Chat starts active; the document pane is display-gated out of layout.
+    const chat = element.querySelector<HTMLElement>('.chat-pane')!;
+    const doc = element.querySelector<HTMLElement>('.doc-pane')!;
+    expect(chat.classList.contains('hidden')).toBe(false);
+    expect(doc.classList.contains('hidden')).toBe(true);
+
+    tabs[1]!.click();
+    await fixture.whenStable();
+    expect(element.querySelector<HTMLElement>('.chat-pane')!.classList.contains('hidden')).toBe(true);
+    expect(element.querySelector<HTMLElement>('.doc-pane')!.classList.contains('hidden')).toBe(false);
+    expect(element.querySelector('app-plan-document')).toBeTruthy();
+  });
+
   it('sends a chat message and renders the streamed answer', async () => {
     const fixture = TestBed.createComponent(PlanComponent);
     await fixture.whenStable();

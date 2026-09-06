@@ -544,6 +544,28 @@ stale-copy sweep.
   moved to the shared class; verified live (run view's unknown-card state,
   coding tab's inline empty) with no console errors.
 
+## S14 — Board panel space + plan narrow windows  ·  done (2026-09-06)
+
+Continuing Phase 5's space-usage and readability items:
+
+- **Board detail panel**: the card panel now opens beside the board on wide
+  windows (clamp 380–560px column, board visible and selectable behind it);
+  narrow windows keep the full-area takeover. The panel body wraps (main and
+  checklist reflow instead of squeezing), the action footer wraps cleanly at
+  one row, and the panel's dead embedded run-pane styles (superseded by the
+  full-page run view) are gone.
+- **Run outcome visibility**: the card panel's idle state shows the last
+  run's outcome as a status chip (completed/failed) with the error text and
+  a direct "run view" hop — previously a single faint line, hidden whenever
+  no pipelines were authored.
+- **Plan narrow windows**: below 1000px the chat/document panes become tabs
+  (`matchMedia`-driven) — one full-width pane at a time with a tab switcher
+  in the plan header; wide windows keep the side-by-side split.
+- **Tests**: board spec asserts the board stays visible beside the open
+  panel; card-panel spec covers the outcome row (status, error, run-view
+  link); plan spec covers tab rendering, the chat-default, and pane gating.
+  Verified live (split panel at 1771px, tab switch at 860px).
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).
