@@ -28,22 +28,35 @@ describe('App', () => {
     }).compileComponents();
   });
 
-  it('renders the shell: top bar, left rail, status strip', async () => {
+  it('renders the global shell without project workflow navigation', async () => {
     const fixture = TestBed.createComponent(App);
+    await TestBed.inject(Router).navigateByUrl('/dashboard');
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('app-topbar')).toBeTruthy();
-    expect(el.querySelector('app-left-rail')).toBeTruthy();
+    expect(el.querySelector('app-left-rail')).toBeNull();
     expect(el.querySelector('app-status-strip')).toBeTruthy();
   });
 
-  it('routes to the board view by default', async () => {
+  it('routes to the projects dashboard by default', async () => {
     const fixture = TestBed.createComponent(App);
     await TestBed.inject(Router).navigateByUrl('/');
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
-    expect(TestBed.inject(Router).url).toBe('/board');
+    expect(TestBed.inject(Router).url).toBe('/dashboard');
+    expect(el.querySelector('app-dashboard')).toBeTruthy();
+  });
+
+  it('hosts coding views inside a project workspace', async () => {
+    const fixture = TestBed.createComponent(App);
+    await TestBed.inject(Router).navigateByUrl('/projects/P-2/coding/board');
+    await fixture.whenStable();
+    const el = fixture.nativeElement as HTMLElement;
+
+    expect(el.querySelector('app-project-workspace')).toBeTruthy();
+    expect(el.querySelector('app-left-rail')).toBeTruthy();
     expect(el.querySelector('app-board')).toBeTruthy();
+    expect(TestBed.inject(ShellService).activeTabId()).toBe('P-2');
   });
 });
 

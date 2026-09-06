@@ -90,6 +90,8 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
   },
   projectDirectoryChanged: { projectId: 'P-1', directory: '/home/odmar/Projects/composer-v2' },
   projectActivated: { projectId: 'P-1' },
+  projectArchived: { projectId: 'P-1', archivedAt: TS },
+  projectRestored: { projectId: 'P-1', restoredAt: TS },
   agentSessionStarted: { cardId: 'T-1', sessionId: 'A-1', agentKind: 'coder', startedAt: TS },
   agentSessionEnded: { cardId: 'T-1', sessionId: 'A-1', status: 'ended', endedAt: TS },
   agentToolCall: {

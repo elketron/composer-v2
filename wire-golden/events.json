@@ -261,6 +261,26 @@
     "id": "e-19",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "projectArchived",
+    "body": {
+      "projectId": "P-1",
+      "archivedAt": "2026-09-04T12:00:00.123456Z"
+    }
+  },
+  {
+    "id": "e-20",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "projectRestored",
+    "body": {
+      "projectId": "P-1",
+      "restoredAt": "2026-09-04T12:00:00.123456Z"
+    }
+  },
+  {
+    "id": "e-21",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentSessionStarted",
     "body": {
       "cardId": "T-1",
@@ -270,7 +290,7 @@
     }
   },
   {
-    "id": "e-20",
+    "id": "e-22",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentSessionEnded",
@@ -282,7 +302,7 @@
     }
   },
   {
-    "id": "e-21",
+    "id": "e-23",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentToolCall",
@@ -297,7 +317,7 @@
     }
   },
   {
-    "id": "e-22",
+    "id": "e-24",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentToolResult",
@@ -309,7 +329,7 @@
     }
   },
   {
-    "id": "e-23",
+    "id": "e-25",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineSaved",
@@ -343,7 +363,7 @@
     }
   },
   {
-    "id": "e-24",
+    "id": "e-26",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineDeleted",
@@ -352,7 +372,7 @@
     }
   },
   {
-    "id": "e-25",
+    "id": "e-27",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineRunStarted",
@@ -362,7 +382,7 @@
     }
   },
   {
-    "id": "e-26",
+    "id": "e-28",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineStepStarted",
@@ -374,7 +394,7 @@
     }
   },
   {
-    "id": "e-27",
+    "id": "e-29",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineStepFinished",
@@ -386,7 +406,7 @@
     }
   },
   {
-    "id": "e-28",
+    "id": "e-30",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineRunEnded",
@@ -397,7 +417,7 @@
     }
   },
   {
-    "id": "e-29",
+    "id": "e-31",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineGateResponded",
@@ -408,7 +428,7 @@
     }
   },
   {
-    "id": "e-30",
+    "id": "e-32",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "commandOutput",

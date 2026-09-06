@@ -1,13 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { NavigationEnd, Router } from '@angular/router';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { filter, map } from 'rxjs';
 
 import { ShellService } from './shell.service';
 
 /**
- * Top bar (design.md §2): logo, project tabs (+), breadcrumb, and the
- * active model badge on the right.
+ * Global top bar: application destinations, current project context,
+ * breadcrumb, and the active model badge.
  *
  * The telemetry badges (calls / elapsed / build) are gone until wired to
  * live data — static placeholders read as real telemetry.
@@ -15,6 +15,7 @@ import { ShellService } from './shell.service';
 @Component({
   selector: 'app-topbar',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [RouterLink, RouterLinkActive],
   templateUrl: './topbar.component.html',
   styleUrl: './topbar.component.scss',
 })
@@ -22,8 +23,6 @@ export class TopbarComponent {
   private readonly shell = inject(ShellService);
   private readonly router = inject(Router);
 
-  protected readonly tabs = this.shell.tabs;
-  protected readonly activeTabId = this.shell.activeTabId;
   protected readonly activeTab = this.shell.activeTab;
   protected readonly model = this.shell.model;
 
@@ -35,14 +34,23 @@ export class TopbarComponent {
     { initialValue: this.router.url },
   );
 
+  protected readonly inWorkspace = computed(() =>
+    (this.currentUrl() ?? '').startsWith('/projects/'),
+  );
+
   private readonly viewName = computed(() => {
-    const segment = (this.currentUrl() ?? '').split('?')[0].replace(/^\/+|\/+$/g, '');
-    return segment || 'board';
+    const segments = (this.currentUrl() ?? '').split(/[?#]/, 1)[0].split('/').filter(Boolean);
+    if (segments[0] !== 'projects')
+      return segments[0] === 'dashboard' ? 'projects' : segments[0] || 'projects';
+    const view = segments[3] ?? 'board';
+    return view === 'coding' ? 'sessions' : view;
   });
 
   protected readonly breadcrumb = computed(() => {
     const tab = this.activeTab();
-    return tab ? `${tab.name} › ${this.viewName()}` : this.viewName();
+    return this.inWorkspace() && tab
+      ? `${tab.name} › coding › ${this.viewName()}`
+      : this.viewName();
   });
 
   protected add(): void {
@@ -54,12 +62,7 @@ export class TopbarComponent {
     void this.shell.linkDirectory(id);
   }
 
-  protected activate(id: string): void {
-    this.shell.activateTab(id);
-  }
-
-  protected close(id: string, event: Event): void {
-    event.stopPropagation();
-    this.shell.closeTab(id);
+  protected openProject(id: string): void {
+    void this.router.navigateByUrl(this.shell.workspaceUrl(id));
   }
 }

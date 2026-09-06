@@ -6,6 +6,7 @@ import { Bot, Lock, MessageSquare, SquareCheck, Terminal } from 'lucide-angular'
 import { AgePipe } from '../core/age.pipe';
 import { Card } from '../core/models/board.models';
 import { PipelineService } from '../pipelines/pipeline.service';
+import { ShellService } from '../shell/shell.service';
 
 /**
  * Card anatomy (design.md §3.2): type icon + accent bar, id, tags, title,
@@ -29,6 +30,7 @@ import { PipelineService } from '../pipelines/pipeline.service';
 export class BoardCardComponent {
   private readonly pipelines = inject(PipelineService);
   private readonly router = inject(Router);
+  private readonly shell = inject(ShellService);
 
   readonly card = input.required<Card>();
   readonly blocked = input(false);
@@ -86,6 +88,8 @@ export class BoardCardComponent {
   /** The run chip opens the full-page run view (not the card panel). */
   protected openRun(event: MouseEvent): void {
     event.stopPropagation();
-    void this.router.navigate(['/run', this.card().id]);
+    const card = this.card();
+    const projectId = this.shell.activeTabId();
+    if (projectId) void this.router.navigate(['/projects', projectId, 'coding', 'run', card.id]);
   }
 }

@@ -12,11 +12,12 @@ function frame(
   name: EventName,
   body: unknown,
   index: number,
+  occurredAt = nowIso(),
 ): EventFrame {
   return {
     id: `snapshot-${index}`,
     ...(projectId !== undefined ? { projectId } : {}),
-    occurredAt: nowIso(),
+    occurredAt,
     eventType: name,
     body,
   };
@@ -130,12 +131,49 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       events.push(frame(project.id, 'pipelineSaved', { pipeline: structuredClone(pipeline) }, index++));
     }
 
+    // Terminal latest-run outcomes are durable dashboard state. Recreate the
+    // run lifecycle at its original timestamps so the projection round-trips.
+    const latestRuns = [...projectState.latestRuns.entries()].sort(([a], [b]) => a.localeCompare(b));
+    for (const [cardId, run] of latestRuns) {
+      if (run.status === 'running' || run.status === 'waiting') continue;
+      events.push(
+        frame(
+          project.id,
+          'pipelineRunStarted',
+          { cardId, pipelineId: run.pipelineId },
+          index++,
+          run.startedAt,
+        ),
+      );
+      events.push(
+        frame(
+          project.id,
+          'pipelineRunEnded',
+          {
+            cardId,
+            pipelineId: run.pipelineId,
+            status: run.status,
+            ...(run.error !== undefined ? { error: run.error } : {}),
+          },
+          index++,
+          run.endedAt ?? run.startedAt,
+        ),
+      );
+    }
+
     // Active pipeline runs replay as runStarted (+ the current step, so
     // the fold lands on the same run status).
     const runs = [...projectState.pipelineRuns.entries()].sort(([a], [b]) => a.localeCompare(b));
     for (const [cardId, run] of runs) {
+      const startedAt = projectState.latestRuns.get(cardId)?.startedAt;
       events.push(
-        frame(project.id, 'pipelineRunStarted', { cardId, pipelineId: run.pipelineId }, index++),
+        frame(
+          project.id,
+          'pipelineRunStarted',
+          { cardId, pipelineId: run.pipelineId },
+          index++,
+          startedAt,
+        ),
       );
       if (run.stepId !== undefined && run.stepKind !== undefined) {
         events.push(

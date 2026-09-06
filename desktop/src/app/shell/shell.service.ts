@@ -7,32 +7,37 @@ export interface ProjectTab {
   id: string;
   name: string;
   directory: string | null;
+  archivedAt: string | null;
 }
 
 /**
- * Shell-wide state: project tabs, active tab, status-strip info.
+ * Shell-wide state: projects, active workspace context, status-strip info.
  *
- * The tab list is a fold of project events (ProjectCreated / ProjectActivated)
- * over the Events gRPC stream and persists across restarts; the "+"
- * publishes RequestProjectCreate and the tab lands via its echo. Closing a tab
- * only hides it locally — there is no project-delete command in the catalog.
+ * Project lists are a fold of lifecycle events over the event stream and
+ * persist across restarts. Archive hides a project without deleting its state.
  */
 @Injectable({ providedIn: 'root' })
 export class ShellService {
+  private static readonly LAST_VIEWS_KEY = 'composer.last-project-views';
   private readonly events = inject(EventsClient);
 
   private readonly projects = signal<readonly ProjectTab[]>([]);
-  private readonly closedIds = signal<ReadonlySet<string>>(new Set());
   private pendingActivation: string | null = null;
 
-  readonly tabs = computed(() => this.projects().filter((t) => !this.closedIds().has(t.id)));
-  readonly activeTabId = signal<string | null>(null);
-  readonly activeTab = computed(
-    () => this.tabs().find((t) => t.id === this.activeTabId()) ?? null,
+  readonly activeProjects = computed(() =>
+    this.projects().filter((project) => !project.archivedAt),
   );
+  readonly tabs = this.activeProjects;
+  readonly archivedProjects = computed(() =>
+    this.projects().filter((project) => project.archivedAt !== null),
+  );
+  readonly activeTabId = signal<string | null>(null);
+  readonly activeTab = computed(() => this.tabs().find((t) => t.id === this.activeTabId()) ?? null);
 
   /** Active planner model shown in the top bar and status strip. */
   readonly model = signal('qwen3.6');
+
+  private readonly lastViews = readLastViews();
 
   constructor() {
     this.events.events$.subscribe((event) => this.fold(event));
@@ -60,8 +65,57 @@ export class ShellService {
     if (!selection?.directory.trim()) return;
     await this.events.publish({
       projectId: id,
-      requestProjectSetDirectory: { projectId: id, directory: selection.directory },
+      requestProjectSetDirectory: {
+        projectId: id,
+        directory: selection.directory,
+      },
     });
+  }
+
+  async archiveProject(id: string): Promise<string | null> {
+    const response = await this.events.publish({
+      projectId: id,
+      requestProjectArchive: { projectId: id },
+    });
+    return response.ok ? null : (response.rejectionMessage ?? 'the project could not be archived');
+  }
+
+  async restoreProject(id: string): Promise<string | null> {
+    const response = await this.events.publish({
+      projectId: id,
+      requestProjectRestore: { projectId: id },
+    });
+    return response.ok ? null : (response.rejectionMessage ?? 'the project could not be restored');
+  }
+
+  project(id: string): ProjectTab | undefined {
+    return this.projects().find((project) => project.id === id);
+  }
+
+  /** Route context selects the project without emitting a redundant domain command. */
+  selectProject(id: string): void {
+    this.activeTabId.set(id);
+  }
+
+  /** The last coding-workflow location for a project, with a safe board fallback. */
+  workspaceUrl(id: string): string {
+    const suffix = this.lastViews[id] ?? 'coding/board';
+    return `/projects/${encodeURIComponent(id)}/${suffix}`;
+  }
+
+  rememberWorkspaceUrl(url: string): void {
+    const path = url.split(/[?#]/, 1)[0];
+    const match = path.match(
+      /^\/projects\/([^/]+)\/(coding\/(?:board|plan|pipelines|coding|run\/[^/]+))$/,
+    );
+    if (!match) return;
+    const projectId = decodeURIComponent(match[1]);
+    this.lastViews[projectId] = match[2];
+    try {
+      browserStorage()?.setItem(ShellService.LAST_VIEWS_KEY, JSON.stringify(this.lastViews));
+    } catch {
+      // Navigation still works when storage is unavailable.
+    }
   }
 
   activateTab(id: string): void {
@@ -75,21 +129,6 @@ export class ShellService {
     }
   }
 
-  closeTab(id: string): void {
-    const tabs = this.tabs();
-    const index = tabs.findIndex((t) => t.id === id);
-    if (index === -1) return;
-
-    this.closedIds.update((ids) => new Set(ids).add(id));
-
-    if (this.activeTabId() === id) {
-      const remaining = this.tabs();
-      const neighbor = remaining[Math.min(index, remaining.length - 1)];
-      this.activeTabId.set(null);
-      if (neighbor) this.activateTab(neighbor.id);
-    }
-  }
-
   private fold(event: DomainEventJson): void {
     switch (domainEventKind(event)) {
       case 'projectCreated': {
@@ -99,6 +138,7 @@ export class ShellService {
           id: project.id,
           name: project.name,
           directory: project.directory?.trim() || null,
+          archivedAt: project.archivedAt ?? null,
         };
         this.projects.update((projects) =>
           projects.some((item) => item.id === tab.id)
@@ -107,7 +147,7 @@ export class ShellService {
         );
         // Startup snapshots carry no activation; land on the first project
         // (or the one just opened via "+").
-        if (this.activeTabId() === null) {
+        if (this.activeTabId() === null && tab.archivedAt === null) {
           const target = this.pendingActivation ?? tab.id;
           if (this.pendingActivation === tab.id) this.pendingActivation = null;
           this.activeTabId.set(target);
@@ -131,6 +171,52 @@ export class ShellService {
         if (id && this.tabs().some((t) => t.id === id)) this.activeTabId.set(id);
         break;
       }
+      case 'projectArchived': {
+        const payload = event.projectArchived;
+        if (!payload?.projectId) break;
+        this.projects.update((projects) =>
+          projects.map((project) =>
+            project.id === payload.projectId
+              ? { ...project, archivedAt: payload.archivedAt }
+              : project,
+          ),
+        );
+        if (this.activeTabId() === payload.projectId) this.activeTabId.set(null);
+        break;
+      }
+      case 'projectRestored': {
+        const projectId = event.projectRestored?.projectId;
+        if (!projectId) break;
+        this.projects.update((projects) =>
+          projects.map((project) =>
+            project.id === projectId ? { ...project, archivedAt: null } : project,
+          ),
+        );
+        break;
+      }
     }
   }
+}
+
+function readLastViews(): Record<string, string> {
+  try {
+    const value = JSON.parse(browserStorage()?.getItem('composer.last-project-views') ?? '{}') as unknown;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+    return Object.fromEntries(
+      Object.entries(value).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === 'string' &&
+          /^coding\/(?:board|plan|pipelines|coding|run\/[^/]+)$/.test(entry[1]),
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function browserStorage(): Storage | undefined {
+  // Node 22 exposes an unusable localStorage getter in the Angular test
+  // process. Real browsers and the Electron renderer use the normal API.
+  if ('process' in globalThis && !navigator.userAgent.includes('Electron/')) return undefined;
+  return window.localStorage;
 }

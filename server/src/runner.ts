@@ -93,7 +93,17 @@ export class PipelineRunner {
       task.child?.kill('SIGKILL');
       task.resolveGate?.('cancelled');
     }
-    this.tasks.clear();
+    // The tasks stay in the map: each drive removes its own task in its
+    // finally, which is exactly the unwind signal drain() waits on.
+  }
+
+  // Resolves once every started run has fully unwound (the task leaves the
+  // map only after drive's last publish resolved) — teardown uses this so
+  // no in-flight append races a closing EventStore.
+  async drain(): Promise<void> {
+    while (this.tasks.size > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
   }
 
   private async onFrame(frame: EventFrame): Promise<void> {
@@ -118,11 +128,12 @@ export class PipelineRunner {
         if (task === undefined) return;
         // The cancelled runEnded is on the stream; the task exits without
         // publishing anything more (v1 semantics). A parked card stays put.
+        // The task stays in the map until drive's own finally removes it —
+        // deleting here would hide an in-flight unwind from drain().
         task.stopped = true;
         task.abort.abort();
         task.child?.kill('SIGKILL');
         task.resolveGate?.('cancelled');
-        this.tasks.delete(body.cardId);
         return;
       }
       default:
@@ -252,6 +263,9 @@ export class PipelineRunner {
     task: RunTask,
     step: PipelineStep,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
+    // A stop that landed while the drive was between awaits must not spawn
+    // a child nobody will kill.
+    if (task.stopped) return { ok: false, error: 'the run was stopped' };
     const directory = this.bus.state.projects.get(task.projectId)?.directory;
     if (directory === undefined) {
       return { ok: false, error: `Project ${task.projectId} has no directory set` };

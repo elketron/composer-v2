@@ -212,6 +212,14 @@ describe('the pipeline runner', () => {
     runner.start();
   });
 
+  afterEach(async () => {
+    // A test may end mid-run (e.g. a re-run whose step is still driving);
+    // stop and let the drives unwind before the file-level afterEach
+    // closes the store, so no in-flight append races the close.
+    runner.stop();
+    await runner.drain();
+  });
+
   it('run_pipeline_validates_scope_directory_and_agent_kinds', async () => {
     await savePipeline(projectId, pipelineFixture('', [coderStep('st-1')]));
     const card = cardOf(projectId, cardId);
@@ -360,6 +368,11 @@ describe('the pipeline runner', () => {
     expect(ended.status).toBe('failed');
     expect(ended.error).toContain('exit code 1');
     expect(ended.error).toContain('boom');
+    expect(bus.state.byProject.get(projectId)?.latestRuns.get(cardId)).toMatchObject({
+      pipelineId,
+      status: 'failed',
+      error: expect.stringContaining('boom'),
+    });
 
     // Re-run is the recovery story (D5): the same run command works again.
     const again = await processor.execute(projectId, {
@@ -405,6 +418,32 @@ describe('the pipeline runner', () => {
     expect(runOf(projectId, cardId)).toBeUndefined();
   });
 
+  it('terminal_run_health_survives_a_snapshot', async () => {
+    runner.stop();
+    await bus.publish(projectId, 'pipelineRunStarted', { cardId, pipelineId: 'PL-1' });
+    await bus.publish(projectId, 'pipelineRunEnded', {
+      cardId,
+      pipelineId: 'PL-1',
+      status: 'failed',
+      error: 'build failed',
+    });
+
+    const replayed = newState();
+    for (const frame of snapshotEvents(bus.state)) {
+      apply(replayed, {
+        id: frame.id,
+        ...(frame.projectId !== undefined ? { projectId: frame.projectId } : {}),
+        occurredAt: frame.occurredAt,
+        name: frame.eventType,
+        body: frame.body,
+      });
+    }
+
+    expect(replayed.byProject.get(projectId)?.latestRuns.get(cardId)).toEqual(
+      bus.state.byProject.get(projectId)?.latestRuns.get(cardId),
+    );
+  });
+
   it('the_pipeline_snapshot_replays_into_equal_state', async () => {
     engine.enqueue(async () => 'implemented');
     const pipelineId = await savePipeline(projectId, pipelineFixture('', [coderStep('st-1'), humanStep('st-2')]));
@@ -443,6 +482,7 @@ describe('the pipeline runner', () => {
       pipelines: [...project.pipelines.entries()].sort(([a], [b]) => a.localeCompare(b)),
       deletedPipelines: [...project.deletedPipelines].sort(),
       pipelineRuns: [...project.pipelineRuns.entries()],
+      latestRuns: [...project.latestRuns.entries()],
       automation: [...project.automation.entries()],
     }));
   }

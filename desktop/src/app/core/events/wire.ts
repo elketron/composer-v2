@@ -136,6 +136,7 @@ export interface ProjectJson {
   readonly name?: string;
   readonly directory?: string;
   readonly createdAt?: string;
+  readonly archivedAt?: string;
 }
 
 export const WirePipelineStepKind = {
@@ -239,6 +240,8 @@ export interface DomainEventJson {
   readonly projectCreated?: { readonly project: ProjectJson };
   readonly projectDirectoryChanged?: { readonly projectId: string; readonly directory: string };
   readonly projectActivated?: { readonly projectId: string };
+  readonly projectArchived?: { readonly projectId: string; readonly archivedAt: string };
+  readonly projectRestored?: { readonly projectId: string; readonly restoredAt: string };
   readonly agentSessionStarted?: {
     readonly cardId: string;
     readonly sessionId: string;
@@ -319,6 +322,8 @@ export const EVENT_KINDS = [
   'projectCreated',
   'projectDirectoryChanged',
   'projectActivated',
+  'projectArchived',
+  'projectRestored',
   'agentSessionStarted',
   'agentSessionEnded',
   'agentToolCall',
@@ -360,6 +365,8 @@ export type CommandKind =
   | 'requestProjectCreate'
   | 'requestProjectSetDirectory'
   | 'requestProjectActivate'
+  | 'requestProjectArchive'
+  | 'requestProjectRestore'
   | 'requestCardMove'
   | 'requestCardTypeChange'
   | 'requestCardArchive'
@@ -384,6 +391,8 @@ export interface PublishRequestJson {
   readonly requestProjectCreate?: { readonly name: string; readonly directory?: string };
   readonly requestProjectSetDirectory?: { readonly projectId: string; readonly directory: string };
   readonly requestProjectActivate?: { readonly projectId: string };
+  readonly requestProjectArchive?: { readonly projectId: string };
+  readonly requestProjectRestore?: { readonly projectId: string };
   readonly requestCardCreate?: {
     readonly title: string;
     readonly description?: string;
@@ -463,6 +472,15 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
     return env('update', 'project', {
       id: request.requestProjectActivate.projectId,
       active: true,
+    });
+  }
+  if (request.requestProjectArchive) {
+    return env('delete', 'project', { id: request.requestProjectArchive.projectId });
+  }
+  if (request.requestProjectRestore) {
+    return env('update', 'project', {
+      id: request.requestProjectRestore.projectId,
+      archived: false,
     });
   }
   if (request.requestCardCreate) {

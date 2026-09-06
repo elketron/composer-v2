@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import {
   Bot,
   CircleUser,
+  LayoutDashboard,
   Kanban,
   LucideAngularModule,
   LucideIconData,
@@ -33,15 +34,31 @@ interface RailEntry {
   styleUrl: './left-rail.component.scss',
 })
 export class LeftRailComponent {
-  protected readonly viewEntries: readonly RailEntry[] = [
-    { id: 'board', label: 'board', icon: Kanban, route: '/board' },
-    { id: 'plan', label: 'plan', icon: MessageSquare, route: '/plan' },
-    { id: 'pipelines', label: 'pipelines', icon: Workflow, route: '/pipelines' },
-    { id: 'agent', label: 'coding', icon: Bot, route: '/coding' },
-    { id: 'canvas', label: 'canvas', icon: PenTool },
-  ];
+  readonly projectId = input<string | null>(null);
+
+  protected readonly viewEntries = computed<readonly RailEntry[]>(() => {
+    const base = `/projects/${encodeURIComponent(this.projectId() ?? '')}/coding`;
+    return [
+      { id: 'board', label: 'board', icon: Kanban, route: `${base}/board` },
+      { id: 'plan', label: 'plan', icon: MessageSquare, route: `${base}/plan` },
+      {
+        id: 'pipelines',
+        label: 'pipelines',
+        icon: Workflow,
+        route: `${base}/pipelines`,
+      },
+      { id: 'agent', label: 'coding', icon: Bot, route: `${base}/coding` },
+      { id: 'canvas', label: 'canvas', icon: PenTool },
+    ];
+  });
 
   protected readonly bottomEntries: readonly RailEntry[] = [
+    {
+      id: 'dashboard',
+      label: 'projects',
+      icon: LayoutDashboard,
+      route: '/dashboard',
+    },
     { id: 'account', label: 'account', icon: CircleUser },
     { id: 'settings', label: 'settings', icon: Settings, route: '/settings' },
   ];

@@ -14,6 +14,7 @@ import {
   Stage,
 } from '../core/models/board.models';
 import { PipelineService, RunOutcome } from '../pipelines/pipeline.service';
+import { ShellService } from '../shell/shell.service';
 import { BoardService } from './board.service';
 
 /**
@@ -35,6 +36,7 @@ export class CardPanelComponent {
   private readonly board = inject(BoardService);
   private readonly pipelines = inject(PipelineService);
   private readonly router = inject(Router);
+  private readonly shell = inject(ShellService);
 
   readonly card = input.required<Card>();
 
@@ -107,7 +109,9 @@ export class CardPanelComponent {
   }
 
   protected openRunView(): void {
-    void this.router.navigate(['/run', this.card().id]);
+    const card = this.card();
+    const projectId = this.shell.activeTabId();
+    if (projectId) void this.router.navigate(['/projects', projectId, 'coding', 'run', card.id]);
   }
 
   protected laneLabel(lane: Stage): string {

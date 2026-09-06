@@ -46,6 +46,15 @@ export class Processor {
    * resolving. S0 handles the project domain; the rest join per slice.
    */
   async execute(projectId: string | undefined, command: Command): Promise<CommandOutcome> {
+    if (
+      projectId !== undefined &&
+      command.type !== 'requestProjectArchive' &&
+      command.type !== 'requestProjectRestore' &&
+      this.bus.state.projects.get(projectId)?.archivedAt !== undefined
+    ) {
+      return rejected('invalidCommand', `Project ${projectId} is archived`);
+    }
+
     switch (command.type) {
       case 'requestProjectCreate':
         return this.createProject(command.name, command.directory);
@@ -53,6 +62,10 @@ export class Processor {
         return this.setProjectDirectory(projectId, command.projectId, command.directory);
       case 'requestProjectActivate':
         return this.activateProject(command.projectId);
+      case 'requestProjectArchive':
+        return this.archiveProject(projectId, command.projectId);
+      case 'requestProjectRestore':
+        return this.restoreProject(projectId, command.projectId);
       case 'requestCardCreate':
         return this.createCards(projectId, [command.card]);
       case 'requestCardsCreate':
@@ -171,6 +184,47 @@ export class Processor {
       return rejected('unknownProject', `Unknown project ${projectId}`);
     }
     await this.bus.publish(projectId, 'projectActivated', { projectId });
+    return ok();
+  }
+
+  private async archiveProject(
+    scope: string | undefined,
+    commandProjectId: string,
+  ): Promise<CommandOutcome> {
+    if (scope !== commandProjectId) {
+      return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
+    }
+    const project = this.bus.state.projects.get(commandProjectId);
+    if (!project) {
+      return rejected('unknownProject', `Unknown project ${commandProjectId}`);
+    }
+    if (project.archivedAt !== undefined) return ok();
+    if ((this.bus.state.byProject.get(commandProjectId)?.pipelineRuns.size ?? 0) > 0) {
+      return rejected('invalidCommand', `Project ${commandProjectId} has an active pipeline run`);
+    }
+    await this.bus.publish(commandProjectId, 'projectArchived', {
+      projectId: commandProjectId,
+      archivedAt: nowIso(),
+    });
+    return ok();
+  }
+
+  private async restoreProject(
+    scope: string | undefined,
+    commandProjectId: string,
+  ): Promise<CommandOutcome> {
+    if (scope !== commandProjectId) {
+      return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
+    }
+    const project = this.bus.state.projects.get(commandProjectId);
+    if (!project) {
+      return rejected('unknownProject', `Unknown project ${commandProjectId}`);
+    }
+    if (project.archivedAt === undefined) return ok();
+    await this.bus.publish(commandProjectId, 'projectRestored', {
+      projectId: commandProjectId,
+      restoredAt: nowIso(),
+    });
     return ok();
   }
 

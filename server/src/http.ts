@@ -13,6 +13,7 @@ import type { Card, CardType, Pipeline, PipelineStep, Stage, SubStateStatus } fr
 import { ALL_STAGES } from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
 import type { ComposerSettings, EventStore, SettingsPatch } from './store.js';
+import { dashboardProjects } from './dashboard.js';
 
 /** The commands the MCP tools may issue (the planner's two, for now). */
 const MCP_COMMAND_TYPES: ReadonlySet<string> = new Set([
@@ -29,6 +30,10 @@ export function router(bus: Bus, processor: Processor, store?: EventStore): Hono
   app.use('*', cors());
 
   app.get('/health', (context) => context.json({ status: 'SERVING' }));
+
+  app.get('/dashboard', async (context) =>
+    context.json({ projects: await dashboardProjects(bus.state) }),
+  );
 
   // Global settings (config, not domain history): the desktop's settings
   // view reads and writes these; the runner/planner read them per spawn.
@@ -196,7 +201,14 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
       if (bool('active') === true) {
         return { type: 'requestProjectActivate', projectId };
       }
+      if (bool('archived') === false) {
+        return { type: 'requestProjectRestore', projectId };
+      }
       return null;
+    }
+    case 'delete:project': {
+      const projectId = str('id') ?? '';
+      return { type: 'requestProjectArchive', projectId };
     }
     case 'create:card': {
       // A single card object, or { cards: [...] } for bulk.

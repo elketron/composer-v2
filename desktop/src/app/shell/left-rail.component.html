@@ -1,5 +1,5 @@
 <nav class="rail" aria-label="views">
-  @for (entry of viewEntries; track entry.id) {
+  @for (entry of viewEntries(); track entry.id) {
     @if (entry.route; as route) {
       <a
         class="entry"

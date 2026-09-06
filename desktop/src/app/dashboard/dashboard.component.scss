@@ -1,0 +1,370 @@
+:host {
+  display: block;
+  height: 100%;
+  overflow: auto;
+}
+
+.dashboard {
+  width: min(1080px, 100%);
+  margin: 0 auto;
+  padding: 48px 40px 64px;
+}
+
+.dashboard-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 42px;
+
+  .eyebrow {
+    color: var(--accent-soft);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 6px 0 4px;
+    color: var(--text);
+    font-size: clamp(24px, 3vw, 38px);
+    font-weight: 500;
+    letter-spacing: -0.05em;
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+}
+
+.new-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-soft);
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+    color: var(--text);
+  }
+}
+
+.refresh {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: var(--text-dim);
+    color: var(--text);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+  }
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.archive-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.error {
+  margin: -24px 0 24px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--err);
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+  color: var(--err);
+  font-size: 12px;
+}
+
+.health-error {
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  color: var(--warn);
+}
+
+.action-section {
+  margin-bottom: 34px;
+}
+
+.action-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 6px;
+}
+
+.action-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
+  }
+
+  strong {
+    overflow: hidden;
+    color: var(--text);
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.action-kind {
+  color: var(--warn);
+  text-transform: uppercase;
+}
+
+.action-item.failed .action-kind {
+  color: var(--err);
+}
+
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.project-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+  min-height: 108px;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--panel);
+  color: inherit;
+
+  &:hover,
+  &:focus-within {
+    border-color: var(--accent);
+  }
+
+  &.archived {
+    opacity: 0.75;
+  }
+}
+
+.project-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  color: var(--accent-soft);
+}
+
+.project-copy,
+.project-open {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+
+  strong {
+    overflow: hidden;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.project-open {
+  align-items: start;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 1px solid var(--accent-soft);
+    outline-offset: 4px;
+  }
+}
+
+.card-action {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  align-self: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: var(--err);
+  }
+
+  &.restore:hover:not(:disabled) {
+    color: var(--ok);
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+}
+
+.directory {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-line {
+  display: flex;
+  min-height: 18px;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+
+  .git.clean {
+    color: var(--ok);
+  }
+
+  .git.dirty,
+  .warn {
+    color: var(--warn);
+  }
+
+  .failed {
+    color: var(--err);
+  }
+
+  .running {
+    color: var(--run);
+  }
+}
+
+.commit {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  align-self: start;
+  color: var(--text-faint);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.empty {
+  display: flex;
+  width: 100%;
+  min-height: 220px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  cursor: pointer;
+
+  strong {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  span {
+    font-size: 12px;
+  }
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent-soft);
+  }
+}
+
+@media (max-width: 700px) {
+  .dashboard {
+    padding: 28px 20px 48px;
+  }
+
+  .dashboard-head {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .new-project {
+    align-self: stretch;
+    justify-content: center;
+  }
+
+  .head-actions {
+    width: 100%;
+  }
+
+  .archive-toggle {
+    margin-right: auto;
+  }
+}

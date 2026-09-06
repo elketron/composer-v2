@@ -22,6 +22,7 @@ export class FakeEventsClient {
   private readonly eventsSubject = new Subject<DomainEventJson>();
   readonly events$ = this.eventsSubject.asObservable();
   readonly connected = signal(true);
+  readonly serverBase = '';
 
   readonly published: PublishRequestJson[] = [];
   readonly attached: import('./events-client').RegistryEntry[] = [];

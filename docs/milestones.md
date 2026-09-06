@@ -421,6 +421,54 @@ smoke saved `models.planner` over HTTP (the resolution override is
 unit-tested at the orchestrator), the editor's picker listed the known
 kinds, and the composer held a newline through Shift+Enter.
 
+## S9 — Global shell + project lifecycle  ·  done (2026-09-06)
+
+- **Product plan**: `docs/product-plan.md` records the dashboard-first roadmap,
+  global assistant boundary, and the project model: one project may host one
+  workspace of each workflow type; coding is the only implemented workflow.
+- **Global shell**: Dashboard is the default route. Coding views now live below
+  `/projects/:projectId/coding/...`; the route selects project context, the
+  project workspace owns its workflow tab + compact rail, and opening a project
+  restores its last-used coding view.
+- **Dashboard foundation**: all projects are visible without opening tabs, with
+  create/open actions and explicit archive access. The health/Git read model is
+  intentionally left to the next slice.
+- **Durable lifecycle**: `requestProjectArchive/Restore` and
+  `projectArchived/Restored` add a non-destructive `archivedAt` projection.
+  Archived projects keep their directory and all cards/plans/pipelines/history,
+  reject ordinary mutations, and are restorable from the Dashboard. Archive is
+  rejected while any pipeline is running or waiting.
+- **Wire**: 32 events; snapshots carry the folded project lifecycle state in
+  `projectCreated`, while live archive/restore events move projects between the
+  active and archived Dashboard views.
+
+Exit criteria (met): project routes and last-view restoration were exercised in
+the live Electron renderer with no console errors; server tests cover state
+retention, mutation blocking, active-run rejection, snapshot equality, and the
+HTTP action mapping; desktop tests cover routing, action mapping, folds, and the
+Dashboard archive/restore flow.
+
+## S10 — Dashboard health + Git status  ·  done (2026-09-06)
+
+- **Durable run health**: each coding card's latest pipeline run now remains in
+  the server projection after it ends (status, pipeline, timestamps, error).
+  Starting a rerun replaces the failure with active state; successful completion
+  clears it. Snapshot replay recreates terminal lifecycle events at their
+  original timestamps, so both server and desktop outcomes survive restart.
+- **Dashboard read model**: `GET /dashboard` excludes archived projects and
+  returns running runs, waiting approvals, and unresolved failed card runs. The
+  renderer shows these as an action-required list with direct links to the run
+  view and per-project health chips.
+- **Git status**: on-demand, transient probes report clean/dirty, current branch,
+  and latest commit subject/age. Probes use `git -C` without a shell, a 3-second
+  timeout, bounded output, and four-project concurrency; missing directories and
+  non-repositories are explicit states. Refresh happens on server attachment,
+  Dashboard focus, successful lifecycle actions, and the manual control.
+- **Tests**: Git parsing and health aggregation have an injected runner suite;
+  the real HTTP boot covers Dashboard archive exclusion/restoration; runner
+  tests cover terminal outcome snapshot equality; desktop service/component
+  specs cover loading, failure retention, Git display, and action-required work.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

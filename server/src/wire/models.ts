@@ -56,6 +56,7 @@ export interface Project {
   name: string;
   directory?: string;
   createdAt: string;
+  archivedAt?: string;
 }
 
 export interface ChatMessage {

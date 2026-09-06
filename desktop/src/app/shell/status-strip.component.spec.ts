@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 
 import {
   FakeEventsClient,
@@ -16,7 +17,7 @@ describe('StatusStripComponent', () => {
     events = new FakeEventsClient();
     await TestBed.configureTestingModule({
       imports: [StatusStripComponent],
-      providers: [provideFakeEventsClient(events)],
+      providers: [provideFakeEventsClient(events), provideRouter([])],
     }).compileComponents();
     // Instantiate before seeding: folds only see events after subscription.
     TestBed.inject(PipelineService);
@@ -83,10 +84,10 @@ describe('StatusStripComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('.agents')).toBeNull();
   });
 
-  it('shows the model and the tab hint, not the unimplemented command hint', async () => {
+  it('shows the model without project-only hints on a global route', async () => {
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.textContent).toContain('tab');
+    expect(el.textContent).not.toContain('tab');
     expect(el.textContent).not.toContain('ctrl+k');
   });
 });

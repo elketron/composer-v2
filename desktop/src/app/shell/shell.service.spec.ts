@@ -30,7 +30,9 @@ describe('ShellService', () => {
         discover: async () => null,
       },
     };
-    TestBed.configureTestingModule({ providers: [provideFakeEventsClient(events)] });
+    TestBed.configureTestingModule({
+      providers: [provideFakeEventsClient(events)],
+    });
     service = TestBed.inject(ShellService);
   });
 
@@ -82,11 +84,7 @@ describe('ShellService', () => {
       directory: '/work/alpha',
     });
     events.emit(
-      wireEvent(
-        'projectDirectoryChanged',
-        { projectId: 'P-1', directory: '/work/alpha' },
-        'P-1',
-      ),
+      wireEvent('projectDirectoryChanged', { projectId: 'P-1', directory: '/work/alpha' }, 'P-1'),
     );
     expect(service.activeTab()?.directory).toBe('/work/alpha');
   });
@@ -117,23 +115,72 @@ describe('ShellService', () => {
     expect(events.published.length).toBe(published);
   });
 
-  it('closeTab hides the tab locally and activates a neighbor', () => {
-    events.emit(projectCreated('P-1', 'alpha'));
-    events.emit(projectCreated('P-2', 'beta'));
-    events.emit(projectCreated('P-3', 'gamma'));
-    service.activateTab('P-2');
+  it('selects route project context without publishing', () => {
+    service.selectProject('P-9');
 
-    service.closeTab('P-2');
-
-    expect(service.tabs().map((t) => t.id)).toEqual(['P-1', 'P-3']);
-    expect(service.activeTab()?.id).toBe('P-3');
+    expect(service.activeTabId()).toBe('P-9');
+    expect(events.published).toEqual([]);
   });
 
-  it('closing the last tab clears the active tab', () => {
-    events.emit(projectCreated('P-1', 'alpha'));
-    service.closeTab('P-1');
+  it('remembers the last coding workflow route per project', () => {
+    service.rememberWorkspaceUrl('/projects/P-1/coding/plan');
+    service.rememberWorkspaceUrl('/settings');
 
-    expect(service.tabs()).toEqual([]);
+    expect(service.workspaceUrl('P-1')).toBe('/projects/P-1/coding/plan');
+    expect(service.workspaceUrl('P-2')).toBe('/projects/P-2/coding/board');
+  });
+
+  it('archives via the server and folds the project into the archive', async () => {
+    events.emit(projectCreated('P-1', 'alpha'));
+    events.emit(projectCreated('P-2', 'beta'));
+
+    expect(await service.archiveProject('P-1')).toBeNull();
+    expect(events.lastCommand('requestProjectArchive')?.requestProjectArchive).toEqual({
+      projectId: 'P-1',
+    });
+    events.emit(
+      wireEvent(
+        'projectArchived',
+        { projectId: 'P-1', archivedAt: new Date().toISOString() },
+        'P-1',
+      ),
+    );
+
+    expect(service.activeProjects().map((project) => project.id)).toEqual(['P-2']);
+    expect(service.archivedProjects().map((project) => project.id)).toEqual(['P-1']);
     expect(service.activeTab()).toBeNull();
+  });
+
+  it('restores an archived project via the server echo', async () => {
+    events.emit(
+      wireEvent(
+        'projectCreated',
+        {
+          project: {
+            id: 'P-1',
+            name: 'alpha',
+            createdAt: new Date().toISOString(),
+            archivedAt: new Date().toISOString(),
+          },
+        },
+        'P-1',
+      ),
+    );
+
+    expect(service.activeProjects()).toEqual([]);
+    expect(await service.restoreProject('P-1')).toBeNull();
+    expect(events.lastCommand('requestProjectRestore')?.requestProjectRestore).toEqual({
+      projectId: 'P-1',
+    });
+    events.emit(
+      wireEvent(
+        'projectRestored',
+        { projectId: 'P-1', restoredAt: new Date().toISOString() },
+        'P-1',
+      ),
+    );
+
+    expect(service.activeProjects().map((project) => project.id)).toEqual(['P-1']);
+    expect(service.archivedProjects()).toEqual([]);
   });
 });

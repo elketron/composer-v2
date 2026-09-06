@@ -66,6 +66,42 @@ describe('the boot contract', () => {
     expect(result.status).toBe(400);
   });
 
+  it('project_archive_and_restore_round_trip_over_actions_and_snapshot', async () => {
+    await action({ type: 'create', on: 'project', body: { name: 'alpha' } });
+
+    const archived = await action({
+      type: 'delete',
+      on: 'project',
+      projectId: 'P-1',
+      body: { id: 'P-1' },
+    });
+    expect(archived).toEqual({ status: 200, json: { ok: true } });
+
+    const archivedFrames = await collectFrames(server.url, 2);
+    const archivedProject = (archivedFrames[0]?.body as { project: { archivedAt?: string } }).project;
+    expect(archivedProject.archivedAt).toBeTruthy();
+    const archivedDashboard = await fetch(`${server.url}/dashboard`);
+    expect(await archivedDashboard.json()).toEqual({ projects: [] });
+
+    const restored = await action({
+      type: 'update',
+      on: 'project',
+      projectId: 'P-1',
+      body: { id: 'P-1', archived: false },
+    });
+    expect(restored).toEqual({ status: 200, json: { ok: true } });
+
+    const restoredFrames = await collectFrames(server.url, 2);
+    const restoredProject = (restoredFrames[0]?.body as { project: { archivedAt?: string } }).project;
+    expect(restoredProject.archivedAt).toBeUndefined();
+    const restoredDashboard = (await (await fetch(`${server.url}/dashboard`)).json()) as {
+      projects: Array<{ id: string; git: { status: string } }>;
+    };
+    expect(restoredDashboard.projects).toEqual([
+      expect.objectContaining({ id: 'P-1', git: { status: 'missing-directory' } }),
+    ]);
+  });
+
   it('the_planning_actions_and_the_mcp_route_drive_a_session', async () => {
     await action({ type: 'create', on: 'project', body: { name: 'alpha' } });
 

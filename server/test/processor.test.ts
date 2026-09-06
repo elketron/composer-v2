@@ -168,9 +168,62 @@ describe('project commands', () => {
     });
   });
 
+  it('archives_and_restores_a_project_without_removing_its_state', async () => {
+    await processor.execute(undefined, { type: 'requestProjectCreate', name: 'alpha' });
+    await processor.execute('P-1', {
+      type: 'requestCardCreate',
+      card: blankCard('P-1', 'coding', 'kept'),
+    });
+
+    const archived = await processor.execute('P-1', {
+      type: 'requestProjectArchive',
+      projectId: 'P-1',
+    });
+
+    expect(archived).toEqual({ ok: true });
+    expect(bus.state.projects.get('P-1')?.archivedAt).toBeTruthy();
+    expect(bus.state.byProject.get('P-1')?.cards.has('T-1')).toBe(true);
+    expect(recorded.at(-1)?.eventType).toBe('projectArchived');
+
+    const mutation = await processor.execute('P-1', {
+      type: 'requestCardCreate',
+      card: blankCard('P-1', 'coding', 'hidden mutation'),
+    });
+    expect(mutation).toEqual({
+      ok: false,
+      rejection: { code: 'invalidCommand', message: 'Project P-1 is archived' },
+    });
+
+    const restored = await processor.execute('P-1', {
+      type: 'requestProjectRestore',
+      projectId: 'P-1',
+    });
+    expect(restored).toEqual({ ok: true });
+    expect(bus.state.projects.get('P-1')?.archivedAt).toBeUndefined();
+    expect(bus.state.byProject.get('P-1')?.cards.has('T-1')).toBe(true);
+    expect(recorded.at(-1)?.eventType).toBe('projectRestored');
+  });
+
+  it('refuses_to_archive_a_project_with_an_active_pipeline_run', async () => {
+    await processor.execute(undefined, { type: 'requestProjectCreate', name: 'alpha' });
+    await bus.publish('P-1', 'pipelineRunStarted', { cardId: 'T-1', pipelineId: 'PL-1' });
+
+    const result = await processor.execute('P-1', {
+      type: 'requestProjectArchive',
+      projectId: 'P-1',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      rejection: { code: 'invalidCommand', message: 'Project P-1 has an active pipeline run' },
+    });
+    expect(bus.state.projects.get('P-1')?.archivedAt).toBeUndefined();
+  });
+
   it('the_snapshot_replays_into_equal_state', async () => {
     await processor.execute(undefined, { type: 'requestProjectCreate', name: 'alpha' });
     await processor.execute(undefined, { type: 'requestProjectCreate', name: 'beta', directory: dir });
+    await processor.execute('P-2', { type: 'requestProjectArchive', projectId: 'P-2' });
 
     const snapshot = snapshotEvents(bus.state);
     const replayed = newState();

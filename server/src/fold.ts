@@ -8,6 +8,7 @@ import { isLaneValid, subStateFor } from './wire/models.js';
 import type {
   ChatMessage,
   Pipeline,
+  PipelineRunStatus,
   PlanningSession,
   Project,
   Stage,
@@ -21,6 +22,14 @@ export interface PipelineRunProgress {
   stepKind?: 'agent' | 'command' | 'human';
 }
 
+export interface LatestPipelineRun {
+  pipelineId: string;
+  status: PipelineRunStatus;
+  startedAt: string;
+  endedAt?: string;
+  error?: string;
+}
+
 export interface ProjectState {
   projectId: string;
   cards: Map<string, CardState>;
@@ -30,6 +39,7 @@ export interface ProjectState {
   pipelines: Map<string, Pipeline>;
   deletedPipelines: Set<string>;
   pipelineRuns: Map<string, PipelineRunProgress>;
+  latestRuns: Map<string, LatestPipelineRun>;
 }
 
 export type TranscriptEntryState =
@@ -101,6 +111,7 @@ function projectStateOf(state: State, projectId: string): ProjectState {
       pipelines: new Map(),
       deletedPipelines: new Set(),
       pipelineRuns: new Map(),
+      latestRuns: new Map(),
     };
     state.byProject.set(projectId, project);
   }
@@ -131,6 +142,18 @@ export function apply(state: State, envelope: EventEnvelope): void {
     }
     case 'projectActivated': {
       // Active tab is UI state; the event exists for other subscribers.
+      break;
+    }
+    case 'projectArchived': {
+      const body = envelope.body as EventBodyMap['projectArchived'];
+      const project = state.projects.get(body.projectId);
+      if (project) project.archivedAt = body.archivedAt;
+      break;
+    }
+    case 'projectRestored': {
+      const body = envelope.body as EventBodyMap['projectRestored'];
+      const project = state.projects.get(body.projectId);
+      if (project) delete project.archivedAt;
       break;
     }
     case 'cardCreated': {
@@ -263,9 +286,15 @@ export function apply(state: State, envelope: EventEnvelope): void {
     }
     case 'pipelineRunStarted': {
       const body = envelope.body as EventBodyMap['pipelineRunStarted'];
-      projectStateOf(state, projectId).pipelineRuns.set(body.cardId, {
+      const project = projectStateOf(state, projectId);
+      project.pipelineRuns.set(body.cardId, {
         pipelineId: body.pipelineId,
         status: 'running',
+      });
+      project.latestRuns.set(body.cardId, {
+        pipelineId: body.pipelineId,
+        status: 'running',
+        startedAt: envelope.occurredAt,
       });
       break;
     }
@@ -277,6 +306,8 @@ export function apply(state: State, envelope: EventEnvelope): void {
       run.stepKind = body.kind;
       // Only a gate waits; an agent or command step runs.
       run.status = body.kind === 'human' ? 'waiting' : 'running';
+      const latest = projectStateOf(state, projectId).latestRuns.get(body.cardId);
+      if (latest) latest.status = run.status;
       break;
     }
     case 'pipelineStepFinished': {
@@ -295,13 +326,24 @@ export function apply(state: State, envelope: EventEnvelope): void {
     }
     case 'pipelineRunEnded': {
       const body = envelope.body as EventBodyMap['pipelineRunEnded'];
-      projectStateOf(state, projectId).pipelineRuns.delete(body.cardId);
+      const project = projectStateOf(state, projectId);
+      const previous = project.latestRuns.get(body.cardId);
+      project.latestRuns.set(body.cardId, {
+        pipelineId: body.pipelineId,
+        status: body.status,
+        startedAt: previous?.startedAt ?? envelope.occurredAt,
+        endedAt: envelope.occurredAt,
+        ...(body.error !== undefined ? { error: body.error } : {}),
+      });
+      project.pipelineRuns.delete(body.cardId);
       break;
     }
     case 'pipelineGateResponded': {
       const body = envelope.body as EventBodyMap['pipelineGateResponded'];
       const run = projectStateOf(state, projectId).pipelineRuns.get(body.cardId);
       if (run) run.status = 'running';
+      const latest = projectStateOf(state, projectId).latestRuns.get(body.cardId);
+      if (latest) latest.status = 'running';
       break;
     }
 

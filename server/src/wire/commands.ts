@@ -15,6 +15,8 @@ export type Command =
   | { type: 'requestProjectCreate'; name: string; directory?: string }
   | { type: 'requestProjectSetDirectory'; projectId: string; directory: string }
   | { type: 'requestProjectActivate'; projectId: string }
+  | { type: 'requestProjectArchive'; projectId: string }
+  | { type: 'requestProjectRestore'; projectId: string }
   | { type: 'requestCardCreate'; card: Card }
   | { type: 'requestCardsCreate'; cards: Card[] }
   | { type: 'requestCardMove'; cardId: string; toLane: Stage; override: boolean; comment?: string }

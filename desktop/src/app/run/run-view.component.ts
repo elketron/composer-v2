@@ -1,16 +1,16 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ElementRef, viewChild } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { LucideAngularModule, ArrowLeft, Bot, Square, Wrench } from 'lucide-angular';
 import { interval } from 'rxjs';
 
-import { AgePipe } from '../core/age.pipe';
 import { RunProgress } from '../core/models/pipeline.models';
 import { Card } from '../core/models/board.models';
 import { RunTranscriptEntry } from '../pipelines/pipeline.service';
 import { PipelineService, RunOutcome } from '../pipelines/pipeline.service';
 import { BoardService } from '../board/board.service';
+import { ShellService } from '../shell/shell.service';
 
 /**
  * The run view (design mock 2026-09-05): a full page for one card's
@@ -22,13 +22,15 @@ import { BoardService } from '../board/board.service';
 @Component({
   selector: 'app-run-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, LucideAngularModule, AgePipe],
+  imports: [LucideAngularModule],
   templateUrl: './run-view.component.html',
   styleUrl: './run-view.component.scss',
 })
 export class RunViewComponent {
   private readonly board = inject(BoardService);
   private readonly pipelines = inject(PipelineService);
+  private readonly router = inject(Router);
+  private readonly shell = inject(ShellService);
 
   /** The route param (also set directly in specs). */
   readonly cardId = input.required<string>();
@@ -124,6 +126,8 @@ export class RunViewComponent {
 
   protected back(): void {
     this.board.openCard(this.cardId());
+    const projectId = this.shell.activeTabId();
+    if (projectId) void this.router.navigate(['/projects', projectId, 'coding', 'board']);
   }
 
   protected toolArgs(args: unknown): string {

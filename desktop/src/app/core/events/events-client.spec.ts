@@ -142,6 +142,14 @@ describe('EventsClient', () => {
       projectId: 'P-1',
       requestPipelineGateRespond: { cardId: 'T-1', approved: true, comment: 'ship it' },
     });
+    await client.publish({
+      projectId: 'P-1',
+      requestProjectArchive: { projectId: 'P-1' },
+    });
+    await client.publish({
+      projectId: 'P-1',
+      requestProjectRestore: { projectId: 'P-1' },
+    });
 
     expect(posted).toEqual([
       {
@@ -177,6 +185,19 @@ describe('EventsClient', () => {
           on: 'pipelineGate',
           projectId: 'P-1',
           body: { cardId: 'T-1', approved: true, comment: 'ship it' },
+        },
+      },
+      {
+        path: 'action',
+        body: { type: 'delete', on: 'project', projectId: 'P-1', body: { id: 'P-1' } },
+      },
+      {
+        path: 'action',
+        body: {
+          type: 'update',
+          on: 'project',
+          projectId: 'P-1',
+          body: { id: 'P-1', archived: false },
         },
       },
     ]);

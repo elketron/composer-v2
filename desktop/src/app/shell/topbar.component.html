@@ -1,49 +1,50 @@
 <header class="topbar">
-  <div class="logo" aria-hidden="true">
+  <a class="logo" routerLink="/dashboard" aria-label="projects" title="projects">
     <svg width="14" height="14" viewBox="0 0 14 14">
-      <path d="M7 0.8 L13.2 7 L7 13.2 L0.8 7 Z" fill="none" stroke="currentColor" stroke-width="1.2" />
+      <path
+        d="M7 0.8 L13.2 7 L7 13.2 L0.8 7 Z"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.2"
+      />
     </svg>
-  </div>
+  </a>
 
-  <nav class="tabs" aria-label="projects">
-    @for (tab of tabs(); track tab.id) {
+  <nav class="global-nav" aria-label="application">
+    <a routerLink="/dashboard" routerLinkActive="active">projects</a>
+    <span class="disabled" title="global assistant · planned">assistant</span>
+  </nav>
+
+  @if (inWorkspace() && activeTab(); as project) {
+    <div class="project-context">
+      <button type="button" class="project-name" (click)="openProject(project.id)">
+        {{ project.name }}
+      </button>
       <button
         type="button"
-        class="tab"
-        [class.active]="tab.id === activeTabId()"
-        (click)="activate(tab.id)"
+        class="directory"
+        [attr.aria-label]="
+          (project.directory ? 'change directory for ' : 'link directory for ') + project.name
+        "
+        [title]="project.directory || 'link directory'"
+        (click)="linkDirectory(project.id, $event)"
       >
-        <span class="name">{{ tab.name }}</span>
-        <span
-          class="directory"
-          role="button"
-          [attr.aria-label]="(tab.directory ? 'change directory for ' : 'link directory for ') + tab.name"
-          [title]="tab.directory || 'link directory'"
-          (click)="linkDirectory(tab.id, $event)"
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M1.5 3.5h5l1.5 2h6.5v7h-13z" fill="none" stroke="currentColor" />
-          </svg>
-        </span>
-        <span
-          class="close"
-          role="button"
-          [attr.aria-label]="'close ' + tab.name"
-          (click)="close(tab.id, $event)"
-          >×</span
-        >
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M1.5 3.5h5l1.5 2h6.5v7h-13z" fill="none" stroke="currentColor" />
+        </svg>
       </button>
-    }
-    <button type="button" class="add" title="new project" aria-label="new project" (click)="add()">
-      +
-    </button>
-  </nav>
+    </div>
+  }
 
   <div class="breadcrumb">{{ breadcrumb() }}</div>
 
   <div class="spacer"></div>
 
-  <div class="badges">
+  <div class="actions">
+    <button type="button" class="add" title="new project" aria-label="new project" (click)="add()">
+      +
+    </button>
+    <a class="settings-link" routerLink="/settings" routerLinkActive="active">settings</a>
     <span class="badge model">{{ model() }}</span>
   </div>
 </header>

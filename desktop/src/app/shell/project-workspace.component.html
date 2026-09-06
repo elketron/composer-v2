@@ -1,0 +1,19 @@
+<section class="workspace">
+  <nav class="workflow-tabs" aria-label="project workflows">
+    <a
+      class="workflow-tab"
+      [routerLink]="['/projects', projectId(), 'coding']"
+      routerLinkActive="active"
+      [routerLinkActiveOptions]="{ exact: false }"
+    >
+      coding
+    </a>
+  </nav>
+
+  <div class="workspace-body">
+    <app-left-rail [projectId]="projectId()" />
+    <section class="workspace-view">
+      <router-outlet />
+    </section>
+  </div>
+</section>

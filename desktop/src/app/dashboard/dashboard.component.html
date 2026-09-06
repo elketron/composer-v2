@@ -1,0 +1,144 @@
+<section class="dashboard">
+  <header class="dashboard-head">
+    <div>
+      <span class="eyebrow">workspace</span>
+      <h1>Projects</h1>
+      <p>Open a coding workflow or start something new.</p>
+    </div>
+    <div class="head-actions">
+      @if (archivedProjects().length > 0) {
+        <button type="button" class="archive-toggle" (click)="showArchived.set(!showArchived())">
+          {{ showArchived() ? 'active projects' : 'archive · ' + archivedProjects().length }}
+        </button>
+      }
+      <button type="button" class="new-project" (click)="createProject()">
+        <lucide-icon [img]="icons.plus" [size]="14" />
+        new project
+      </button>
+      <button
+        type="button"
+        class="refresh"
+        [disabled]="healthLoading()"
+        aria-label="refresh project health"
+        title="refresh project health"
+        (click)="refresh()"
+      >
+        <lucide-icon [img]="icons.refresh" [size]="14" [class.pulse]="healthLoading()" />
+      </button>
+    </div>
+  </header>
+
+  @if (error(); as message) {
+    <p class="error" role="alert">{{ message }}</p>
+  }
+  @if (healthError(); as message) {
+    <p class="error health-error" role="alert">{{ message }}</p>
+  }
+
+  @if (!showArchived() && actionItems().length > 0) {
+    <section class="action-section">
+      <div class="section-head">
+        <span>Action required</span>
+        <span>{{ actionItems().length }}</span>
+      </div>
+      <div class="action-list">
+        @for (item of actionItems(); track item.kind + '-' + item.project.id + '-' + item.cardId) {
+          <button type="button" class="action-item {{ item.kind }}" (click)="openRun(item.project.id, item.cardId)">
+            <span class="action-kind">{{ item.kind === 'approval' ? 'approval' : 'failed' }}</span>
+            <strong>{{ item.cardTitle }}</strong>
+            <span>{{ item.project.name }}</span>
+          </button>
+        }
+      </div>
+    </section>
+  }
+
+  @if (showArchived()) {
+    <div class="section-head">
+      <span>Archived projects</span>
+      <span>{{ archivedProjects().length }}</span>
+    </div>
+    <div class="project-grid">
+      @for (project of archivedProjects(); track project.id) {
+        <article class="project-card archived">
+          <span class="project-icon">
+            <lucide-icon [img]="icons.project" [size]="18" [strokeWidth]="1.4" />
+          </span>
+          <span class="project-copy">
+            <strong>{{ project.name }}</strong>
+            <span class="directory">{{ project.directory || 'directory not linked' }}</span>
+          </span>
+          <button
+            type="button"
+            class="card-action restore"
+            [disabled]="busyIds().has(project.id)"
+            [attr.aria-label]="'restore ' + project.name"
+            title="restore project"
+            (click)="restoreProject(project.id)"
+          >
+            <lucide-icon [img]="icons.restore" [size]="14" />
+          </button>
+        </article>
+      }
+    </div>
+  } @else if (projects().length === 0) {
+    <button type="button" class="empty" (click)="createProject()">
+      <lucide-icon [img]="icons.project" [size]="24" [strokeWidth]="1.25" />
+      <strong>No projects yet</strong>
+      <span>Choose a directory to create your first coding workspace.</span>
+    </button>
+  } @else {
+    <div class="section-head">
+      <span>All projects</span>
+      <span>{{ projects().length }}</span>
+    </div>
+    <div class="project-grid">
+      @for (project of projects(); track project.id) {
+        <article class="project-card">
+          <span class="project-icon">
+            <lucide-icon [img]="icons.project" [size]="18" [strokeWidth]="1.4" />
+          </span>
+          <button type="button" class="project-open" (click)="openProject(project.id)">
+            <strong>{{ project.name }}</strong>
+            <span class="directory">{{ project.directory || 'directory not linked' }}</span>
+            @if (healthFor(project.id); as health) {
+              <span class="health-line">
+                @if (health.git.branch) {
+                  <span>{{ health.git.branch }}</span>
+                }
+                <span class="git {{ health.git.status }}">{{ health.git.status }}</span>
+                @if (health.waitingApprovals.length > 0) {
+                  <span class="warn">{{ health.waitingApprovals.length }} waiting</span>
+                }
+                @if (health.failedRuns.length > 0) {
+                  <span class="failed">{{ health.failedRuns.length }} failed</span>
+                }
+                @if (health.runningRuns > 0) {
+                  <span class="running">{{ health.runningRuns }} running</span>
+                }
+              </span>
+              @if (health.git.latestCommit; as commit) {
+                <span class="commit" [title]="commit.hash">
+                  {{ commit.subject }} · {{ commit.at | age }}
+                </span>
+              }
+            } @else if (healthLoading()) {
+              <span class="health-line">checking repository…</span>
+            }
+          </button>
+          <button
+            type="button"
+            class="card-action"
+            [disabled]="busyIds().has(project.id)"
+            [attr.aria-label]="'archive ' + project.name"
+            title="archive project"
+            (click)="archiveProject(project.id, project.name)"
+          >
+            <lucide-icon [img]="icons.archive" [size]="14" />
+          </button>
+          <span class="workflow">coding</span>
+        </article>
+      }
+    </div>
+  }
+</section>

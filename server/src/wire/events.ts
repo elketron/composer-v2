@@ -112,6 +112,16 @@ export interface ProjectActivated {
   projectId: string;
 }
 
+export interface ProjectArchived {
+  projectId: string;
+  archivedAt: string;
+}
+
+export interface ProjectRestored {
+  projectId: string;
+  restoredAt: string;
+}
+
 export interface AgentSessionStarted {
   cardId: string;
   sessionId: string;
@@ -216,6 +226,8 @@ export interface EventBodyMap {
   projectCreated: ProjectCreated;
   projectDirectoryChanged: ProjectDirectoryChanged;
   projectActivated: ProjectActivated;
+  projectArchived: ProjectArchived;
+  projectRestored: ProjectRestored;
   agentSessionStarted: AgentSessionStarted;
   agentSessionEnded: AgentSessionEnded;
   agentToolCall: AgentToolCall;
@@ -253,6 +265,8 @@ export const EVENT_NAMES = Object.keys({
   projectCreated: null,
   projectDirectoryChanged: null,
   projectActivated: null,
+  projectArchived: null,
+  projectRestored: null,
   agentSessionStarted: null,
   agentSessionEnded: null,
   agentToolCall: null,
