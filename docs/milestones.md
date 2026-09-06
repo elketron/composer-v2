@@ -521,6 +521,29 @@ Second slice of Phase 5 (cross-application UX refinement and command palette):
   in the Electron renderer (open, filter "plan", Enter lands on the plan
   view, no console errors).
 
+## S13 — Shared async-state language  ·  done (2026-09-06)
+
+Third Phase 5 slice: one visual voice for empty and failure states, and a
+stale-copy sweep.
+
+- **Global state classes** (`styles.scss`): `.state-empty` (centered muted
+  pane with an accented `.state-label`, plus an `inline` variant for hints
+  inside busy panes) and `.state-error` (left-bordered alert). Seven
+  per-component duplicates removed; the run view's full-pane state and the
+  dashboard's tight-under-header spacing keep local overrides. Card-panel's
+  gate-rejection comment deliberately keeps its own style — it is quoted
+  content, not an alert.
+- **Migrated views**: plan chat/document empties, run view panes and
+  unknown-card state, coding sessions and pipeline editor fallbacks and
+  validation/rejection alerts, settings and card-creator errors, dashboard
+  error + amber health alert.
+- **Stale copy**: the left rail's disabled stubs no longer tease a milestone
+  ("lands in M2" → "not available yet"); the component docblock no longer
+  cites the retired mvp/design docs.
+- **Tests**: unchanged behavior — pipeline-editor validation assertions
+  moved to the shared class; verified live (run view's unknown-card state,
+  coding tab's inline empty) with no console errors.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

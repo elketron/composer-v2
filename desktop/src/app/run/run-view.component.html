@@ -67,7 +67,7 @@
               }
             }
           } @empty {
-            <p class="pane-empty">the agent's messages and tool calls stream here</p>
+            <p class="state-empty inline">the agent's messages and tool calls stream here</p>
           }
         </div>
       </section>
@@ -119,7 +119,7 @@
                 </div>
               </div>
             } @else {
-              <p class="pane-empty">no file changes yet</p>
+              <p class="state-empty inline">no file changes yet</p>
             }
           </div>
         </div>
@@ -134,14 +134,14 @@
           @for (line of buildOutput(); track $index) {
             <pre class="output-line">{{ line.line }}</pre>
           } @empty {
-            <p class="pane-empty">command steps' output streams here</p>
+            <p class="state-empty inline">command steps' output streams here</p>
           }
         </div>
       </section>
     </div>
   } @else {
-    <div class="empty">
-      <span class="label">run</span>
+    <div class="state-empty">
+      <span class="state-label">run</span>
       <span>no card "{{ cardId() }}" on this project's board</span>
     </div>
   }

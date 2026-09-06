@@ -16,7 +16,7 @@
   </header>
 
   @if (projectId() === null) {
-    <p class="empty">open a project first</p>
+    <p class="state-empty inline">open a project first</p>
   } @else if (editing(); as draft) {
     <!-- The step builder -->
     <section class="form">
@@ -123,9 +123,9 @@
       </div>
 
       @if (showError() && validationError(); as invalid) {
-        <p class="rejection" role="alert">{{ invalid }}</p>
+        <p class="state-error" role="alert">{{ invalid }}</p>
       } @else if (draft.rejection; as rejection) {
-        <p class="rejection" role="alert">{{ rejection }}</p>
+        <p class="state-error" role="alert">{{ rejection }}</p>
       }
 
       <footer class="form-actions">
@@ -143,7 +143,7 @@
     <!-- The list -->
     <section class="list">
       @if (list().length === 0) {
-        <p class="empty">no pipelines yet — author the first one</p>
+        <p class="state-empty inline">no pipelines yet — author the first one</p>
       }
       @for (pipeline of list(); track pipeline.id) {
         <article class="row">

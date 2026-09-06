@@ -22,9 +22,9 @@ interface RailEntry {
 }
 
 /**
- * Left icon rail (design.md §2). Per the MVP scope (docs/mvp.md), only Board,
- * Plan and Settings are wired; Agent, Canvas, Library and Account render as
- * disabled stubs.
+ * Left icon rail: the coding workflow's views plus the global destinations
+ * (projects, settings). Entries without a route render as disabled stubs
+ * for destinations the product plan has not scheduled yet.
  */
 @Component({
   selector: 'app-left-rail',

@@ -40,11 +40,6 @@
   }
 }
 
-.empty {
-  color: var(--text-faint);
-  font-size: 12px;
-}
-
 .form,
 .list {
   display: flex;
@@ -206,12 +201,6 @@
   &:hover {
     color: var(--text);
   }
-}
-
-.rejection {
-  margin: 0;
-  color: var(--err);
-  font-size: 12px;
 }
 
 .form-actions {

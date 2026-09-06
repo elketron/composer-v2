@@ -39,7 +39,7 @@ describe('LeftRailComponent', () => {
     ];
     const labels = disabled.map((el) => el.getAttribute('title'));
 
-    expect(labels).toEqual(['canvas · lands in M2', 'account · lands in M2']);
+    expect(labels).toEqual(['canvas · not available yet', 'account · not available yet']);
     for (const el of disabled) {
       expect(el.getAttribute('aria-disabled')).toBe('true');
     }

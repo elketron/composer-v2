@@ -135,13 +135,6 @@
   min-height: 0;
 }
 
-.pane-empty {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-faint);
-  font-style: italic;
-}
-
 .entry {
   margin: 0 0 10px;
   font-size: 14px;
@@ -286,15 +279,15 @@
   }
 }
 
-.empty {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: center;
-  justify-content: center;
+// The full-pane "unknown card" state uses the global .state-empty; the
+// pane's centering comes from the pane itself.
+.state-empty {
   flex: 1;
+  justify-content: center;
+  gap: 4px;
+  padding-top: 0;
 
-  .label {
+  .state-label {
     font-size: 12px;
     letter-spacing: 0.6px;
     color: var(--text-faint);

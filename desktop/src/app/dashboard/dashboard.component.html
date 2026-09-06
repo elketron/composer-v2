@@ -29,10 +29,10 @@
   </header>
 
   @if (error(); as message) {
-    <p class="error" role="alert">{{ message }}</p>
+    <p class="state-error" role="alert">{{ message }}</p>
   }
   @if (healthError(); as message) {
-    <p class="error health-error" role="alert">{{ message }}</p>
+    <p class="state-error health-error" role="alert">{{ message }}</p>
   }
 
   @if (!showArchived() && actionItems().length > 0) {

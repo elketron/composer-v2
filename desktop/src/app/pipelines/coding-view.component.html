@@ -5,9 +5,9 @@
   </header>
 
   @if (projectId() === null) {
-    <p class="empty">open a project first</p>
+    <p class="state-empty inline">open a project first</p>
   } @else if (sessions().length === 0) {
-    <p class="empty">no agent sessions yet — run a pipeline on a card</p>
+    <p class="state-empty inline">no agent sessions yet — run a pipeline on a card</p>
   } @else {
     <section class="list">
       @for (session of sessions(); track session.sessionId) {

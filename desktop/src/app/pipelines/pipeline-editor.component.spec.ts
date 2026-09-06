@@ -107,13 +107,13 @@ describe('PipelineEditorComponent', () => {
 
     // A pristine draft shows no error styling and no message.
     expect(el.querySelector('.step.invalid')).toBeNull();
-    expect(el.querySelector('.rejection')).toBeNull();
+    expect(el.querySelector('.state-error')).toBeNull();
 
     // The name is missing: the first validation error wins.
     el.querySelector<HTMLButtonElement>('.save')!.click();
     await fixture.whenStable();
 
-    expect(el.querySelector('.rejection')?.textContent).toContain('Pipeline name is required');
+    expect(el.querySelector('.state-error')?.textContent).toContain('Pipeline name is required');
     expect(el.querySelector('.step.invalid')).not.toBeNull();
 
     // Fill the name and the step id; the missing instructions surface next.
@@ -127,7 +127,7 @@ describe('PipelineEditorComponent', () => {
     el.querySelector<HTMLButtonElement>('.save')!.click();
     await fixture.whenStable();
 
-    expect(el.querySelector('.rejection')?.textContent).toContain('an agent step needs instructions');
+    expect(el.querySelector('.state-error')?.textContent).toContain('an agent step needs instructions');
     expect(events.lastCommand('requestPipelineSave')).toBeUndefined();
   });
 
