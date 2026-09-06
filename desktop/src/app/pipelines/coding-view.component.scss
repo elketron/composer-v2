@@ -37,9 +37,21 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 12px;
+  color: inherit;
+  text-decoration: none;
 
   &.failed {
     border-color: color-mix(in srgb, var(--err) 45%, transparent);
+  }
+}
+
+// A linked row (session with a card) invites the run view; an inert
+// article (no card) keeps the plain look.
+a.row {
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
   }
 }
 
@@ -94,6 +106,11 @@
   &.failed {
     color: var(--err);
   }
+}
+
+.age {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 
 .error {

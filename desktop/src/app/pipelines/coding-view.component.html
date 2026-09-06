@@ -11,16 +11,15 @@
   } @else {
     <section class="list">
       @for (session of sessions(); track session.sessionId) {
-        <article class="row" [class.failed]="session.status === 'failed'">
-          <span class="dot" [class.pulse]="session.status === 'running'"></span>
-          <span class="session-id">{{ session.sessionId }}</span>
-          <span class="card">{{ cardLabel(session.cardId) }}</span>
-          <span class="kind">composer-{{ session.agentKind }}</span>
-          <span class="status {{ session.status }}">{{ session.status }}</span>
-          @if (session.error; as error) {
-            <span class="error" [title]="error">{{ error }}</span>
-          }
-        </article>
+        @if (runLink(session.cardId); as link) {
+          <a class="row" [class.failed]="session.status === 'failed'" [routerLink]="link">
+            <ng-container *ngTemplateOutlet="sessionRow; context: { $implicit: session }" />
+          </a>
+        } @else {
+          <article class="row" [class.failed]="session.status === 'failed'">
+            <ng-container *ngTemplateOutlet="sessionRow; context: { $implicit: session }" />
+          </article>
+        }
       }
     </section>
     <p class="attach">
@@ -30,3 +29,15 @@
     </p>
   }
 </div>
+
+<ng-template #sessionRow let-session>
+  <span class="dot" [class.pulse]="session.status === 'running'"></span>
+  <span class="session-id">{{ session.sessionId }}</span>
+  <span class="card">{{ cardLabel(session.cardId) }}</span>
+  <span class="kind">composer-{{ session.agentKind }}</span>
+  <span class="status {{ session.status }}">{{ session.status }}</span>
+  <span class="age">{{ session.startedAt | age }}</span>
+  @if (session.error; as error) {
+    <span class="error" [title]="error">{{ error }}</span>
+  }
+</ng-template>

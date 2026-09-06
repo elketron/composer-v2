@@ -566,6 +566,19 @@ Continuing Phase 5's space-usage and readability items:
   link); plan spec covers tab rendering, the chat-default, and pane gating.
   Verified live (split panel at 1771px, tab switch at 860px).
 
+## S15 — Coding session history  ·  done (2026-09-06)
+
+The coding tab becomes the project's session history with direct run links:
+
+- **Linked rows**: each agent session row links to its card's run view
+  (`routerLink`, keyboard-focusable); sessions without a card render as
+  inert articles. A relative age (started) joins the row; failure rows keep
+  their error detail.
+- **First spec** for the view (S4 deferred it): empty state, newest-first
+  ordering with status/failure detail, and the linked-vs-inert row split
+  with navigation. Verified live: clicking a session lands on that card's
+  run view.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).
