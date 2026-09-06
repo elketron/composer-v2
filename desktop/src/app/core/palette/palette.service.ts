@@ -35,6 +35,9 @@ export class PaletteService {
   readonly query = signal('');
   readonly activeIndex = signal(0);
 
+  /** The element to hand focus back to when the palette closes. */
+  private opener: HTMLElement | null = null;
+
   readonly items = computed<readonly PaletteItem[]>(() => {
     const items: PaletteItem[] = [
       {
@@ -127,13 +130,21 @@ export class PaletteService {
   });
 
   openPalette(): void {
+    this.opener =
+      typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     this.query.set('');
     this.activeIndex.set(0);
     this.isOpen.set(true);
   }
 
   close(): void {
+    if (!this.isOpen()) return;
     this.isOpen.set(false);
+    // Focus returns to the trigger (e.g. the topbar button), not <body>.
+    this.opener?.focus();
+    this.opener = null;
   }
 
   toggle(): void {

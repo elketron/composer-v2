@@ -82,4 +82,24 @@ describe('ConfirmService + ConfirmDialogComponent', () => {
     confirm.resolve(true);
     expect(await second).toBe(true);
   });
+
+  it('restores focus to the trigger when the dialog settles', async () => {
+    const fixture = TestBed.createComponent(ConfirmDialogComponent);
+    await fixture.whenStable();
+
+    const trigger = document.createElement('button');
+    document.body.appendChild(trigger);
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    const decided = confirm.confirm({ title: 'Archive?' });
+    await fixture.whenStable();
+    // Focus moved into the dialog.
+    expect(document.activeElement).not.toBe(trigger);
+
+    confirm.resolve(true);
+    expect(await decided).toBe(true);
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
 });

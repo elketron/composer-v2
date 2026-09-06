@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
@@ -41,6 +41,14 @@ export class CardPanelComponent {
 
   readonly card = input.required<Card>();
 
+  private readonly backButton = viewChild<ElementRef<HTMLButtonElement>>('backButton');
+
+  /** The card (or other trigger) that had focus when the panel opened. */
+  private readonly opener: HTMLElement | null =
+    typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
   protected readonly meta = computed(() => this.card().meta);
   protected readonly checklist = computed(() => this.card().checklist());
   protected readonly blockers = computed(() => this.card().blockers(this.board.cardsById()));
@@ -48,6 +56,15 @@ export class CardPanelComponent {
   protected readonly moveTargets = computed(() =>
     this.card().lanes.filter((lane) => lane !== this.card().stage),
   );
+
+  constructor() {
+    // View effects run after the template pass: focus lands in the panel
+    // (the back button) on open and when switching to a related card.
+    effect(() => {
+      if (this.card() === undefined) return;
+      this.backButton()?.nativeElement.focus();
+    });
+  }
 
   // ---- Pipeline run (S4) ----
 
@@ -121,6 +138,8 @@ export class CardPanelComponent {
 
   protected close(): void {
     this.board.closeCard();
+    // Focus returns to the card that opened the panel, not <body>.
+    this.opener?.focus();
   }
 
   protected changeType(type: CardType): void {

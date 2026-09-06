@@ -108,19 +108,25 @@ describe('BoardComponent', () => {
     await selectType(fixture, 'coding');
     const el = fixture.nativeElement as HTMLElement;
 
-    el.querySelector<HTMLElement>('app-board-card')!.click();
+    const card = el.querySelector<HTMLElement>('app-board-card')!;
+    card.focus();
+    card.click();
     await fixture.whenStable();
 
     expect(el.querySelector('app-card-panel')).toBeTruthy();
     // The panel sits beside the board; the columns stay visible.
     expect(el.querySelector('.columns')).toBeTruthy();
     expect(el.textContent).toContain('T-2'); // first card of the new column
+    // Focus moved into the panel (the back button).
+    expect(document.activeElement).toBe(el.querySelector('.panel-header .back'));
 
     el.querySelector<HTMLButtonElement>('.panel-header .back')!.click();
     await fixture.whenStable();
 
     expect(el.querySelector('app-card-panel')).toBeNull();
     expect(el.querySelector('.columns')).toBeTruthy();
+    // Focus returned to the card that opened the panel.
+    expect(document.activeElement).toBe(card);
   });
 
   it('shows the rejection comment bar after an approval -> implement-lane drag', async () => {

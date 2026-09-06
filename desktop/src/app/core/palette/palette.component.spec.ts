@@ -103,4 +103,25 @@ describe('PaletteComponent', () => {
     await fixture.whenStable();
     expect(palette.isOpen()).toBe(false);
   });
+
+  it('restores focus to the trigger when the palette closes', async () => {
+    const fixture = TestBed.createComponent(PaletteComponent);
+    const palette = TestBed.inject(PaletteService);
+    await fixture.whenStable();
+
+    const trigger = document.createElement('button');
+    document.body.appendChild(trigger);
+    trigger.focus();
+
+    palette.openPalette();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(
+      fixture.nativeElement.querySelector('.palette input'),
+    );
+
+    palette.close();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
 });

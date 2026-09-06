@@ -579,6 +579,23 @@ The coding tab becomes the project's session history with direct run links:
   with navigation. Verified live: clicking a session lands on that card's
   run view.
 
+## S16 — Focus management  ·  done (2026-09-06)
+
+The last Phase 5 item: keyboard users are never dropped on `<body>` by a
+transient surface.
+
+- **Restoration on close**: the confirm dialog returns focus to its
+  trigger on settle (accept, cancel, backdrop, Escape); the palette returns
+  focus to its trigger (topbar button) on close; the card panel focuses its
+  back button on open (and when switching to a related card) and returns
+  focus to the opener card on close.
+- **Board cards were already keyboard-activatable** (tabindex, role,
+  Enter/Space via click) — this slice closes the focus-handoff gaps around
+  them.
+- **Tests**: focus restoration asserted in the confirm, palette, and board
+  specs; verified live (dashboard archive → dialog → Escape → focus back on
+  the archive button).
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).
