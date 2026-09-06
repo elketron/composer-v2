@@ -596,6 +596,27 @@ transient surface.
   specs; verified live (dashboard archive → dialog → Escape → focus back on
   the archive button).
 
+## S17 — Board restructure: work-state columns  ·  done (2026-09-06)
+
+The board no longer rows by card type — design/docs swimlanes read as states
+they are not, and the board was meant to picture work moving through agents:
+
+- **Flat columns, no rows**: `backlog | coder | tester | reviewer | security
+  | approval | done` — the stage machine projected for viewing, each column
+  labeled by the worker who owns that state. The type-named implement stages
+  (coding/design/docs) collapse into the coder column; a drop lands on the
+  card's own implement stage, so the underlying Stage model, routing,
+  sub-state, and wire are unchanged.
+- **Type is a filter**: the type selector (all/coding/design/docs) filters
+  the one board instead of switching to per-type column layouts; the per-type
+  board component is gone.
+- **Automation toggles** sit on the agent-worked columns (coder, tester,
+  reviewer, security); the coder column's toggle reflects and drives all
+  three type-implement stages.
+- **Tests**: the SwimlaneRow suite is replaced by a Column suite (order,
+  implement collapse, per-type drop stage, agent-owned flags) and the board
+  spec now covers the column set, filter behavior, and card placement.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

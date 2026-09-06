@@ -1,0 +1,38 @@
+<div class="columns" cdkDropListGroup>
+  @for (column of columns; track column) {
+    <section class="board-column">
+      <header class="col-head">
+        <span class="col-label label">{{ columnLabel(column) }}</span>
+        <span class="count">{{ cardsIn(column).length }}</span>
+        @if (agentOwned(column)) {
+          <button
+            class="auto"
+            [class.on]="automationOn(column)"
+            title="agent automation for this column"
+            (click)="toggleAutomation(column)"
+          >
+            {{ automationOn(column) ? 'auto · on' : 'auto · off' }}
+          </button>
+        }
+      </header>
+
+      <div
+        class="col-body"
+        cdkDropList
+        [cdkDropListData]="column"
+        (cdkDropListDropped)="onDrop($event)"
+      >
+        @for (card of cardsIn(column); track card.id) {
+          <app-board-card
+            [card]="card"
+            [blocked]="blockedIds().has(card.id)"
+            (activated)="open($event)"
+            cdkDrag
+            [cdkDragData]="card"
+            [cdkDragDisabled]="blockedIds().has(card.id)"
+          />
+        }
+      </div>
+    </section>
+  }
+</div>

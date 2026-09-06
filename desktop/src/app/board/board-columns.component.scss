@@ -1,0 +1,66 @@
+:host {
+  display: block;
+  height: 100%;
+  overflow: auto;
+}
+
+.columns {
+  display: flex;
+  gap: 8px;
+  height: 100%;
+  padding: 8px;
+  min-width: fit-content;
+}
+
+.board-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 180px;
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 6px;
+  flex: none;
+}
+
+.col-label {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.col-head .count {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.auto {
+  margin-left: auto;
+  font: inherit;
+  font-size: 14px;
+  padding: 0 4px;
+  background: none;
+  border: 1px solid var(--border-strong);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.auto.on {
+  color: var(--run);
+  border-color: var(--run);
+}
+
+.col-body {
+  display: flex;
+  flex: 1;
+  min-height: 120px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}

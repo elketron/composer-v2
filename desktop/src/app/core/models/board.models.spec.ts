@@ -4,9 +4,9 @@ import {
   Card,
   CardData,
   CardType,
+  Column,
   Lane,
   Stage,
-  SwimlaneRow,
 } from './board.models';
 
 function card(overrides: Partial<CardData> & Pick<CardData, 'id' | 'type' | 'stage'>): Card {
@@ -192,34 +192,44 @@ describe('Assignee', () => {
   });
 });
 
-describe('SwimlaneRow', () => {
-  const rows = SwimlaneRow.all();
-  const invalidLanes = (type: CardType): Stage[] =>
-    rows
-      .find((r) => r.type === type)!
-      .cells.filter((c) => !c.valid)
-      .map((c) => c.lane);
-
-  it('has one row per type in card-type order', () => {
-    expect(rows.map((r) => r.type)).toEqual(['coding', 'design', 'docs']);
+describe('Column', () => {
+  it('shows the work states in board order', () => {
+    expect(Column.ALL).toEqual([
+      'backlog',
+      'coder',
+      'tester',
+      'reviewer',
+      'security',
+      'approval',
+      'done',
+    ]);
   });
 
-  it('gives every row the union of lanes in display order', () => {
-    for (const row of rows) {
-      expect(row.cells.map((c) => c.lane)).toEqual(Lane.ALL);
-    }
+  it('collapses the type-named implement stages into the coder column', () => {
+    expect(Column.STAGES_OF['coder']).toEqual(['coding', 'design', 'docs']);
+    expect(Column.inColumn([
+      card({ id: 'T-1', type: 'coding', stage: 'coding' }),
+      card({ id: 'T-2', type: 'design', stage: 'design' }),
+      card({ id: 'T-3', type: 'coding', stage: 'new' }),
+    ], 'coder').map((c) => c.id)).toEqual(['T-1', 'T-2']);
   });
 
-  it('dims design and docs lanes in the coding row', () => {
-    expect(invalidLanes('coding')).toEqual(['design', 'docs']);
+  it('drops into a column on the concrete stage the card routes through', () => {
+    expect(Column.dropStage('backlog', 'coding')).toBe('new');
+    expect(Column.dropStage('coder', 'coding')).toBe('coding');
+    expect(Column.dropStage('coder', 'design')).toBe('design');
+    expect(Column.dropStage('tester', 'coding')).toBe('validation');
+    expect(Column.dropStage('done', 'docs')).toBe('done');
   });
 
-  it('dims coding, docs and security in the design row', () => {
-    expect(invalidLanes('design')).toEqual(['coding', 'docs', 'security']);
-  });
-
-  it('dims coding, design and security in the docs row', () => {
-    expect(invalidLanes('docs')).toEqual(['coding', 'design', 'security']);
+  it('marks the agent-worked columns for automation toggles', () => {
+    expect(Column.isAgentOwned('coder')).toBe(true);
+    expect(Column.isAgentOwned('tester')).toBe(true);
+    expect(Column.isAgentOwned('reviewer')).toBe(true);
+    expect(Column.isAgentOwned('security')).toBe(true);
+    expect(Column.isAgentOwned('backlog')).toBe(false);
+    expect(Column.isAgentOwned('approval')).toBe(false);
+    expect(Column.isAgentOwned('done')).toBe(false);
   });
 });
 

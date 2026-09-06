@@ -12,15 +12,7 @@
         <app-card-creator (closed)="creating.set(false)" />
       }
 
-      @if (filter() === 'all') {
-        <app-board-swimlane [cards]="cards()" [blockedIds]="blockedIds()" />
-      } @else {
-        <div class="columns" cdkDropListGroup>
-          @for (lane of lanes(); track lane) {
-            <app-board-column [lane]="lane" [cards]="cardsFor(lane)" [blockedIds]="blockedIds()" />
-          }
-        </div>
-      }
+      <app-board-columns [cards]="visibleCards()" [blockedIds]="blockedIds()" />
     </div>
 
     @if (selectedCard(); as card) {

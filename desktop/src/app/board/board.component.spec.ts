@@ -48,58 +48,53 @@ describe('BoardComponent', () => {
     expect(typeTabs(fixture.nativeElement)).toEqual(['all', 'coding', 'design', 'docs']);
   });
 
-  it('defaults to the All swimlane with one row per type', async () => {
+  it('renders the agent-work columns: backlog · coder · tester · reviewer · security · approval · done', async () => {
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
 
-    expect(el.querySelectorAll('.swimlane .lane-row:not(.header-row)').length).toBe(3);
-    // Header row offers the union of all lanes.
-    expect(el.querySelectorAll('.header-row .col-label').length).toBe(9);
+    const labels = [...el.querySelectorAll('.col-head .col-label')].map((h) => h.textContent!.trim());
+    expect(labels).toEqual([
+      'backlog',
+      'coder',
+      'tester',
+      'reviewer',
+      'security',
+      'approval',
+      'done',
+    ]);
   });
 
-  it('renders dimmed cells for inapplicable lanes (layout logic covered in board.models.spec)', async () => {
+  it('the type selector filters the columns instead of switching boards', async () => {
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', stage: WireStage.STAGE_CODING });
+    seedCard(events, { id: 'T-2', title: 'Spec doc', type: 'docs' });
     const fixture = await render();
-    const rows = [
-      ...(fixture.nativeElement as HTMLElement).querySelectorAll('.swimlane .lane-row:not(.header-row)'),
-    ];
-    const dimmedCountPerRow = rows.map((row) => row.querySelectorAll('.cell.dimmed').length);
-    expect(dimmedCountPerRow).toEqual([2, 3, 3]);
-  });
+    const el = fixture.nativeElement as HTMLElement;
 
-  it('switches to the coding board with its seven lanes', async () => {
-    const fixture = await render();
+    expect(el.querySelectorAll('.board-column').length).toBe(7);
+    expect(el.textContent).toContain('T-1');
+    expect(el.textContent).toContain('T-2');
+
     await selectType(fixture, 'coding');
-    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelectorAll('.board-column').length).toBe(7); // same board…
+    expect(el.textContent).toContain('T-1');
+    expect(el.textContent).not.toContain('T-2'); // …filtered to coding cards
 
-    expect(el.querySelector('app-board-swimlane')).toBeNull();
-    const labels = [...el.querySelectorAll('.column .header .label')].map((h) =>
-      h.textContent!.trim(),
-    );
-    expect(labels).toEqual(['new', 'coding', 'validation', 'review', 'security', 'approval', 'done']);
+    await selectType(fixture, 'all');
+    expect(el.textContent).toContain('T-2');
   });
 
-  it('switches to the design board without a security lane', async () => {
-    const fixture = await render();
-    await selectType(fixture, 'design');
-    const labels = [
-      ...(fixture.nativeElement as HTMLElement).querySelectorAll('.column .header .label'),
-    ].map((h) => h.textContent!.trim());
-    expect(labels).toEqual(['new', 'design', 'validation', 'review', 'approval', 'done']);
-  });
-
-  it('renders seeded cards in their lanes', async () => {
+  it('renders seeded cards in their work columns', async () => {
     seedCard(events, { id: 'T-1', title: 'Diff overlay', stage: WireStage.STAGE_CODING });
     seedCard(events, { id: 'T-2', title: 'Grammar cache' });
     const fixture = await render();
-    await selectType(fixture, 'coding');
     const el = fixture.nativeElement as HTMLElement;
-    const columns = [...el.querySelectorAll('.column')];
+    const columns = [...el.querySelectorAll('.board-column')];
 
-    const newColumn = columns[0];
-    expect(newColumn.textContent).toContain('T-2');
-    const codingColumn = columns[1];
-    expect(codingColumn.textContent).toContain('T-1');
-    expect(codingColumn.textContent).toContain('Diff overlay');
+    const backlog = columns[0];
+    expect(backlog.textContent).toContain('T-2');
+    const coder = columns[1];
+    expect(coder.textContent).toContain('T-1');
+    expect(coder.textContent).toContain('Diff overlay');
   });
 
   it('opens the card detail panel on card click and returns on back', async () => {

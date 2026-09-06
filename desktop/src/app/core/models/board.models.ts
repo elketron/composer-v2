@@ -338,33 +338,95 @@ export class Card {
   }
 }
 
-/** One cell of the All swimlane: a lane column in a type's row. */
-export class SwimlaneCell {
-  constructor(
-    /** Whether the row's type routes through this lane; invalid cells render dimmed. */
-    readonly lane: Stage,
-    readonly valid: boolean,
-  ) {}
+/**
+ * The board's columns: the stage machine projected for viewing, labeled by
+ * the worker who owns each state. The type-named implement stages
+ * (coding/design/docs) collapse into the coder column — type is a card
+ * attribute and a filter, not a board structure. The underlying Stage per
+ * card is unchanged (routing, sub-state, wire).
+ */
+export type DisplayColumn =
+  | 'backlog'
+  | 'coder'
+  | 'tester'
+  | 'reviewer'
+  | 'security'
+  | 'approval'
+  | 'done';
+
+export class Column {
+  /** Display columns in board order. */
+  static readonly ALL: readonly DisplayColumn[] = [
+    'backlog',
+    'coder',
+    'tester',
+    'reviewer',
+    'security',
+    'approval',
+    'done',
+  ];
+
+  private static readonly LABELS: Record<DisplayColumn, string> = {
+    backlog: 'backlog',
+    coder: 'coder',
+    tester: 'tester',
+    reviewer: 'reviewer',
+    security: 'security',
+    approval: 'approval',
+    done: 'done',
+  };
+
+  /** The stages that fold into each display column. */
+  static readonly STAGES_OF: Record<DisplayColumn, readonly Stage[]> = {
+    backlog: ['new'],
+    coder: ['coding', 'design', 'docs'],
+    tester: ['validation'],
+    reviewer: ['review'],
+    security: ['security'],
+    approval: ['approval'],
+    done: ['done'],
+  };
+
+  static label(column: DisplayColumn): string {
+    return Column.LABELS[column];
+  }
+
+  /** The concrete Stage a drag into this column lands on (per card type). */
+  static dropStage(column: DisplayColumn, type: CardType): Stage {
+    if (column === 'coder') return Lane.implementFor(type);
+    switch (column) {
+      case 'backlog':
+        return 'new';
+      case 'tester':
+        return 'validation';
+      case 'reviewer':
+        return 'review';
+      case 'security':
+        return 'security';
+      case 'approval':
+        return 'approval';
+      case 'done':
+        return 'done';
+    }
+  }
+
+  /** Columns an agent works (automation toggles sit on their headers). */
+  static isAgentOwned(column: DisplayColumn): boolean {
+    return (
+      column === 'coder' ||
+      column === 'tester' ||
+      column === 'reviewer' ||
+      column === 'security'
+    );
+  }
+
+  static inColumn(cards: readonly Card[], column: DisplayColumn): readonly Card[] {
+    const stages = Column.STAGES_OF[column];
+    return cards.filter((c) => stages.includes(c.stage));
+  }
 }
 
 /** One row of the All swimlane: a card type and its lane cells. */
-export class SwimlaneRow {
-  readonly cells: readonly SwimlaneCell[];
-
-  constructor(readonly type: CardType) {
-    this.cells = Lane.ALL.map((lane) => new SwimlaneCell(lane, Lane.isValidFor(type, lane)));
-  }
-
-  get meta(): CardTypeMeta {
-    return CARD_TYPE_META[this.type];
-  }
-
-  /** All-view swimlane layout: one row per type, in card-type order. */
-  static all(): readonly SwimlaneRow[] {
-    return CARD_TYPES.map((type) => new SwimlaneRow(type));
-  }
-}
-
 /**
  * Automation toggles per agent-owned lane (design.md §3.1). Immutable; the
  * board service swaps instances on toggle. Toggles gate agent pickup only —
