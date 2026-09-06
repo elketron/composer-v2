@@ -1,0 +1,64 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, #000 55%, transparent);
+}
+
+.dialog {
+  width: min(380px, calc(100vw - 48px));
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 16px;
+
+  h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  p {
+    margin: 8px 0 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+
+  button {
+    border: 1px solid var(--border-strong);
+    background: none;
+    border-radius: 4px;
+    padding: 5px 12px;
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+
+    &:hover {
+      color: var(--text);
+      border-color: var(--text-faint);
+    }
+
+    &.accept {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+
+      &.danger {
+        background: #a04040;
+        border-color: #a04040;
+      }
+    }
+  }
+}

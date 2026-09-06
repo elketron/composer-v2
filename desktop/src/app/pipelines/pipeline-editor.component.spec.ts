@@ -6,6 +6,7 @@ import {
   seedProject,
   wireEvent,
 } from '../core/events/events-client.fake';
+import { ConfirmService } from '../core/confirm/confirm.service';
 import { PipelineEditorComponent } from './pipeline-editor.component';
 import { PipelineService } from './pipeline.service';
 
@@ -165,11 +166,16 @@ describe('PipelineEditorComponent', () => {
     });
   });
 
-  it('deletes a pipeline', async () => {
+  it('deletes a pipeline after confirming', async () => {
     seedPipeline('PL-1', 'Standard coding card');
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
     el.querySelector<HTMLButtonElement>('.row .row-actions .danger')!.click();
+    await fixture.whenStable();
+
+    // Deletion waits on the confirmation dialog.
+    expect(events.lastCommand('requestPipelineDelete')).toBeUndefined();
+    TestBed.inject(ConfirmService).resolve(true);
     await fixture.whenStable();
 
     expect(events.lastCommand('requestPipelineDelete')).toMatchObject({

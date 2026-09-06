@@ -7,6 +7,7 @@ import {
   seedProject,
   wireEvent,
 } from '../core/events/events-client.fake';
+import { ConfirmService } from '../core/confirm/confirm.service';
 import { DashboardComponent } from './dashboard.component';
 import { DashboardService } from './dashboard.service';
 
@@ -70,12 +71,16 @@ describe('DashboardComponent', () => {
   });
 
   it('archives and restores a project from separate dashboard views', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const fixture = TestBed.createComponent(DashboardComponent);
     seedProject(events, 'P-1', 'alpha');
     await fixture.whenStable();
+    const el = fixture.nativeElement as HTMLElement;
 
-    (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>('[aria-label="archive alpha"]')?.click();
+    el.querySelector<HTMLElement>('[aria-label="archive alpha"]')?.click();
+    await fixture.whenStable();
+    // The archive waits on the in-app confirmation dialog.
+    expect(events.lastCommand('requestProjectArchive')).toBeUndefined();
+    TestBed.inject(ConfirmService).resolve(true);
     await fixture.whenStable();
     expect(events.lastCommand('requestProjectArchive')?.requestProjectArchive).toEqual({
       projectId: 'P-1',

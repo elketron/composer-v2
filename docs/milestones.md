@@ -469,6 +469,26 @@ Dashboard archive/restore flow.
   tests cover terminal outcome snapshot equality; desktop service/component
   specs cover loading, failure retention, Git display, and action-required work.
 
+## S11 — UX refinement pass 1: confirmations + safe markdown  ·  done (2026-09-06)
+
+First slice of the product plan's Phase 5 (cross-application UX refinement):
+
+- **In-app confirmations**: `ConfirmService` + `ConfirmDialogComponent` replace
+  native `window.confirm` — one themed alert dialog mounted at the app root,
+  Escape/backdrop cancel, focus lands on the confirming button, a superseding
+  request cancels the abandoned promise. Project archive (already confirmed)
+  and pipeline delete (previously unconfirmed) both wait on it.
+- **Safe markdown**: the plan document no longer bypasses Angular's sanitizer —
+  raw HTML stays escaped to literal text (the planner's XML skeleton renders
+  visibly) and the generated markup passes default `innerHTML` sanitization,
+  so `javascript:` links cannot survive as executable hrefs.
+- **Tests**: the dialog spec covers pending rendering, confirm/cancel/backdrop/
+  Escape resolution, and supersede-cancellation; dashboard and pipeline-editor
+  specs assert the destructive actions wait on the dialog before publishing;
+  the plan-document spec covers the empty state, literal escaping of injected
+  tags, and inert link schemes — verified live in the Electron renderer with
+  no console errors.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

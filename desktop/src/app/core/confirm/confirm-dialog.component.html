@@ -1,0 +1,21 @@
+@if (request(); as ask) {
+  <div class="backdrop" (click)="cancel()">
+    <div class="dialog" role="alertdialog" aria-modal="true" [attr.aria-label]="ask.title" (click)="$event.stopPropagation()">
+      <h2>{{ ask.title }}</h2>
+      @if (ask.detail; as detail) {
+        <p>{{ detail }}</p>
+      }
+      <div class="actions">
+        <button type="button" (click)="decide(false)">cancel</button>
+        <button
+          #accept
+          type="button"
+          class="accept {{ dangerClass() }}"
+          (click)="decide(true)"
+        >
+          {{ ask.confirmLabel ?? 'confirm' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

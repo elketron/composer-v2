@@ -4,6 +4,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { ArrowDown, ArrowUp, Plus, Save, Trash2, Workflow, X } from 'lucide-angular';
 
 import { ShellService } from '../shell/shell.service';
+import { ConfirmService } from '../core/confirm/confirm.service';
 import { SettingsService } from '../settings/settings.service';
 import {
   Pipeline,
@@ -41,6 +42,7 @@ export class PipelineEditorComponent {
   private readonly shell = inject(ShellService);
   private readonly pipelines = inject(PipelineService);
   private readonly settings = inject(SettingsService);
+  private readonly confirm = inject(ConfirmService);
 
   protected readonly projectId = computed(() => this.shell.activeTabId());
   protected readonly list = computed(() => this.pipelines.pipelines());
@@ -219,6 +221,13 @@ export class PipelineEditorComponent {
   protected async remove(pipelineId: string): Promise<void> {
     const projectId = this.projectId();
     if (projectId === null) return;
+    const confirmed = await this.confirm.confirm({
+      title: 'Delete this pipeline?',
+      detail: 'Cards that reference it keep their history; new runs must pick another pipeline.',
+      confirmLabel: 'delete',
+      danger: true,
+    });
+    if (!confirmed) return;
     await this.pipelines.remove(projectId, pipelineId);
   }
 

@@ -10,6 +10,7 @@ import {
 } from 'lucide-angular';
 
 import { AgePipe } from '../core/age.pipe';
+import { ConfirmService } from '../core/confirm/confirm.service';
 import { ShellService } from '../shell/shell.service';
 import { DashboardService } from './dashboard.service';
 
@@ -25,6 +26,7 @@ export class DashboardComponent {
   private readonly shell = inject(ShellService);
   private readonly router = inject(Router);
   private readonly dashboard = inject(DashboardService);
+  private readonly confirm = inject(ConfirmService);
 
   protected readonly projects = this.shell.activeProjects;
   protected readonly archivedProjects = this.shell.archivedProjects;
@@ -68,7 +70,13 @@ export class DashboardComponent {
   }
 
   protected async archiveProject(projectId: string, name: string): Promise<void> {
-    if (!window.confirm(`Archive ${name}? Its Composer history and linked directory will be preserved.`)) {
+    const confirmed = await this.confirm.confirm({
+      title: `Archive ${name}?`,
+      detail: 'Its Composer history and linked directory will be preserved.',
+      confirmLabel: 'archive',
+      danger: true,
+    });
+    if (!confirmed) {
       return;
     }
     this.setBusy(projectId, true);
