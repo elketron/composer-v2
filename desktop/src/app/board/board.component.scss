@@ -45,6 +45,44 @@
   overflow-x: auto;
 }
 
+// The card detail panel sits beside the board on wide windows — the board
+// stays visible and selectable while a card is open. Narrow windows fall
+// back to the full-area takeover.
+.board-body {
+  display: flex;
+  flex: 1;
+  gap: 0;
+  min-height: 0;
+}
+
+.board-area {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panel-area {
+  display: block;
+  width: clamp(380px, 38vw, 560px);
+  flex: none;
+  min-height: 0;
+  border-left: 1px solid var(--border-strong);
+}
+
+@media (max-width: 999px) {
+  .board-area {
+    display: none;
+  }
+
+  .panel-area {
+    flex: 1;
+    width: auto;
+    border-left: 0;
+  }
+}
+
 .rejection-bar {
   position: absolute;
   left: 50%;

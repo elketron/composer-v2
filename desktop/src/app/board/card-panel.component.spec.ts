@@ -348,6 +348,9 @@ describe('CardPanelComponent', () => {
     const fixture = await render('T-148');
     const outcome = el(fixture).querySelector('.run-outcome');
     expect(outcome?.classList).toContain('failed');
-    expect(outcome?.textContent).toContain('last run failed — step st-1 failed');
+    expect(outcome?.textContent).toContain('failed');
+    expect(outcome?.textContent).toContain('step st-1 failed');
+    // The outcome hops straight to the full-page run view.
+    expect(outcome?.querySelector('.open-run')).toBeTruthy();
   });
 });

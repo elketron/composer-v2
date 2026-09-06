@@ -10,9 +10,9 @@ import { CardPanelComponent } from './card-panel.component';
 import { TypeSelectorComponent } from './type-selector.component';
 
 /**
- * Board view (design.md §3): type selector across the top; the All swimlane
- * or one per-type board below; a full-screen card detail panel replaces the
- * board while a card is open (design.md §3.3). The rejection comment bar
+ * Board view: type selector across the top; the All swimlane or one
+ * per-type board below; a card detail panel opens beside the board on wide
+ * windows (narrow windows take it full-area). The rejection comment bar
  * docks at the bottom after an approval → implement-lane drag.
  */
 @Component({

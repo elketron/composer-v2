@@ -13,16 +13,17 @@ import {
   Lane,
   Stage,
 } from '../core/models/board.models';
-import { PipelineService, RunOutcome } from '../pipelines/pipeline.service';
+import { PipelineService } from '../pipelines/pipeline.service';
 import { ShellService } from '../shell/shell.service';
 import { BoardService } from './board.service';
 
 /**
- * Card detail panel (design.md §3.3): full-screen, replaces the board view.
- * Editable type selector (changing type resets the pipeline checklist), full
- * description, dependency graph in both directions, per-type pipeline
+ * Card detail panel: a side panel beside the board on wide windows (the
+ * board stays visible and selectable); narrow windows take it full-area.
+ * Editable type selector (changing type resets the pipeline checklist),
+ * full description, dependency graph in both directions, per-type pipeline
  * checklist, session metadata, the pipeline run (progress, gate affordance,
- * run/stop), and the action footer.
+ * run/stop), the last run's outcome, and the action footer.
  */
 @Component({
   selector: 'app-card-panel',
@@ -166,11 +167,5 @@ export class CardPanelComponent {
   protected rejectGate(): void {
     void this.pipelines.gateRespond(this.card().id, false, this.gateComment().trim() || undefined);
     this.gateComment.set('');
-  }
-
-  protected lastRunLabel(outcome: RunOutcome): string {
-    return outcome.status === 'failed'
-      ? `last run failed${outcome.error ? ' — ' + outcome.error : ''}`
-      : 'last run completed';
   }
 }

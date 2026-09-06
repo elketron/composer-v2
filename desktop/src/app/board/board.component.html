@@ -6,23 +6,27 @@
     </button>
   </header>
 
-  @if (creating()) {
-    <app-card-creator (closed)="creating.set(false)" />
-  }
+  <div class="board-body">
+    <div class="board-area">
+      @if (creating()) {
+        <app-card-creator (closed)="creating.set(false)" />
+      }
 
-  @if (selectedCard(); as card) {
-    <app-card-panel [card]="card" />
-  } @else {
-    @if (filter() === 'all') {
-      <app-board-swimlane [cards]="cards()" [blockedIds]="blockedIds()" />
-    } @else {
-      <div class="columns" cdkDropListGroup>
-        @for (lane of lanes(); track lane) {
-          <app-board-column [lane]="lane" [cards]="cardsFor(lane)" [blockedIds]="blockedIds()" />
-        }
-      </div>
+      @if (filter() === 'all') {
+        <app-board-swimlane [cards]="cards()" [blockedIds]="blockedIds()" />
+      } @else {
+        <div class="columns" cdkDropListGroup>
+          @for (lane of lanes(); track lane) {
+            <app-board-column [lane]="lane" [cards]="cardsFor(lane)" [blockedIds]="blockedIds()" />
+          }
+        </div>
+      }
+    </div>
+
+    @if (selectedCard(); as card) {
+      <app-card-panel class="panel-area" [card]="card" />
     }
-  }
+  </div>
 
   @if (rejectionPrompt(); as prompt) {
     <div class="rejection-bar">

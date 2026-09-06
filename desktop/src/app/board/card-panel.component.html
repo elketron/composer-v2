@@ -131,30 +131,36 @@
               </div>
             }
           </div>
-        } @else if (pipelineOptions().length > 0) {
-          @if (lastRun(); as outcome) {
-            <p class="run-outcome" [class.failed]="outcome.status === 'failed'">
-              {{ lastRunLabel(outcome) }}
-            </p>
-          }
-          <div class="run-start">
-            <select [(ngModel)]="selectedPipelineId">
-              <option value="" disabled>run a pipeline…</option>
-              @for (pipeline of pipelineOptions(); track pipeline.id) {
-                <option [value]="pipeline.id">{{ pipeline.name }}</option>
-              }
-            </select>
-            <button
-              class="run-button"
-              [disabled]="selectedPipelineId() === ''"
-              (click)="startPipeline()"
-            >
-              <lucide-icon [img]="icons.run" [size]="12" />
-              run
-            </button>
-          </div>
         } @else {
-          <span class="none">no pipelines — author one in the pipelines view</span>
+          @if (lastRun(); as outcome) {
+            <div class="run-outcome" [class.failed]="outcome.status === 'failed'">
+              <span class="outcome-status">{{ outcome.status }}</span>
+              <span class="outcome-text">{{ outcome.error ?? 'the last run finished cleanly' }}</span>
+              <button class="open-run" (click)="openRunView()" title="the full-page run view">
+                run view
+              </button>
+            </div>
+          }
+          @if (pipelineOptions().length > 0) {
+            <div class="run-start">
+              <select [(ngModel)]="selectedPipelineId">
+                <option value="" disabled>run a pipeline…</option>
+                @for (pipeline of pipelineOptions(); track pipeline.id) {
+                  <option [value]="pipeline.id">{{ pipeline.name }}</option>
+                }
+              </select>
+              <button
+                class="run-button"
+                [disabled]="selectedPipelineId() === ''"
+                (click)="startPipeline()"
+              >
+                <lucide-icon [img]="icons.run" [size]="12" />
+                run
+              </button>
+            </div>
+          } @else {
+            <span class="none">no pipelines — author one in the pipelines view</span>
+          }
         }
       </div>
 
@@ -217,7 +223,7 @@
     <button class="action" (click)="assignToMe()">assign to me</button>
     <button class="action" [disabled]="!card().assignee" (click)="unassign()">unassign</button>
     <label class="force-move">
-      force move to
+      force move
       <select #lane (change)="forceMove(lane.value); lane.value = ''">
         <option value="" selected>…</option>
         @for (target of moveTargets(); track target) {

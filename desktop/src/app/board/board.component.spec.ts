@@ -112,7 +112,8 @@ describe('BoardComponent', () => {
     await fixture.whenStable();
 
     expect(el.querySelector('app-card-panel')).toBeTruthy();
-    expect(el.querySelector('.columns')).toBeNull();
+    // The panel sits beside the board; the columns stay visible.
+    expect(el.querySelector('.columns')).toBeTruthy();
     expect(el.textContent).toContain('T-2'); // first card of the new column
 
     el.querySelector<HTMLButtonElement>('.panel-header .back')!.click();
