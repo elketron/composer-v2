@@ -159,9 +159,9 @@ feedback.
 
 ## Phase 6 - Global assistant domain
 
-Status: foundation implemented 2026-09-06 (S18: threads, global event
-slice, `/assistant`, read-only turns). The scoped read tools are next;
-web/file/git tools and cross-project summaries follow.
+Status: implemented 2026-09-06 (S18 foundation: threads, global event
+slice, `/assistant`; S19: the scoped read-only tools — composer state,
+files, git, web). Conversation controls follow in Phase 7.
 
 The global assistant is distinct from planning sessions and card-bound agent
 sessions.

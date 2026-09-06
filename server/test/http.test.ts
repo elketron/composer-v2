@@ -75,6 +75,26 @@ describe('the boot contract', () => {
     const rejected = await action({ type: 'create', on: 'assistantMessage', projectId: '', body: { threadId: 'TH-9', text: 'hi' } });
     expect(rejected.json).toMatchObject({ ok: false, rejectionCode: 'unknownThread' });
 
+    // The assistant's read tools ride /mcp/read; scope is validated per call.
+    const read = async (body: unknown): Promise<{ status: number; json: Record<string, unknown> }> => {
+      const response = await fetch(`${server.url}/mcp/read`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return { status: response.status, json: (await response.json()) as Record<string, unknown> };
+    };
+    const overview = await read({ threadId: 'TH-1', tool: 'composer_overview', args: { projectId: 'P-1' } });
+    expect(overview.status).toBe(200);
+    expect((overview.json as { ok: boolean; content: string }).ok).toBe(true);
+    expect((overview.json as { content: string }).content).toContain('"alpha"');
+    // Unknown tools are malformed at the route (a whitelist, not a passthrough).
+    expect((await read({ threadId: 'TH-1', tool: 'edit_document', args: {} })).status).toBe(400);
+    // Out-of-scope reads fail inside the tool executor.
+    expect(
+      await read({ threadId: 'TH-1', tool: 'composer_card', args: { projectId: 'P-2', cardId: 'T-1' } }),
+    ).toEqual({ json: { ok: false, error: expect.stringContaining('not in this thread\'s scope') }, status: 200 });
+
     const archived = await action({ type: 'delete', on: 'assistantThread', projectId: '', body: { id: 'TH-1' } });
     expect(archived).toEqual({ status: 200, json: { ok: true } });
     expect(await action({ type: 'update', on: 'assistantThread', projectId: '', body: { id: 'TH-1', archived: false } })).toEqual({ status: 200, json: { ok: true } });

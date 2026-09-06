@@ -10,17 +10,13 @@
 // 1.18.25); opencode prefixes tool names with the server name, so the
 // planner sees `composer_edit_document` / `composer_create_tickets`.
 
-import { createInterface } from 'node:readline';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { CommandOutcome } from './wire/commands.js';
 import { createTickets, editDocument, type ComposerCaller } from './engine/planner-tools.js';
+import { serveStdio, type JsonRpcMessage, type McpToolDefinition } from './mcp-stdio.js';
 
-export interface McpToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-}
+export type { JsonRpcMessage, McpToolDefinition };
 
 const TOOLS: McpToolDefinition[] = [
   {
@@ -59,13 +55,6 @@ const TOOLS: McpToolDefinition[] = [
     },
   },
 ];
-
-interface JsonRpcMessage {
-  jsonrpc: '2.0';
-  id?: number | string | null;
-  method?: string;
-  params?: Record<string, unknown>;
-}
 
 /**
  * Handles one JSON-RPC message; returns the response to send, or null for
@@ -169,21 +158,7 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
   const sessionId = env['COMPOSER_SESSION_ID'] ?? '';
   const caller = httpCaller(serverUrl);
   const context = { projectId, sessionId };
-
-  const send = (message: Record<string, unknown>): void => {
-    process.stdout.write(JSON.stringify(message) + '\n');
-  };
-  createInterface({ input: process.stdin }).on('line', (line) => {
-    let message: JsonRpcMessage;
-    try {
-      message = JSON.parse(line) as JsonRpcMessage;
-    } catch {
-      return;
-    }
-    void handleMessage(message, caller, context).then((response) => {
-      if (response !== null) send(response);
-    });
-  });
+  serveStdio((message) => handleMessage(message, caller, context));
 }
 
 const isMain =

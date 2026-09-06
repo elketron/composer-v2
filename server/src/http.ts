@@ -14,12 +14,20 @@ import { ALL_STAGES } from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
 import type { ComposerSettings, EventStore, SettingsPatch } from './store.js';
 import { dashboardProjects } from './dashboard.js';
+import {
+  ASSISTANT_TOOL_NAMES,
+  executeAssistantTool,
+  type AssistantToolName,
+} from './assistant-tools.js';
 
 /** The commands the MCP tools may issue (the planner's two, for now). */
 const MCP_COMMAND_TYPES: ReadonlySet<string> = new Set([
   'requestPlanDocumentUpdate',
   'requestTicketsCreate',
 ]);
+
+/** The assistant's read-tool whitelist (the MCP child's only surface). */
+const ASSISTANT_READ_TOOLS: ReadonlySet<string> = new Set<string>(ASSISTANT_TOOL_NAMES);
 
 export function router(bus: Bus, processor: Processor, store?: EventStore): Hono {
   const app = new Hono();
@@ -108,6 +116,28 @@ export function router(bus: Bus, processor: Processor, store?: EventStore): Hono
     }
     const outcome = await processor.execute(projectId, command as Command);
     return context.json(outcome);
+  });
+
+  // The assistant's read tools (Phase 6): the MCP child issues reads here;
+  // the thread's scope is re-validated per call inside the tool executor.
+  app.post('/mcp/read', async (context) => {
+    const body = await context.req
+      .json<{ threadId?: unknown; tool?: unknown; args?: unknown }>()
+      .catch(() => undefined);
+    const threadId = typeof body?.threadId === 'string' ? body.threadId : '';
+    const tool = typeof body?.tool === 'string' ? body.tool : '';
+    const args =
+      typeof body?.args === 'object' && body?.args !== null ? (body!.args as Record<string, unknown>) : {};
+    if (threadId === '' || !ASSISTANT_READ_TOOLS.has(tool)) {
+      return context.json({ error: 'malformed read', detail: 'unknown read tool' }, 400);
+    }
+    const result = await executeAssistantTool(
+      { state: bus.state },
+      threadId,
+      tool as AssistantToolName,
+      args,
+    );
+    return context.json(result);
   });
 
   app.post('/action', async (context) => {

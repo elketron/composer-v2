@@ -377,10 +377,12 @@ describe('resumeStrandedThreads', () => {
 
 describe('the assistant turn', () => {
   let engine: FakeEngine;
+  let orchestrator: AssistantOrchestrator;
 
   beforeEach(async () => {
     engine = new FakeEngine(processor);
-    new AssistantOrchestrator(bus, engine, { serverUrl: 'http://127.0.0.1:0' }).start();
+    orchestrator = new AssistantOrchestrator(bus, engine, { serverUrl: 'http://127.0.0.1:0' });
+    orchestrator.start();
   });
 
   it('a_message_runs_a_turn_that_streams_and_completes', async () => {
@@ -435,9 +437,40 @@ describe('the assistant turn', () => {
 
     const [first, second] = engine.toolCalls;
     expect(first?.prompt).toContain(`Selected projects: ${alpha}`);
-    expect(first?.mcpTools).toBe('none');
+    // The durable transcript tail rides the prompt (context survives a
+    // restart's fresh engine session).
+    expect(first?.prompt).toContain('user: first question');
+    expect(second?.prompt).toContain('assistant: first reply');
+    expect(first?.mcpTools).toBe('assistant');
     expect(first?.agentName).toBe('composer-assistant');
     expect(second?.engineSessionId).toBe(`fake-${id}`);
+  });
+
+  it('the_assistant_workspace_ships_the_agent_definition_and_rocks_the_cwd', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'composer-assistant-ws-'));
+    try {
+      orchestrator.stop(); // the default orchestrator steps aside
+      engine.enqueue(async () => 'reply');
+      const withWorkspace = new AssistantOrchestrator(bus, engine, {
+        serverUrl: 'http://127.0.0.1:0',
+        workspaceDir: workspace,
+      });
+      withWorkspace.start();
+      const id = await createThread();
+      await processor.execute(undefined, {
+        type: 'requestAssistantMessage',
+        threadId: id,
+        text: 'hello',
+      });
+      await waitUntil(() => engine.toolCalls.length >= 1);
+      const spec = engine.toolCalls[0];
+      expect(spec?.projectDirectory).toBe(workspace);
+      const { existsSync } = await import('node:fs');
+      expect(existsSync(join(workspace, '.opencode', 'agent', 'composer-assistant.md'))).toBe(true);
+      withWorkspace.stop();
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it('a_failed_turn_publishes_the_failure_as_an_agent_message', async () => {

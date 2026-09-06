@@ -99,9 +99,11 @@ export async function boot(config: Config): Promise<{
       stopPlanning = () => orchestrator.stop();
     }
     if (assistantEnabled) {
+      const workspaceDir = join(config.dataDir, 'assistant');
       const assistant = new AssistantOrchestrator(bus, engine, {
         serverUrl: url,
-        mcpScriptPath: mcpScriptPath(),
+        mcpScriptPath: assistantMcpScriptPath(),
+        workspaceDir,
         getModel: () => store.getSettings(),
       });
       assistant.start();
@@ -144,6 +146,14 @@ export async function boot(config: Config): Promise<{
 /** The MCP child script (dist/mcp.js) — resolved from either the src or dist layout. */
 function mcpScriptPath(): string {
   return process.env['COMPOSER_MCP_SCRIPT'] ?? fileURLToPath(new URL('../dist/mcp.js', import.meta.url));
+}
+
+/** The assistant's MCP child script (dist/assistant-mcp.js). */
+function assistantMcpScriptPath(): string {
+  return (
+    process.env['COMPOSER_ASSISTANT_MCP_SCRIPT'] ??
+    fileURLToPath(new URL('../dist/assistant-mcp.js', import.meta.url))
+  );
 }
 
 const isMain =

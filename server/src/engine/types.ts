@@ -30,10 +30,10 @@ export interface AgentTurnSpec {
   signal?: AbortSignal;
   /**
    * Which composer MCP tool surface the runtime gets: the planner's write
-   * tools (default), or none (the global assistant is read-only; its read
-   * tools join in their slice).
+   * tools (default), the assistant's read-only tools (global turns), or
+   * none. The script path each mode uses rides `mcpScriptPath`.
    */
-  mcpTools?: 'planner' | 'none';
+  mcpTools?: 'planner' | 'assistant' | 'none';
 }
 
 /** Streamed turn output. Deltas are transient; completes are durable. */

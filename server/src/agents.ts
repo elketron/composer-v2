@@ -9,7 +9,6 @@ import { join } from 'node:path';
 
 export const PLANNER_AGENT_NAME = 'composer-planner';
 export const CODER_AGENT_NAME = 'composer-coder';
-/** The global assistant's agent name (its definition ships with the read tools). */
 export const ASSISTANT_AGENT_NAME = 'composer-assistant';
 
 const PLANNER_DEFINITION = `---
@@ -73,6 +72,41 @@ export function ensureAgentFiles(projectDirectory: string): void {
   writeIfAbsent(agentDirectory, `${PLANNER_AGENT_NAME}.md`, PLANNER_DEFINITION);
   writeIfAbsent(agentDirectory, `${CODER_AGENT_NAME}.md`, CODER_DEFINITION);
 }
+
+/**
+ * The global assistant's agent definition (Phase 6): threads are global, so
+ * the definition lives in composer's own workspace (a scratch directory in
+ * the data dir) — never inside a project the assistant only reads.
+ */
+export function ensureAssistantWorkspace(workspaceDirectory: string): void {
+  const agentDirectory = join(workspaceDirectory, '.opencode', 'agent');
+  mkdirSync(agentDirectory, { recursive: true });
+  writeIfAbsent(agentDirectory, `${ASSISTANT_AGENT_NAME}.md`, ASSISTANT_DEFINITION);
+}
+
+const ASSISTANT_DEFINITION = `---
+description: Composer's global assistant — reads projects and answers; never edits
+mode: primary
+tools:
+  write: false
+  edit: false
+  bash: false
+---
+
+You are Composer's global assistant. Your user asks across the projects
+their thread has in scope; each turn's message names that scope.
+
+You are strictly read-only:
+
+- Use your composer_* tools (overview, cards, plans, files, git, web) to
+  ground answers in real state — never guess about a project.
+- Never edit files, run commands, or propose doing so. You observe and
+  explain; work proposals are drafted in conversation only.
+- If a tool call is rejected (out of scope, missing directory), read the
+  error and adapt rather than repeating it.
+
+Reply with a short, direct answer: what needs attention, where, and why.
+`;
 
 function writeIfAbsent(directory: string, name: string, definition: string): void {
   const path = join(directory, name);

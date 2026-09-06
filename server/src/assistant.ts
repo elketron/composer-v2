@@ -14,7 +14,7 @@
 import type { Bus } from './bus.js';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
-import { ASSISTANT_AGENT_NAME } from './agents.js';
+import { ASSISTANT_AGENT_NAME, ensureAssistantWorkspace } from './agents.js';
 import { resolveModel, type ComposerSettings } from './store.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
 import type { AssistantThread } from './wire/models.js';
@@ -31,8 +31,10 @@ export interface AssistantOptions {
   timeoutMs?: number;
   /** Composer's HTTP base (the MCP tools' callback target). */
   serverUrl?: string;
-  /** Absolute path to composer's MCP server script. */
+  /** Absolute path to composer's assistant MCP server script (dist/assistant-mcp.js). */
   mcpScriptPath?: string;
+  /** Composer's assistant workspace (the agent definition's home; the runtime's cwd). */
+  workspaceDir?: string;
   /** The settings provider — the model override rides each turn's spec. */
   getModel?: () => Promise<ComposerSettings> | ComposerSettings;
 }
@@ -110,9 +112,22 @@ export class AssistantOrchestrator {
       const thread = this.threadOf(threadId);
       if (!thread || thread.archivedAt !== undefined) return;
 
+      // The runtime loads the shipped agent from composer's assistant
+      // workspace; ship it if absent (user-editable, never overwritten).
+      if (this.options.workspaceDir !== undefined) {
+        try {
+          ensureAssistantWorkspace(this.options.workspaceDir);
+        } catch (error) {
+          console.error(`assistant: could not ship the agent definition:`, error);
+        }
+      }
+
       const settings = (await this.options.getModel?.()) ?? {};
       const spec: AgentTurnSpec = {
         sessionId: threadId,
+        ...(this.options.workspaceDir !== undefined
+          ? { projectDirectory: this.options.workspaceDir }
+          : {}),
         prompt: buildAssistantPrompt(thread, text),
         ...(this.engineSessions.get(threadId) !== undefined
           ? { engineSessionId: this.engineSessions.get(threadId) }
@@ -122,7 +137,7 @@ export class AssistantOrchestrator {
         agentName: this.options.agentName ?? ASSISTANT_AGENT_NAME,
         ...(modelFor(settings) ? { model: modelFor(settings) } : {}),
         timeoutMs: this.options.timeoutMs,
-        mcpTools: 'none',
+        mcpTools: 'assistant',
       };
       const outcome = await this.engine.run(spec, (event) => this.onEngineEvent(threadId, event));
       if (outcome.engineSessionId !== undefined) {
@@ -218,7 +233,15 @@ export class AssistantOrchestrator {
 function buildAssistantPrompt(thread: AssistantThread, text: string): string {
   const scope =
     thread.projectIds.length > 0 ? thread.projectIds.join(', ') : '(no projects selected)';
-  return `You are the user's cross-project assistant. Selected projects: ${scope}.\n\nThe user says:\n\n${text}`;
+  const recent = thread.messages
+    .slice(-10)
+    .map((message) => `${message.role === 'user' ? 'user' : 'assistant'}: ${message.text}`)
+    .join('\n');
+  return [
+    `You are the user's cross-project assistant. Selected projects: ${scope}.`,
+    recent !== '' ? `\nRecent transcript:\n\n${recent}\n` : '',
+    `\nThe user says:\n\n${text}`,
+  ].join('');
 }
 
 function nextMessageIndex(thread: { messages: { index: number }[] }): number {

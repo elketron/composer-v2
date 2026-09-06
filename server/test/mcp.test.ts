@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { handleMessage, httpCaller } from '../src/mcp.js';
+import { handleMessage as assistantHandleMessage } from '../src/assistant-mcp.js';
 import type { Command, CommandOutcome } from '../src/wire/commands.js';
 
 const context = { projectId: 'P-1', sessionId: 'S-1' };
@@ -181,5 +182,64 @@ describe('the http caller', () => {
     });
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) expect(outcome.rejection.message).toContain('composer unreachable');
+  });
+});
+
+// ---- The assistant's read-tool MCP surface (Phase 6) ----
+
+describe('the assistant mcp surface', () => {
+  const recorded: { threadId: string; tool: string; args: Record<string, unknown> }[] = [];
+  const caller: import('../src/assistant-mcp.js').AssistantReadCaller = {
+    async read(threadId, tool, args) {
+      recorded.push({ threadId, tool, args });
+      return { ok: true, content: '[]' };
+    },
+  };
+  const context = { threadId: 'TH-1' };
+
+  it('tools_list_exposes_the_nine_read_tools', async () => {
+    const response = await assistantHandleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, caller, context);
+    const tools = (response!['result'] as { tools: { name: string }[] }).tools;
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'composer_overview',
+      'composer_card',
+      'composer_plan',
+      'list_files',
+      'read_file',
+      'git_status',
+      'git_log',
+      'git_diff',
+      'web_fetch',
+    ]);
+  });
+
+  it('tools_call_reaches_the_read_caller_with_the_thread_id', async () => {
+    const response = await assistantHandleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'composer_overview', arguments: { projectId: 'P-1' } },
+      },
+      caller,
+      context,
+    );
+    expect(recorded).toEqual([
+      { threadId: 'TH-1', tool: 'composer_overview', args: { projectId: 'P-1' } },
+    ]);
+    const result = response!['result'] as { content: { text: string }[] };
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ ok: true, content: '[]' });
+  });
+
+  it('notifications_get_no_response_and_unknown_methods_error', async () => {
+    expect(
+      await assistantHandleMessage({ jsonrpc: '2.0', method: 'notifications/initialized' }, caller, context),
+    ).toBeNull();
+    const response = await assistantHandleMessage(
+      { jsonrpc: '2.0', id: 3, method: 'conjure' },
+      caller,
+      context,
+    );
+    expect(response).toMatchObject({ error: { code: -32601 } });
   });
 });

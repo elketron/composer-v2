@@ -688,6 +688,65 @@ Research notes for later slices:
   so S19 must ship `composer-assistant.md` (a home outside the project
   directories — the threads are global) before a real smoke.
 
+## S19 — Assistant read tools  ·  done (2026-09-06)
+
+Phase 6's second slice: the assistant's server-mediated read-only tool
+surface (the plan's read capabilities, scope-validated end to end). The
+assistant still cannot edit files, run commands, or touch pipelines —
+there is no write path anywhere in the chain.
+
+- **Tools** (`server/src/assistant-tools.ts`, 9): `composer_overview`
+  (per-project cards/runs/sessions; omitted projectId = the portfolio
+  summary across the scope), `composer_card`, `composer_plan`, `list_files`
+  / `read_file`, `git_status` / `git_log` / `git_diff`, `web_fetch`. Every
+  call re-validates the thread's scope from the live fold — a scope change
+  applies to in-flight conversations.
+- **Safety rails**: file tools enforce real-path containment (symlink
+  escapes reject — the realpath must stay inside the project root), binary
+  detection (NUL/head sniff), 64 KiB read cap, 500-entry listing cap; git
+  runs `git -C` without a shell (3 s timeout, capped output, 20-commit log
+  cap); `web_fetch` is https-only, resolves every hop's host and rejects
+  private/loopback/link-local/carrier-NAT ranges, follows ≤3 redirects
+  (re-validated, never leaves https), 10 s timeout, text/json
+  content-types only, 256 KiB body cap with a streaming reader. Git and
+  fetch are injected adapters (tests never touch a repository or the
+  network).
+- **MCP child** (`server/src/assistant-mcp.js`): the read tools over the
+  shared stdio JSON-RPC framing (extracted to `mcp-stdio.ts`; the
+  planner's server rides it too). The child carries only
+  `COMPOSER_SERVER_URL` + `COMPOSER_THREAD_ID` — every call POSTs
+  `/mcp/read`, which whitelists the nine tool names and executes against
+  the fold; the child holds no authority of its own.
+- **Engine**: `mcpTools` gains `'assistant'` — opencode spawns get
+  `COMPOSER_THREAD_ID` and register the assistant MCP script inline.
+- **Workspace**: the `composer-assistant.md` definition ships into
+  `<dataDir>/assistant/.opencode/agent/` (threads are global, so the
+  definition lives outside every project; that directory is also the
+  real-engine cwd). The prompt carries the thread's scope plus a
+  transcript tail — context survives a restart's fresh engine session.
+- **Boot**: the assistant orchestrator wires the workspace +
+  `dist/assistant-mcp.js` (`COMPOSER_ASSISTANT_MCP_SCRIPT` overrides).
+
+Exit criteria (met): `pnpm verify` (server 126, desktop 208 — the wire is
+untouched, no new events); the tools suite covers scope, state reads,
+containment/symlink/binary/size, bounded git args, and every web guard
+with injected adapters; the `/mcp/read` e2e drives a real boot (overview
+content, out-of-scope rejection, route whitelist); a manual stdio smoke
+ran the MCP child against a live server — initialize → tools/list (9) →
+`read_file` returned real file content, `../../../etc/passwd` was
+refused.
+
+Research notes for later slices:
+
+- Tool calls do not stream into the assistant transcript yet (the run
+  view's toolCall/toolResult events are card-session territory); Phase 7's
+  proposal panel decides what the conversation shows.
+- The web tool resolves the host per hop but undici re-resolves at
+  connect — a documented local-first simplification; the private-range
+  guard still stops the obvious SSRF shapes.
+- `assistantMcpScriptPath` mirrors `mcpScriptPath`'s override pattern; if
+  a third MCP surface ever appears, promote the pair into one helper.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).
