@@ -34,7 +34,13 @@ export type Command =
   | { type: 'requestPipelineDelete'; pipelineId: string }
   | { type: 'requestPipelineRun'; pipelineId: string; cardId: string }
   | { type: 'requestPipelineStop'; cardId: string }
-  | { type: 'requestPipelineGateRespond'; cardId: string; approved: boolean; comment?: string };
+  | { type: 'requestPipelineGateRespond'; cardId: string; approved: boolean; comment?: string }
+  // Global assistant commands (Phase 6) — issued without a project scope.
+  | { type: 'requestAssistantThreadCreate'; name?: string }
+  | { type: 'requestAssistantThreadArchive'; threadId: string }
+  | { type: 'requestAssistantThreadRestore'; threadId: string }
+  | { type: 'requestAssistantThreadScope'; threadId: string; projectIds: string[] }
+  | { type: 'requestAssistantMessage'; threadId: string; text: string };
 
 /** One ticket the planner emits on approval; lands as an ordinary card. */
 export interface TicketEmission {
@@ -58,7 +64,8 @@ export type RejectionCode =
   | 'unknownPipeline'
   | 'unknownAgentKind'
   | 'pipelineAlreadyRunning'
-  | 'pipelineNotRunning';
+  | 'pipelineNotRunning'
+  | 'unknownThread';
 
 export interface Rejection {
   code: RejectionCode;

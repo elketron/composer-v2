@@ -146,13 +146,15 @@ export class EventStore {
       'SELECT * FROM event_log WHERE projectId = $projectId AND ephemeral != true ORDER BY seq;',
       { projectId },
     );
-    return (rows ?? []).map((row) => ({
-      id: row.payload.id,
-      projectId: row.payload.projectId,
-      occurredAt: row.payload.occurredAt,
-      name: row.name as EventName,
-      body: row.payload.body,
-    }));
+    return (rows ?? []).map(toEnvelope);
+  }
+
+  /** Replays the global (project-less) non-ephemeral events, in emission order. */
+  async replayGlobal(): Promise<EventEnvelope[]> {
+    const [rows] = await this.db.query<EventRow[][]>(
+      'SELECT * FROM event_log WHERE projectId IS NULL AND ephemeral != true ORDER BY seq;',
+    );
+    return (rows ?? []).map(toEnvelope);
   }
 
   /**
@@ -217,6 +219,16 @@ export class EventStore {
     }
     this.releaseDirLock();
   }
+}
+
+function toEnvelope(row: EventRow): EventEnvelope {
+  return {
+    id: row.payload.id,
+    projectId: row.payload.projectId,
+    occurredAt: row.payload.occurredAt,
+    name: row.name as EventName,
+    body: row.payload.body,
+  };
 }
 
 function pidAlive(pid: number): boolean {

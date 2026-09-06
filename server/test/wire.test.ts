@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { makeFrame, type EventFrame } from '../src/wire/envelope.js';
-import { EVENT_NAMES, type EventName } from '../src/wire/events.js';
+import { EVENT_NAMES, GLOBAL_EVENTS, type EventName } from '../src/wire/events.js';
 
 const fixturePath = join(import.meta.dirname, '..', '..', 'wire-golden', 'events.json');
 const frames = JSON.parse(readFileSync(fixturePath, 'utf8')) as EventFrame[];
@@ -16,11 +16,15 @@ describe('wire-golden/events.json', () => {
     expect(frames.map((frame) => frame.eventType)).toEqual([...EVENT_NAMES]);
   });
 
-  it('frames carry project scope and an RFC 3339 timestamp', () => {
+  it('frames carry scope and an RFC 3339 timestamp', () => {
     for (const frame of frames) {
       expect(frame.id).toBeTruthy();
-      expect(frame.projectId).toBe('P-1');
       expect(Number.isNaN(Date.parse(frame.occurredAt))).toBe(false);
+      if (GLOBAL_EVENTS.has(frame.eventType as EventName)) {
+        expect(frame.projectId).toBeUndefined();
+      } else {
+        expect(frame.projectId).toBe('P-1');
+      }
     }
   });
 

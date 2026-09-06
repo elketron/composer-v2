@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
 
+import { AssistantComponent } from './assistant/assistant.component';
 import { BoardComponent } from './board/board.component';
 import { DashboardComponent } from './dashboard/dashboard.component';
 import { PlanComponent } from './plan/plan.component';
@@ -12,6 +13,7 @@ import { ProjectWorkspaceComponent } from './shell/project-workspace.component';
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
   { path: 'dashboard', component: DashboardComponent },
+  { path: 'assistant', component: AssistantComponent },
   {
     path: 'projects/:projectId/coding',
     component: ProjectWorkspaceComponent,

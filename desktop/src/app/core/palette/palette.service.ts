@@ -48,6 +48,13 @@ export class PaletteService {
         run: () => void this.navigate('/dashboard'),
       },
       {
+        id: 'nav-assistant',
+        label: 'open assistant',
+        hint: 'assistant',
+        keywords: 'assistant threads chat ask ai global',
+        run: () => void this.navigate('/assistant'),
+      },
+      {
         id: 'nav-settings',
         label: 'open settings',
         hint: 'settings',

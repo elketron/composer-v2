@@ -9,6 +9,8 @@ import { join } from 'node:path';
 
 export const PLANNER_AGENT_NAME = 'composer-planner';
 export const CODER_AGENT_NAME = 'composer-coder';
+/** The global assistant's agent name (its definition ships with the read tools). */
+export const ASSISTANT_AGENT_NAME = 'composer-assistant';
 
 const PLANNER_DEFINITION = `---
 description: Composer's planning agent — refines the plan document and emits tickets on approval

@@ -6,8 +6,9 @@
 
 /** One agent turn the orchestrator asks the runtime to run. */
 export interface AgentTurnSpec {
-  projectId: string;
-  /** The composer planning session the turn belongs to. */
+  /** The project the turn works in; absent for global turns (the assistant). */
+  projectId?: string;
+  /** The composer session (planning) or thread (assistant) the turn belongs to. */
   sessionId: string;
   /** The project directory the runtime works in (cwd; agent files live here). */
   projectDirectory?: string;
@@ -27,6 +28,12 @@ export interface AgentTurnSpec {
   timeoutMs: number;
   /** Aborted when the run is stopped — the runtime's process is killed. */
   signal?: AbortSignal;
+  /**
+   * Which composer MCP tool surface the runtime gets: the planner's write
+   * tools (default), or none (the global assistant is read-only; its read
+   * tools join in their slice).
+   */
+  mcpTools?: 'planner' | 'none';
 }
 
 /** Streamed turn output. Deltas are transient; completes are durable. */

@@ -26,6 +26,30 @@ function frame(
 export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
   const events: EventFrame[] = [];
   let index = 0;
+
+  // Global assistant threads first (Phase 6): the creation event carries the
+  // folded thread (scope, status, messages), then each message re-folds
+  // idempotently — the planning session's snapshot rule.
+  if (projectId === undefined) {
+    const threads = [...state.assistantThreads.values()].sort(
+      (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+    );
+    for (const thread of threads) {
+      events.push(frame(undefined, 'assistantThreadCreated', { thread: structuredClone(thread) }, index++));
+      for (const message of thread.messages) {
+        const eventType = message.role === 'user' ? 'assistantUserMessage' : 'assistantMessageComplete';
+        events.push(
+          frame(
+            undefined,
+            eventType,
+            { threadId: thread.id, message: structuredClone(message) },
+            index++,
+          ),
+        );
+      }
+    }
+  }
+
   const projects = [...state.projects.values()]
     .filter((project) => projectId === undefined || project.id === projectId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));

@@ -175,6 +175,24 @@ export const WirePipelineRunStatus = {
 export type WirePipelineRunStatus =
   (typeof WirePipelineRunStatus)[keyof typeof WirePipelineRunStatus];
 
+export const WireAssistantThreadStatus = {
+  ASSISTANT_THREAD_STATUS_IDLE: 'idle',
+  ASSISTANT_THREAD_STATUS_RUNNING: 'running',
+  ASSISTANT_THREAD_STATUS_FAILED: 'failed',
+} as const;
+export type WireAssistantThreadStatus =
+  (typeof WireAssistantThreadStatus)[keyof typeof WireAssistantThreadStatus];
+
+export interface AssistantThreadJson {
+  readonly id?: string;
+  readonly name?: string;
+  readonly createdAt?: string;
+  readonly status?: WireAssistantThreadStatus;
+  readonly projectIds?: string[];
+  readonly archivedAt?: string;
+  readonly messages?: ChatMessageJson[];
+}
+
 // ---- Events (server → client) ----
 
 /** One SSE frame from `GET /events` (http.rs SseFrame). */
@@ -300,6 +318,17 @@ export interface DomainEventJson {
     readonly stepId: string;
     readonly line: string;
   };
+  readonly assistantThreadCreated?: { readonly thread: AssistantThreadJson };
+  readonly assistantThreadArchived?: { readonly threadId: string; readonly archivedAt: string };
+  readonly assistantThreadRestored?: { readonly threadId: string; readonly restoredAt: string };
+  readonly assistantThreadScopeChanged?: { readonly threadId: string; readonly projectIds: string[] };
+  readonly assistantUserMessage?: { readonly threadId: string; readonly message: ChatMessageJson };
+  readonly assistantMessageDelta?: {
+    readonly threadId: string;
+    readonly messageIndex: number;
+    readonly delta: string;
+  };
+  readonly assistantMessageComplete?: { readonly threadId: string; readonly message: ChatMessageJson };
 }
 
 /** The payload field names (the oneof members, camelCase). */
@@ -336,6 +365,13 @@ export const EVENT_KINDS = [
   'pipelineRunEnded',
   'pipelineGateResponded',
   'commandOutput',
+  'assistantThreadCreated',
+  'assistantThreadArchived',
+  'assistantThreadRestored',
+  'assistantThreadScopeChanged',
+  'assistantUserMessage',
+  'assistantMessageDelta',
+  'assistantMessageComplete',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -378,6 +414,11 @@ export type CommandKind =
   | 'requestPipelineRun'
   | 'requestPipelineStop'
   | 'requestPipelineGateRespond'
+  | 'requestAssistantThreadCreate'
+  | 'requestAssistantThreadArchive'
+  | 'requestAssistantThreadRestore'
+  | 'requestAssistantThreadScope'
+  | 'requestAssistantMessage'
   | 'requestAgentSessionStart'
   | 'requestAgentSessionStop';
 
@@ -420,6 +461,11 @@ export interface PublishRequestJson {
     readonly approved: boolean;
     readonly comment?: string;
   };
+  readonly requestAssistantThreadCreate?: { readonly name?: string };
+  readonly requestAssistantThreadArchive?: { readonly threadId: string };
+  readonly requestAssistantThreadRestore?: { readonly threadId: string };
+  readonly requestAssistantThreadScope?: { readonly threadId: string; readonly projectIds: string[] };
+  readonly requestAssistantMessage?: { readonly threadId: string; readonly text: string };
 }
 
 /** The generic write-path envelope (`POST /action`, http.rs). */
@@ -432,7 +478,9 @@ export interface ActionEnvelopeJson {
     | 'chatMessage'
     | 'automation'
     | 'pipeline'
-    | 'pipelineGate';
+    | 'pipelineGate'
+    | 'assistantThread'
+    | 'assistantMessage';
   readonly projectId: string;
   readonly body: Record<string, unknown>;
 }
@@ -562,6 +610,35 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
       body['comment'] = request.requestPipelineGateRespond.comment;
     }
     return env('update', 'pipelineGate', body);
+  }
+  // Global assistant commands publish without a project scope (projectId '').
+  if (request.requestAssistantThreadCreate) {
+    const body: Record<string, unknown> = {};
+    if (request.requestAssistantThreadCreate.name) {
+      body['name'] = request.requestAssistantThreadCreate.name;
+    }
+    return env('create', 'assistantThread', body);
+  }
+  if (request.requestAssistantThreadArchive) {
+    return env('delete', 'assistantThread', { id: request.requestAssistantThreadArchive.threadId });
+  }
+  if (request.requestAssistantThreadRestore) {
+    return env('update', 'assistantThread', {
+      id: request.requestAssistantThreadRestore.threadId,
+      archived: false,
+    });
+  }
+  if (request.requestAssistantThreadScope) {
+    return env('update', 'assistantThread', {
+      id: request.requestAssistantThreadScope.threadId,
+      projectIds: [...request.requestAssistantThreadScope.projectIds],
+    });
+  }
+  if (request.requestAssistantMessage) {
+    return env('create', 'assistantMessage', {
+      threadId: request.requestAssistantMessage.threadId,
+      text: request.requestAssistantMessage.text,
+    });
   }
   return null;
 }

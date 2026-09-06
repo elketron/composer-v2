@@ -1,0 +1,143 @@
+<div class="assistant">
+  <aside class="thread-list">
+    <header class="list-header">
+      <span class="label">threads</span>
+      <button type="button" class="new-thread" title="new thread" (click)="newThread()">+</button>
+    </header>
+
+    <div class="list-body">
+      @for (entry of threads(); track entry.id) {
+        <button
+          type="button"
+          class="thread-row"
+          [class.active]="entry.id === thread()?.id"
+          (click)="select(entry.id)"
+        >
+          <span class="dot" [class.running]="entry.isRunning"></span>
+          <span class="thread-name">{{ entry.name || 'Thread' }}</span>
+          <span
+            class="archive"
+            role="button"
+            tabindex="0"
+            aria-label="archive thread"
+            (click)="archive(entry.id); $event.stopPropagation()"
+            (keydown.enter)="archive(entry.id); $event.stopPropagation()"
+          >×</span>
+        </button>
+      } @empty {
+        <p class="state-empty inline">start a thread to ask across projects</p>
+      }
+
+      @if (archived().length > 0) {
+        <div class="archived-section">
+          <span class="archived-label">archived</span>
+          @for (entry of archived(); track entry.id) {
+            <button type="button" class="thread-row archived-row" (click)="restore(entry.id)">
+              <span class="thread-name">{{ entry.name || 'Thread' }}</span>
+              <span class="restore-hint">restore</span>
+            </button>
+          }
+        </div>
+      }
+    </div>
+  </aside>
+
+  <main class="conversation">
+    @if (thread(); as current) {
+      <header class="conversation-header">
+        <div class="title-block">
+          <span class="thread-title">{{ current.name || 'Thread' }}</span>
+          <span class="thread-status" [class.running]="current.isRunning">
+            {{ current.isRunning ? 'running' : 'idle' }}
+          </span>
+        </div>
+
+        <details class="scope-picker" (toggle)="openScopePicker()">
+          <summary>
+            scope:
+            @if (scope().length === 0) {
+              <span class="scope-none">no projects</span>
+            }
+            @for (entry of scope(); track entry.id) {
+              <span class="scope-chip">{{ entry.name }}</span>
+            }
+          </summary>
+          <div class="scope-menu">
+            @for (project of projects(); track project.id) {
+              <label class="scope-option">
+                <input
+                  type="checkbox"
+                  [checked]="scopeChecked(project.id)"
+                  (change)="toggleScope(project.id, $event.target.checked)"
+                />
+                <span>{{ project.name }}</span>
+              </label>
+            } @empty {
+              <span class="scope-empty">no active projects</span>
+            }
+            <button type="button" class="scope-save" (click)="saveScope()">apply scope</button>
+          </div>
+        </details>
+      </header>
+
+      @if (error(); as message) {
+        <div class="state-error">{{ message }}</div>
+      }
+
+      <div class="transcript">
+        @if (messages().length === 0 && !streamingMessage()) {
+          <div class="state-empty">
+            <span class="state-label">assistant</span>
+            <span>ask about projects, work, and what needs you — read-only</span>
+          </div>
+        }
+
+        @for (message of messages(); track message.role + '-' + message.index) {
+          <article class="message" [class.user]="message.isUser" [class.agent]="message.isAgent">
+            <header class="message-meta">
+              <span class="role">{{ message.isUser ? 'YOU' : 'ASSISTANT' }}</span>
+              <span class="message-index">m{{ message.index }}</span>
+            </header>
+            <div class="message-text">{{ message.text }}</div>
+          </article>
+        }
+
+        @if (streamingMessage(); as message) {
+          <article class="message agent streaming">
+            <header class="message-meta">
+              <span class="role">ASSISTANT</span>
+              <span class="message-index">m{{ message.index }}</span>
+            </header>
+            @if (message.text) {
+              <div class="message-text">{{ message.text }}</div>
+            } @else {
+              <div class="message-text thinking">thinking…</div>
+            }
+            <span class="stream-dot pulse" aria-label="assistant responding"></span>
+          </article>
+        }
+      </div>
+
+      <form class="composer" (submit)="$event.preventDefault(); send()">
+        <textarea
+          #composer
+          name="message"
+          rows="1"
+          autocomplete="off"
+          [ngModel]="draft()"
+          (ngModelChange)="draft.set($event); resize(composer)"
+          (keydown)="keydown($event)"
+          placeholder="ask across the selected projects…"
+          [disabled]="sending()"
+        ></textarea>
+        <span class="hint">enter to send · shift+enter for a newline</span>
+        <button type="submit" class="send" [disabled]="sending() || !draft().trim()">send</button>
+      </form>
+    } @else {
+      <div class="state-empty full">
+        <span class="state-label">assistant</span>
+        <span>select or start a thread</span>
+      </div>
+    }
+  </main>
+</div>

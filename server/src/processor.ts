@@ -13,6 +13,7 @@ import {
   isLaneValid,
   stageCsName,
   subStateFor,
+  type AssistantThread,
   type Assignee,
   type Card,
   type CardType,
@@ -100,6 +101,16 @@ export class Processor {
         return this.stopPipeline(projectId, command.cardId);
       case 'requestPipelineGateRespond':
         return this.gateRespond(projectId, command.cardId, command.approved, command.comment);
+      case 'requestAssistantThreadCreate':
+        return this.createAssistantThread(command.name);
+      case 'requestAssistantThreadArchive':
+        return this.archiveAssistantThread(command.threadId);
+      case 'requestAssistantThreadRestore':
+        return this.restoreAssistantThread(command.threadId);
+      case 'requestAssistantThreadScope':
+        return this.setAssistantThreadScope(command.threadId, command.projectIds);
+      case 'requestAssistantMessage':
+        return this.assistantMessage(command.threadId, command.text);
       default: {
         const unknown = command as { type: string };
         return rejected('invalidCommand', `${unknown.type} is not implemented yet`);
@@ -774,6 +785,114 @@ export class Processor {
     const run = this.bus.state.byProject.get(scope)?.pipelineRuns.get(cardId);
     return run ?? null;
   }
+
+  // ---- Global assistant (Phase 6): commands without a project scope ----
+
+  /** Opens a named thread; an empty name defaults to `Thread N`. */
+  private async createAssistantThread(name: string | undefined): Promise<CommandOutcome> {
+    const id = allocateId(this.bus.state.assistantThreads.keys(), 'TH');
+    const trimmed = name?.trim() ?? '';
+    const thread: AssistantThread = {
+      id,
+      name: trimmed !== '' ? trimmed : `Thread ${id.slice(3)}`,
+      createdAt: nowIso(),
+      status: 'idle',
+      projectIds: [],
+      messages: [],
+    };
+    await this.bus.publish(undefined, 'assistantThreadCreated', { thread });
+    return ok();
+  }
+
+  private async archiveAssistantThread(threadId: string): Promise<CommandOutcome> {
+    const thread = this.assistantThreads().get(threadId);
+    if (!thread) {
+      return rejected('unknownThread', `Unknown thread ${threadId}`);
+    }
+    if (thread.archivedAt !== undefined) return ok();
+    await this.bus.publish(undefined, 'assistantThreadArchived', {
+      threadId,
+      archivedAt: nowIso(),
+    });
+    return ok();
+  }
+
+  private async restoreAssistantThread(threadId: string): Promise<CommandOutcome> {
+    const thread = this.assistantThreads().get(threadId);
+    if (!thread) {
+      return rejected('unknownThread', `Unknown thread ${threadId}`);
+    }
+    if (thread.archivedAt === undefined) return ok();
+    await this.bus.publish(undefined, 'assistantThreadRestored', {
+      threadId,
+      restoredAt: nowIso(),
+    });
+    return ok();
+  }
+
+  /**
+   * Replaces the thread's project scope wholesale: every project must exist
+   * and be active (archived projects leave no scope behind), duplicates
+   * collapse preserving order. Archived threads reject scope edits —
+   * restore first.
+   */
+  private async setAssistantThreadScope(
+    threadId: string,
+    projectIds: string[],
+  ): Promise<CommandOutcome> {
+    const thread = this.assistantThreads().get(threadId);
+    if (!thread) {
+      return rejected('unknownThread', `Unknown thread ${threadId}`);
+    }
+    if (thread.archivedAt !== undefined) {
+      return rejected('invalidCommand', `Thread ${threadId} is archived`);
+    }
+    const seen = new Set<string>();
+    const scoped: string[] = [];
+    for (const projectId of projectIds) {
+      if (projectId === '' || seen.has(projectId)) continue;
+      const project = this.bus.state.projects.get(projectId);
+      if (!project) {
+        return rejected('unknownProject', `Unknown project ${projectId}`);
+      }
+      if (project.archivedAt !== undefined) {
+        return rejected('invalidCommand', `Project ${projectId} is archived`);
+      }
+      seen.add(projectId);
+      scoped.push(projectId);
+    }
+    await this.bus.publish(undefined, 'assistantThreadScopeChanged', {
+      threadId,
+      projectIds: scoped,
+    });
+    return ok();
+  }
+
+  /** Appends a user message to the thread (archived threads are closed). */
+  private async assistantMessage(threadId: string, text: string): Promise<CommandOutcome> {
+    const thread = this.assistantThreads().get(threadId);
+    if (!thread) {
+      return rejected('unknownThread', `Unknown thread ${threadId}`);
+    }
+    if (thread.archivedAt !== undefined) {
+      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
+    }
+    if (text.trim() === '') {
+      return rejected('invalidCommand', 'Message text is required');
+    }
+    const message: ChatMessage = {
+      index: nextAssistantMessageIndex(thread),
+      role: 'user',
+      text,
+      at: nowIso(),
+    };
+    await this.bus.publish(undefined, 'assistantUserMessage', { threadId, message });
+    return ok();
+  }
+
+  private assistantThreads(): Map<string, AssistantThread> {
+    return this.bus.state.assistantThreads;
+  }
 }
 
 function ok(): CommandOutcome {
@@ -800,6 +919,11 @@ function isSet(timestamp: string): boolean {
 /** One past the highest message index (v1 `next_message_index`; starts at 1). */
 function nextMessageIndex(session: PlanningSession): number {
   return session.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
+}
+
+/** One past the highest assistant message index. */
+function nextAssistantMessageIndex(thread: AssistantThread): number {
+  return thread.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
 }
 
 /** The per-kind fields a pipeline step must carry (v1 M3). */

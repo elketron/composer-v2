@@ -61,6 +61,34 @@ describe('the boot contract', () => {
     expect(await response.json()).toEqual({ status: 'SERVING' });
   });
 
+  it('assistant_actions_drive_a_thread_end_to_end', async () => {
+    await action({ type: 'create', on: 'project', body: { name: 'alpha' } });
+
+    // The desktop's paths: create:assistantThread, update:assistantThread
+    // (scope + restore), delete:assistantThread, create:assistantMessage.
+    const created = await action({ type: 'create', on: 'assistantThread', projectId: '', body: { name: 'portfolio' } });
+    expect(created).toEqual({ status: 200, json: { ok: true } });
+    expect(await action({ type: 'update', on: 'assistantThread', projectId: '', body: { id: 'TH-1', projectIds: ['P-1'] } })).toEqual({ status: 200, json: { ok: true } });
+    expect(await action({ type: 'create', on: 'assistantMessage', projectId: '', body: { threadId: 'TH-1', text: 'what needs me?' } })).toEqual({ status: 200, json: { ok: true } });
+
+    // A rejected command is a typed 200 (unknown thread).
+    const rejected = await action({ type: 'create', on: 'assistantMessage', projectId: '', body: { threadId: 'TH-9', text: 'hi' } });
+    expect(rejected.json).toMatchObject({ ok: false, rejectionCode: 'unknownThread' });
+
+    const archived = await action({ type: 'delete', on: 'assistantThread', projectId: '', body: { id: 'TH-1' } });
+    expect(archived).toEqual({ status: 200, json: { ok: true } });
+    expect(await action({ type: 'update', on: 'assistantThread', projectId: '', body: { id: 'TH-1', archived: false } })).toEqual({ status: 200, json: { ok: true } });
+
+    // The snapshot carries the folded thread before the projects; global
+    // frames have no projectId.
+    const frames = await collectFrames(server.url, 2);
+    expect(frames[0]?.eventType).toBe('assistantThreadCreated');
+    expect(frames[0]?.projectId).toBeUndefined();
+    const thread = (frames[0]?.body as { thread: { name: string; projectIds: string[]; archivedAt?: string } }).thread;
+    expect(thread).toMatchObject({ name: 'portfolio', projectIds: ['P-1'] });
+    expect(thread.archivedAt).toBeUndefined();
+  });
+
   it('malformed_actions_are_400', async () => {
     const result = await action({ type: 'conjure', on: 'card' });
     expect(result.status).toBe(400);

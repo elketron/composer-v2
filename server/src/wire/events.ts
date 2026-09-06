@@ -6,6 +6,7 @@
 import type {
   AgentSession,
   AgentSessionStatus,
+  AssistantThread,
   Assignee,
   Card,
   CardType,
@@ -205,6 +206,45 @@ export interface CommandOutput {
   line: string;
 }
 
+// ---- Global assistant (Phase 6): global events — no projectId; every
+// frame reaches every subscriber and the fold owns a top-level slice. ----
+
+export interface AssistantThreadCreated {
+  thread: AssistantThread;
+}
+
+export interface AssistantThreadArchived {
+  threadId: string;
+  archivedAt: string;
+}
+
+export interface AssistantThreadRestored {
+  threadId: string;
+  restoredAt: string;
+}
+
+/** Replaces the thread's project scope wholesale. */
+export interface AssistantThreadScopeChanged {
+  threadId: string;
+  projectIds: string[];
+}
+
+export interface AssistantUserMessage {
+  threadId: string;
+  message: ChatMessage;
+}
+
+export interface AssistantMessageDelta {
+  threadId: string;
+  messageIndex: number;
+  delta: string;
+}
+
+export interface AssistantMessageComplete {
+  threadId: string;
+  message: ChatMessage;
+}
+
 // ---- The catalog: name → payload shape (the one registry both sides use) ----
 
 export interface EventBodyMap {
@@ -240,6 +280,13 @@ export interface EventBodyMap {
   pipelineRunEnded: PipelineRunEnded;
   pipelineGateResponded: PipelineGateResponded;
   commandOutput: CommandOutput;
+  assistantThreadCreated: AssistantThreadCreated;
+  assistantThreadArchived: AssistantThreadArchived;
+  assistantThreadRestored: AssistantThreadRestored;
+  assistantThreadScopeChanged: AssistantThreadScopeChanged;
+  assistantUserMessage: AssistantUserMessage;
+  assistantMessageDelta: AssistantMessageDelta;
+  assistantMessageComplete: AssistantMessageComplete;
 }
 
 export type EventName = keyof EventBodyMap;
@@ -279,10 +326,32 @@ export const EVENT_NAMES = Object.keys({
   pipelineRunEnded: null,
   pipelineGateResponded: null,
   commandOutput: null,
+  assistantThreadCreated: null,
+  assistantThreadArchived: null,
+  assistantThreadRestored: null,
+  assistantThreadScopeChanged: null,
+  assistantUserMessage: null,
+  assistantMessageDelta: null,
+  assistantMessageComplete: null,
 }) as EventName[];
 
 /** Events that persist for the live stream but skip replay (v1 rule). */
-export const EPHEMERAL: ReadonlySet<EventName> = new Set(['agentMessageDelta', 'commandOutput']);
+export const EPHEMERAL: ReadonlySet<EventName> = new Set([
+  'agentMessageDelta',
+  'commandOutput',
+  'assistantMessageDelta',
+]);
+
+/** Events published without a project scope (global domain state). */
+export const GLOBAL_EVENTS: ReadonlySet<EventName> = new Set([
+  'assistantThreadCreated',
+  'assistantThreadArchived',
+  'assistantThreadRestored',
+  'assistantThreadScopeChanged',
+  'assistantUserMessage',
+  'assistantMessageDelta',
+  'assistantMessageComplete',
+]);
 
 /** Whether an event name is in the catalog. */
 export function isEventName(name: string): name is EventName {

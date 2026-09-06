@@ -438,5 +438,89 @@
       "stepId": "st-2",
       "line": "npm test"
     }
+  },
+  {
+    "id": "e-33",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantThreadCreated",
+    "body": {
+      "thread": {
+        "id": "TH-1",
+        "name": "Thread 1",
+        "createdAt": "2026-09-04T12:00:00.123456Z",
+        "status": "idle",
+        "projectIds": [
+          "P-1"
+        ],
+        "messages": []
+      }
+    }
+  },
+  {
+    "id": "e-34",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantThreadArchived",
+    "body": {
+      "threadId": "TH-1",
+      "archivedAt": "2026-09-04T12:00:00.123456Z"
+    }
+  },
+  {
+    "id": "e-35",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantThreadRestored",
+    "body": {
+      "threadId": "TH-1",
+      "restoredAt": "2026-09-04T12:00:00.123456Z"
+    }
+  },
+  {
+    "id": "e-36",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantThreadScopeChanged",
+    "body": {
+      "threadId": "TH-1",
+      "projectIds": [
+        "P-1"
+      ]
+    }
+  },
+  {
+    "id": "e-37",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantUserMessage",
+    "body": {
+      "threadId": "TH-1",
+      "message": {
+        "index": 1,
+        "role": "user",
+        "text": "what needs me?",
+        "at": "2026-09-04T12:00:00.123456Z"
+      }
+    }
+  },
+  {
+    "id": "e-38",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantMessageDelta",
+    "body": {
+      "threadId": "TH-1",
+      "messageIndex": 2,
+      "delta": "Two projects"
+    }
+  },
+  {
+    "id": "e-39",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "assistantMessageComplete",
+    "body": {
+      "threadId": "TH-1",
+      "message": {
+        "index": 2,
+        "role": "agent",
+        "text": "Two projects have waiting approvals.",
+        "at": "2026-09-04T12:00:00.123456Z"
+      }
+    }
   }
 ]

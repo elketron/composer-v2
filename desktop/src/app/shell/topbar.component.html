@@ -12,7 +12,7 @@
 
   <nav class="global-nav" aria-label="application">
     <a routerLink="/dashboard" routerLinkActive="active">projects</a>
-    <span class="disabled" title="global assistant · planned">assistant</span>
+    <a routerLink="/assistant" routerLinkActive="active">assistant</a>
   </nav>
 
   @if (inWorkspace() && activeTab(); as project) {

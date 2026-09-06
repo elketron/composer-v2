@@ -79,6 +79,23 @@ export interface PlanningSession {
 
 export type AgentSessionStatus = 'running' | 'ended' | 'failed';
 
+// ---- Global assistant (Phase 6): threads are global domain state, not
+// per-project — the scope is the thread's explicitly selected projects. ----
+
+export type AssistantThreadStatus = 'idle' | 'running' | 'failed';
+
+export interface AssistantThread {
+  id: string;
+  name: string;
+  createdAt: string;
+  /** Derived from the transcript: a user message opens a turn, the reply closes it. */
+  status: AssistantThreadStatus;
+  /** The explicitly selected active projects the thread may read. */
+  projectIds: string[];
+  archivedAt?: string;
+  messages: ChatMessage[];
+}
+
 export type TranscriptEntry =
   | { kind: 'message'; message: ChatMessage }
   | { kind: 'toolCall'; toolCallId: string; toolName: string; args: unknown }

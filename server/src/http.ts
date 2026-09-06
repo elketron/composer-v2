@@ -301,6 +301,35 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
         approved: bool('approved') ?? false,
         ...(str('comment') !== undefined ? { comment: str('comment') } : {}),
       };
+    // Global assistant commands (Phase 6): no project scope.
+    case 'create:assistantThread':
+      return {
+        type: 'requestAssistantThreadCreate',
+        ...(str('name') !== undefined ? { name: str('name') } : {}),
+      };
+    case 'delete:assistantThread':
+      return { type: 'requestAssistantThreadArchive', threadId: str('id') ?? '' };
+    case 'create:assistantMessage':
+      return {
+        type: 'requestAssistantMessage',
+        threadId: str('threadId') ?? '',
+        text: str('text') ?? '',
+      };
+    case 'update:assistantThread': {
+      const threadId = str('id') ?? '';
+      if (bool('archived') === false) {
+        return { type: 'requestAssistantThreadRestore', threadId };
+      }
+      const projectIds = body['projectIds'];
+      if (Array.isArray(projectIds)) {
+        return {
+          type: 'requestAssistantThreadScope',
+          threadId,
+          projectIds: projectIds.filter((id): id is string => typeof id === 'string'),
+        };
+      }
+      return null;
+    }
     default:
       return null;
   }

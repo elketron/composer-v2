@@ -24,9 +24,13 @@ export class Bus {
     this.store = store;
   }
 
-  /** Rehydrates every project's log into the fold. */
+  /** Rehydrates every project's log (and the global events) into the fold. */
   async rehydrate(): Promise<number> {
     let count = 0;
+    for (const envelope of await this.store.replayGlobal()) {
+      this.apply(envelope);
+      count += 1;
+    }
     for (const projectId of await this.store.projectIds()) {
       for (const envelope of await this.store.replay(projectId)) {
         this.apply(envelope);

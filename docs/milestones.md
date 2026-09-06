@@ -617,6 +617,77 @@ they are not, and the board was meant to picture work moving through agents:
   implement collapse, per-type drop stage, agent-owned flags) and the board
   spec now covers the column set, filter behavior, and card placement.
 
+## S18 — Global assistant foundation  ·  done (2026-09-06)
+
+Phase 6's first slice: the assistant becomes a global domain (its own event
+family, global log slice, `/assistant` surface). Threads are persistent and
+named, carry an explicitly selected project scope, and turn through the
+shared engine — read-only for now (`mcpTools: 'none'`; the scoped read
+tools are S19, stop/retry/branching are Phase 7).
+
+- **Global events on the wire** (33–39): `assistantThreadCreated` (the
+  record rides the event), `assistantThreadArchived/Restored`,
+  `assistantThreadScopeChanged` (wholesale replace),
+  `assistantUserMessage`, `assistantMessageDelta` (ephemeral, 33rd
+  EPHEMERAL member), `assistantMessageComplete`. Global frames carry no
+  `projectId`; golden regenerated (e-33…e-39 unscoped) and both golden
+  tests amended (project events stay `P-1`, global ones stay undefined).
+- **Store/rehydrate**: `replayGlobal()` (`WHERE projectId IS NULL` — the
+  embedded engine binds JS `null` as SQL NULL, `IS NONE` matches nothing);
+  `bus.rehydrate()` replays the global slice before the projects'.
+- **Fold**: `State.assistantThreads`; user message → status `running`, the
+  reply's completion → `idle`. Transcript-index races heal in the fold: a
+  message never steals a slot the opposite role holds — the latecomer
+  lands past every folded message (the processor allocates indexes
+  outside the write lock, so a queued reply and a queued user message can
+  collide; both desktop and server fold mirror the heal).
+- **Processor**: the first commands with no project scope — thread create
+  (`TH-N`, blank name → `Thread N`), archive/restore (idempotent), scope
+  (unknown/archived projects rejected, duplicates collapse, archived
+  threads reject), message (archived threads closed, empty text
+  rejected); new `unknownThread` rejection.
+- **Engine**: `AgentTurnSpec.projectId` is optional (global turns) and
+  `mcpTools: 'planner' | 'none'` gates the MCP registration (`none` = no
+  composer tools at all — the assistant must not reach the planner's
+  write tools).
+- **Orchestrator** (`server/src/assistant.ts`): the planning turn loop
+  retargeted at threads — in-flight counting, per-engine-message index
+  reservation, engine-session continuity, failure published as an agent
+  message, `resumeStrandedThreads` at boot. Kill switch
+  `COMPOSER_ASSISTANT_ENABLED=0`; the shipped agent name is
+  `composer-assistant` (its definition ships with the read tools).
+- **Desktop**: `/assistant` (topbar link live, palette entry), an
+  `AssistantService` root-injected in `app.ts` (global frames pass every
+  SSE filter), thread sidebar with archive/restore, transcript with live
+  bubble, scope picker beside the conversation (chips + checkbox menu
+  over the active projects, wholesale apply), archive behind the
+  confirm dialog.
+
+Exit criteria (met): `pnpm verify` (server 102, desktop 208 — 14 new
+specs); the store restart test exercises global replay across real
+process boundaries (child boot 1 → first-open boot 2, ephemeral delta
+skipped); the live smoke drove create → scope → message → turn over HTTP
+against the scripted engine (the no-turn failure path publishes a real
+failure message; snapshot rebuilds the transcript; restart replays the
+global slice with `0 projects`).
+
+Research notes for later slices:
+
+- **In-process store reopen deadlocks** on the RocksDB file lock (the
+  engine holds it until process exit — `store.close()` releases the PID
+  lockfile but not RocksDB). Restart tests must cross a real process
+  boundary (child boot 1, parent first-opens as boot 2); `afterEach`
+  closes best-effort.
+- SurrealQL: `projectId IS NULL` matches the JS-bound `null`; `IS NONE`
+  does not (probed on the embedded engine).
+- The engine's MCP child env still carries `COMPOSER_SESSION_ID` (the
+  thread id for assistant turns); S19's read tools re-evaluate the env
+  contract when the tool surface grows.
+- The assistant's real-opencode story is deliberately deferred: without a
+  shipped agent file opencode silently falls back to its default agent,
+  so S19 must ship `composer-assistant.md` (a home outside the project
+  directories — the threads are global) before a real smoke.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

@@ -88,6 +88,18 @@ export function wireEvent(
   } as DomainEventJson;
 }
 
+/** Build a global (project-less) wire event (the assistant's family). */
+export function wireGlobalEvent(
+  kind: EventKind,
+  payload: Readonly<Record<string, unknown>>,
+): DomainEventJson {
+  return {
+    id: `e-${nextEventId++}`,
+    occurredAt: new Date().toISOString(),
+    [kind]: payload,
+  } as DomainEventJson;
+}
+
 /** Minimal card fixture in wire shape; override any field per test. */
 export function wireCard(overrides: Partial<CardJson> & { id: string }): CardJson {
   const now = new Date().toISOString();

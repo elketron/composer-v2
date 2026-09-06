@@ -54,8 +54,10 @@ export class FakeEngine implements AgentEngine {
       onEvent(event);
     };
     const tools: FakeTurnTools = {
-      editDocument: (document) => editDocument(this.caller, spec.projectId, spec.sessionId, document),
-      createTickets: (tickets) => createTickets(this.caller, spec.projectId, spec.sessionId, tickets),
+      editDocument: (document) =>
+        editDocument(this.caller, spec.projectId ?? '', spec.sessionId, document),
+      createTickets: (tickets) =>
+        createTickets(this.caller, spec.projectId ?? '', spec.sessionId, tickets),
     };
     if (turn === undefined) {
       return { ok: false, error: 'FakeEngine has no scripted turn left' };

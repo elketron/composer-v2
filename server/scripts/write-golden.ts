@@ -5,7 +5,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeFrame, nowIso } from '../src/wire/envelope.js';
-import { EVENT_NAMES, type EventBodyMap } from '../src/wire/events.js';
+import { EVENT_NAMES, GLOBAL_EVENTS, type EventBodyMap } from '../src/wire/events.js';
 
 const TS = '2026-09-04T12:00:00.123456Z';
 void nowIso;
@@ -126,12 +126,32 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
   pipelineRunEnded: { cardId: 'T-1', pipelineId: 'PL-1', status: 'completed' as const },
   pipelineGateResponded: { cardId: 'T-1', approved: true, comment: 'ship it' },
   commandOutput: { cardId: 'T-1', pipelineId: 'PL-1', stepId: 'st-2', line: 'npm test' },
+  assistantThreadCreated: {
+    thread: {
+      id: 'TH-1',
+      name: 'Thread 1',
+      createdAt: TS,
+      status: 'idle',
+      projectIds: ['P-1'],
+      messages: [],
+    },
+  },
+  assistantThreadArchived: { threadId: 'TH-1', archivedAt: TS },
+  assistantThreadRestored: { threadId: 'TH-1', restoredAt: TS },
+  assistantThreadScopeChanged: { threadId: 'TH-1', projectIds: ['P-1'] },
+  assistantUserMessage: { threadId: 'TH-1', message: message(1, 'user', 'what needs me?') },
+  assistantMessageDelta: { threadId: 'TH-1', messageIndex: 2, delta: 'Two projects' },
+  assistantMessageComplete: {
+    threadId: 'TH-1',
+    message: message(2, 'agent', 'Two projects have waiting approvals.'),
+  },
 };
 
 const frames = EVENT_NAMES.map((name, index) =>
   makeFrame({
     id: `e-${String(index + 1).padStart(2, '0')}`,
-    projectId: 'P-1',
+    // Global assistant events carry no project scope.
+    ...(GLOBAL_EVENTS.has(name) ? {} : { projectId: 'P-1' }),
     occurredAt: TS,
     name,
     body: bodies[name],

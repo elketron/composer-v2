@@ -13,6 +13,7 @@ import { EventStore } from './store.js';
 import { Processor } from './processor.js';
 import { router } from './http.js';
 import { PlanningOrchestrator, resumeStrandedTurns } from './planning.js';
+import { AssistantOrchestrator, resumeStrandedThreads } from './assistant.js';
 import { PipelineRunner } from './runner.js';
 import { cancelInterruptedRuns, seedDefaultPipelines } from './pipelines.js';
 import { OpenCodeEngine } from './engine/opencode.js';
@@ -27,6 +28,8 @@ export interface Config {
   engineFactory?: (caller: ComposerCaller) => AgentEngine;
   /** Off switch for the planning turn (the v1 PLANNER_ENABLED kill switch). */
   plannerEnabled?: boolean;
+  /** Off switch for the global assistant turn. */
+  assistantEnabled?: boolean;
 }
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
@@ -50,6 +53,7 @@ export async function boot(config: Config): Promise<{
   // t10: a restart drops in-flight turns; tell the stranded sessions (and
   // the desktop's send-lock) before anything listens.
   const resumed = await resumeStrandedTurns(bus);
+  const resumedThreads = await resumeStrandedThreads(bus);
 
   // D5: a restart ends non-terminal runs `cancelled`; the default coding
   // pipeline seeds every project that has neither it nor its tombstone
@@ -70,15 +74,18 @@ export async function boot(config: Config): Promise<{
   const url = `http://${hostname === '0.0.0.0' ? '127.0.0.1' : hostname}:${boundPort}`;
 
   // The engine (real opencode, or the scripted fake) is shared by the
-  // planning turn and the pipeline runner. The kill switch gates only the
-  // planner; user-authored pipelines always run.
+  // planning turn, the global assistant, and the pipeline runner. The kill
+  // switches gate only the planners; user-authored pipelines always run.
   const plannerEnabled = config.plannerEnabled ?? process.env['COMPOSER_PLANNER_ENABLED'] !== '0';
+  const assistantEnabled =
+    config.assistantEnabled ?? process.env['COMPOSER_ASSISTANT_ENABLED'] !== '0';
   const makeEngine = (): AgentEngine =>
     config.engineFactory?.(processor) ??
     (process.env['COMPOSER_FAKE_ENGINE'] === '1'
       ? new FakeEngine(processor)
       : new OpenCodeEngine());
   let stopPlanning: () => void = () => undefined;
+  let stopAssistant: () => void = () => undefined;
   let stopRunner: () => void = () => undefined;
   {
     const engine = makeEngine();
@@ -90,6 +97,15 @@ export async function boot(config: Config): Promise<{
       });
       orchestrator.start();
       stopPlanning = () => orchestrator.stop();
+    }
+    if (assistantEnabled) {
+      const assistant = new AssistantOrchestrator(bus, engine, {
+        serverUrl: url,
+        mcpScriptPath: mcpScriptPath(),
+        getModel: () => store.getSettings(),
+      });
+      assistant.start();
+      stopAssistant = () => assistant.stop();
     }
     const runner = new PipelineRunner(bus, processor, engine, {
       serverUrl: url,
@@ -104,14 +120,18 @@ export async function boot(config: Config): Promise<{
     `composer v2 listening on ${url}` +
       ` (replayed ${rehydrated} events, ${bus.state.projects.size} projects` +
       `${cancelled > 0 ? `, cancelled ${cancelled} interrupted run${cancelled === 1 ? '' : 's'}` : ''}` +
-      `${resumed > 0 ? `, resumed ${resumed} stranded turn${resumed === 1 ? '' : 's'}` : ''})` +
-      (plannerEnabled ? ' [planner: on]' : ' [planner: off]'),
+      `${resumed > 0 ? `, resumed ${resumed} stranded turn${resumed === 1 ? '' : 's'}` : ''}` +
+      `${resumedThreads > 0 ? `, resumed ${resumedThreads} stranded thread${resumedThreads === 1 ? '' : 's'}` : ''}` +
+      `)` +
+      (plannerEnabled ? ' [planner: on]' : ' [planner: off]') +
+      (assistantEnabled ? ' [assistant: on]' : ' [assistant: off]'),
   );
   return {
     url,
     close: async () => {
       stopRunner();
       stopPlanning();
+      stopAssistant();
       // Open SSE streams count as connections; drop them so close resolves.
       (server as { closeAllConnections?: () => void }).closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));

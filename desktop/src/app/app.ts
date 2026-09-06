@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 
+import { AssistantService } from './assistant/assistant.service';
 import { BoardService } from './board/board.service';
 import { ConfirmDialogComponent } from './core/confirm/confirm-dialog.component';
 import { EventsClient } from './core/events/events-client';
@@ -24,4 +25,5 @@ export class App {
   private readonly shell = inject(ShellService);
   private readonly board = inject(BoardService);
   private readonly plan = inject(PlanService);
+  private readonly assistant = inject(AssistantService);
 }

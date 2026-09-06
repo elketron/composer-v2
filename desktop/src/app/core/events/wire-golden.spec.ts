@@ -17,6 +17,17 @@ import fixture from '../../../../../wire-golden/events.json';
 //   cargo test -p composer-server golden_fixture_dump -- --ignored
 const frames = fixture as unknown as EventFrameJson[];
 
+/** Global assistant events carry no project scope (Phase 6). */
+const GLOBAL_KINDS: ReadonlySet<string> = new Set([
+  'assistantThreadCreated',
+  'assistantThreadArchived',
+  'assistantThreadRestored',
+  'assistantThreadScopeChanged',
+  'assistantUserMessage',
+  'assistantMessageDelta',
+  'assistantMessageComplete',
+]);
+
 const byKind = () => new Map(frames.map((frame) => [frame.eventType, frame]));
 
 describe('wire-golden/events.json', () => {
@@ -24,11 +35,15 @@ describe('wire-golden/events.json', () => {
     expect(frames.map((frame) => frame.eventType)).toEqual([...EVENT_KINDS]);
   });
 
-  it('frames carry project scope and an RFC 3339 timestamp', () => {
+  it('frames carry scope and an RFC 3339 timestamp', () => {
     for (const frame of frames) {
       expect(frame.id).toBeTruthy();
-      expect(frame.projectId).toBe('P-1');
       expect(Number.isNaN(Date.parse(frame.occurredAt))).toBe(false);
+      if (GLOBAL_KINDS.has(frame.eventType)) {
+        expect(frame.projectId).toBeUndefined();
+      } else {
+        expect(frame.projectId).toBe('P-1');
+      }
     }
   });
 

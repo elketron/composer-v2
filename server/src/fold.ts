@@ -6,6 +6,7 @@ import type { EventBodyMap, EventName } from './wire/events.js';
 import type { EventEnvelope } from './wire/envelope.js';
 import { isLaneValid, subStateFor } from './wire/models.js';
 import type {
+  AssistantThread,
   ChatMessage,
   Pipeline,
   PipelineRunStatus,
@@ -81,10 +82,12 @@ export interface CardState {
 export interface State {
   projects: Map<string, Project>;
   byProject: Map<string, ProjectState>;
+  /** Global assistant threads (Phase 6) — no projectId; the scope rides the thread. */
+  assistantThreads: Map<string, AssistantThread>;
 }
 
 export function newState(): State {
-  return { projects: new Map(), byProject: new Map() };
+  return { projects: new Map(), byProject: new Map(), assistantThreads: new Map() };
 }
 
 /** The card sub-state stage a pipeline step kind works in (v1, M3). */
@@ -394,6 +397,49 @@ export function apply(state: State, envelope: EventEnvelope): void {
       });
       break;
     }
+
+    // ---- Global assistant (Phase 6): global events carry no projectId ----
+
+    case 'assistantThreadCreated': {
+      const body = envelope.body as EventBodyMap['assistantThreadCreated'];
+      state.assistantThreads.set(body.thread.id, structuredClone(body.thread));
+      break;
+    }
+    case 'assistantThreadArchived': {
+      const body = envelope.body as EventBodyMap['assistantThreadArchived'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (thread) thread.archivedAt = body.archivedAt;
+      break;
+    }
+    case 'assistantThreadRestored': {
+      const body = envelope.body as EventBodyMap['assistantThreadRestored'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (thread) delete thread.archivedAt;
+      break;
+    }
+    case 'assistantThreadScopeChanged': {
+      const body = envelope.body as EventBodyMap['assistantThreadScopeChanged'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (thread) thread.projectIds = [...body.projectIds];
+      break;
+    }
+    case 'assistantUserMessage': {
+      const body = envelope.body as EventBodyMap['assistantUserMessage'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (!thread) break;
+      foldThreadMessage(thread, body.message);
+      // A user message opens the turn (the reply's completion closes it).
+      thread.status = 'running';
+      break;
+    }
+    case 'assistantMessageComplete': {
+      const body = envelope.body as EventBodyMap['assistantMessageComplete'];
+      const thread = state.assistantThreads.get(body.threadId);
+      if (!thread) break;
+      foldThreadMessage(thread, body.message);
+      thread.status = 'idle';
+      break;
+    }
     default:
       // Domains not folded yet arrive in their slices; unknown names are
       // ignored so the fold is total over the catalog.
@@ -403,3 +449,31 @@ export function apply(state: State, envelope: EventEnvelope): void {
 
 /** Pipeline state accessors (unused before their slice; typed now). */
 export type { Pipeline };
+
+/**
+ * Folds one thread message. Message indexes are the transcript's order —
+ * the command path allocates them outside the write lock, so a queued
+ * message can race a queued reply onto the same index. A message never
+ * steals a slot the opposite role already holds: the latecomer lands past
+ * every folded message instead (re-applying the event finds its own slot
+ * free, so the fold stays idempotent).
+ */
+function foldThreadMessage(thread: AssistantThread, incoming: ChatMessage): void {
+  const occupant = thread.messages.find((existing) => existing.index === incoming.index);
+  const message =
+    occupant !== undefined && occupant.role !== incoming.role
+      ? { ...incoming, index: nextThreadMessageIndex(thread) }
+      : incoming;
+  upsertThreadMessage(thread, message);
+}
+
+function upsertThreadMessage(thread: AssistantThread, message: ChatMessage): void {
+  thread.messages = thread.messages
+    .filter((existing) => existing.index !== message.index)
+    .concat(structuredClone(message))
+    .sort((a, b) => a.index - b.index);
+}
+
+function nextThreadMessageIndex(thread: AssistantThread): number {
+  return thread.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
+}

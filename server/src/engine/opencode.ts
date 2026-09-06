@@ -80,7 +80,7 @@ export class OpenCodeEngine implements AgentEngine {
       env: {
         ...process.env,
         COMPOSER_SERVER_URL: spec.serverUrl,
-        COMPOSER_PROJECT_ID: spec.projectId,
+        ...(spec.projectId !== undefined ? { COMPOSER_PROJECT_ID: spec.projectId } : {}),
         COMPOSER_SESSION_ID: spec.sessionId,
         OPENCODE_CONFIG_CONTENT: JSON.stringify(mcpConfig(spec)),
         // opencode trusts $PWD over the real cwd for workspace discovery —
@@ -280,12 +280,17 @@ function mcpConfig(spec: AgentTurnSpec): Record<string, unknown> {
     // The settings-configured model override; absent keeps opencode's own
     // default (its config owns the provider endpoint).
     ...(spec.model ? { model: spec.model } : {}),
-    mcp: {
-      composer: {
-        type: 'local',
-        command: ['node', spec.mcpScriptPath],
-        enabled: true,
-      },
-    },
+    // No tool surface requested: no composer registration at all.
+    ...(spec.mcpTools === 'none'
+      ? {}
+      : {
+          mcp: {
+            composer: {
+              type: 'local',
+              command: ['node', spec.mcpScriptPath],
+              enabled: true,
+            },
+          },
+        }),
   };
 }
