@@ -856,6 +856,64 @@ Research notes for later slices:
   respawns the current dist). A `/health` version pin in the gateway
   would make this automatic if it bites again.
 
+## S22 — Streaming assistant turns (serve engine)  ·  done (2026-09-06)
+
+The user-facing gap behind "streaming in chat": `opencode run --format
+json` buffers a turn's text and emits it once (probed: one delta with the
+full reply), so every chat turn landed all at once. The assistant now
+runs on a long-lived `opencode serve` per thread whose SSE feed carries
+token-level deltas.
+
+- **Engine** (`server/src/engine/serve.ts`, `OpenCodeServeEngine`): one
+  `opencode serve` process per chat key (the thread), spawned on the
+  first turn with the turn spec's workspace + inline MCP config
+  (`mcpConfig` shared with the run engine). Per turn: create/reuse the
+  runtime session (`GET /session/:id` liveness check → recreate on 404),
+  `POST /session/:id/prompt_async`, and translate the serve's `/event`
+  SSE feed — `message.part.updated` (part snapshots), `message.part.delta`
+  (token chunks), tool parts (announce once / settle once),
+  `session.error` (`MessageAbortedError` = stop), `session.idle` (turn
+  end). Stop/timeout POST `/session/:id/abort`. `AgentEngine` gains an
+  optional `close()`; boot kills the serves on shutdown.
+- **Per-thread serve, not global**: the composer MCP child inherits the
+  serve's env (`COMPOSER_THREAD_ID`), so one serve per thread keeps the
+  read tools' scope context correct — a global serve could not.
+- **Reducer** (`ServeEventReducer`) is a unit-tested pure translation
+  (role-map gating so the prompt echo never surfaces, snapshot suffixes,
+  idempotent settle); the process/HTTP orchestration is smoke-verified.
+- **Boot**: the assistant gets the serve engine unless
+  `COMPOSER_ASSISTANT_SERVE=0` or an engineFactory is configured (tests
+  keep the FakeEngine); planner/coder stay on `run` (their per-spawn env
+  is the MCP write-tools' context, and their runs interleave tool calls
+  that stream as events anyway).
+- **Snapshot ids**: synthetic snapshot frames now carry a per-call nonce
+  (`snapshot-<nonce>-<n>`) — reused ids made clients' seen-id dedupe
+  drop re-delivered snapshot events on reconnect, which wedged the
+  assistant's send-lock (a completion that never "arrived" twice).
+- **Desktop**: the streaming bubble renders plain text while streaming
+  (markdown lands with the durable completion — no per-delta re-parse
+  flicker), and the transcript sticks to the bottom while streaming
+  unless the user scrolls up.
+
+Exit criteria (met): `pnpm verify` (server 140, desktop 221); the live
+smoke in the real app streamed a turn token-by-token (12
+`assistantMessageDelta` frames for an eight-word count, watched arriving
+incrementally on the SSE capture and in the renderer) with the durable
+completion landing after.
+
+Research notes for later slices:
+
+- Serve sessions live in opencode's global session store — continuity
+  even survives a serve respawn (the session id resolves again), but the
+  engine's in-process continuity map does not (a restart starts a fresh
+  runtime session, D5 as before).
+- The serve event stream carries the user's prompt echo as a text part;
+  the reducer's role map (from `message.updated`) is what keeps it out of
+  the transcript. Keep that gate when touching part handling.
+- `run --attach` was considered and rejected: sessions would execute on
+  the serve process, whose static env cannot carry the per-turn
+  `COMPOSER_PROJECT_ID/SESSION_ID` the planner/coder MCP children need.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

@@ -277,7 +277,7 @@ function tail(text: string): string {
 }
 
 /** The composer MCP server, registered inline per spawn (no project config edits). */
-function mcpConfig(spec: AgentTurnSpec): Record<string, unknown> {
+export function mcpConfig(spec: AgentTurnSpec): Record<string, unknown> {
   return {
     $schema: 'https://opencode.ai/config.json',
     // The settings-configured model override; absent keeps opencode's own

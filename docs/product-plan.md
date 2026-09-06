@@ -196,7 +196,8 @@ enumerates project-scoped events.
 
 Status: implemented 2026-09-06 (S20: stop, retry, explicit statuses,
 rename, safe markdown; S21: edit-and-resend with immutable branch
-lineage and the branch navigator).
+lineage and the branch navigator; S22: token-level streaming on a
+serve-based runtime).
 
 The assistant surface contains a thread sidebar, transcript, visible project
 scope picker, composer, and contextual proposal panel.

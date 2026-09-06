@@ -18,6 +18,7 @@ import { PipelineRunner } from './runner.js';
 import { cancelInterruptedRuns, seedDefaultPipelines } from './pipelines.js';
 import { OpenCodeEngine } from './engine/opencode.js';
 import { FakeEngine } from './engine/fake.js';
+import { OpenCodeServeEngine } from './engine/serve.js';
 import type { AgentEngine } from './engine/types.js';
 import type { ComposerCaller } from './engine/planner-tools.js';
 
@@ -74,8 +75,8 @@ export async function boot(config: Config): Promise<{
   const url = `http://${hostname === '0.0.0.0' ? '127.0.0.1' : hostname}:${boundPort}`;
 
   // The engine (real opencode, or the scripted fake) is shared by the
-  // planning turn, the global assistant, and the pipeline runner. The kill
-  // switches gate only the planners; user-authored pipelines always run.
+  // planning turn and the pipeline runner. The kill switches gate only the
+  // planners; user-authored pipelines always run.
   const plannerEnabled = config.plannerEnabled ?? process.env['COMPOSER_PLANNER_ENABLED'] !== '0';
   const assistantEnabled =
     config.assistantEnabled ?? process.env['COMPOSER_ASSISTANT_ENABLED'] !== '0';
@@ -87,6 +88,7 @@ export async function boot(config: Config): Promise<{
   let stopPlanning: () => void = () => undefined;
   let stopAssistant: () => void = () => undefined;
   let stopRunner: () => void = () => undefined;
+  let closeAssistantEngine: (() => void) | undefined;
   {
     const engine = makeEngine();
     if (plannerEnabled) {
@@ -99,8 +101,16 @@ export async function boot(config: Config): Promise<{
       stopPlanning = () => orchestrator.stop();
     }
     if (assistantEnabled) {
+      // The assistant streams: its turn runs on a long-lived `opencode
+      // serve` per thread whose SSE feed carries token deltas (the `run`
+      // command buffers a turn's text). The kill switch falls back to the
+      // shared run engine.
+      const assistantEngine: AgentEngine =
+        config.engineFactory !== undefined || process.env['COMPOSER_ASSISTANT_SERVE'] === '0'
+          ? engine
+          : new OpenCodeServeEngine();
       const workspaceDir = join(config.dataDir, 'assistant');
-      const assistant = new AssistantOrchestrator(bus, engine, {
+      const assistant = new AssistantOrchestrator(bus, assistantEngine, {
         serverUrl: url,
         mcpScriptPath: assistantMcpScriptPath(),
         workspaceDir,
@@ -108,6 +118,7 @@ export async function boot(config: Config): Promise<{
       });
       assistant.start();
       stopAssistant = () => assistant.stop();
+      closeAssistantEngine = () => assistantEngine.close?.();
     }
     const runner = new PipelineRunner(bus, processor, engine, {
       serverUrl: url,
@@ -134,6 +145,7 @@ export async function boot(config: Config): Promise<{
       stopRunner();
       stopPlanning();
       stopAssistant();
+      closeAssistantEngine?.();
       // Open SSE streams count as connections; drop them so close resolves.
       (server as { closeAllConnections?: () => void }).closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));

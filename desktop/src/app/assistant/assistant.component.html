@@ -104,7 +104,11 @@
         </details>
       </header>
 
-      <div class="transcript">
+      <div
+        #transcript
+        class="transcript"
+        (scroll)="onTranscriptScroll()"
+      >
         @if (messages().length === 0 && !streamingMessage()) {
           <div class="state-empty">
             <span class="state-label">assistant</span>
@@ -157,7 +161,7 @@
               <span class="message-index">m{{ message.index }}</span>
             </header>
             @if (message.text) {
-              <div class="message-text markdown" [innerHTML]="markdown(message.text)"></div>
+              <div class="message-text">{{ message.text }}</div>
             } @else {
               <div class="message-text thinking">thinking…</div>
             }

@@ -2,6 +2,7 @@
 // fold's expected order (v1 rule — folds are idempotent, so a resubscribe
 // with fresh ids is safe).
 
+import { randomUUID } from 'node:crypto';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
 import type { EventName } from './wire/events.js';
@@ -11,11 +12,15 @@ function frame(
   projectId: string | undefined,
   name: EventName,
   body: unknown,
+  nonce: string,
   index: number,
   occurredAt = nowIso(),
 ): EventFrame {
   return {
-    id: `snapshot-${index}`,
+    // The per-snapshot nonce keeps reconnects' re-deliveries distinct for
+    // clients that dedupe by event id — a reused id would make them drop
+    // a state transition (e.g. the completion that clears a send-lock).
+    id: `snapshot-${nonce}-${index}`,
     ...(projectId !== undefined ? { projectId } : {}),
     occurredAt,
     eventType: name,
@@ -25,6 +30,7 @@ function frame(
 
 export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
   const events: EventFrame[] = [];
+  const nonce = randomUUID().slice(0, 8);
   let index = 0;
 
   // Global assistant threads first (Phase 6): the creation event carries the
@@ -35,7 +41,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
     );
     for (const thread of threads) {
-      events.push(frame(undefined, 'assistantThreadCreated', { thread: structuredClone(thread) }, index++));
+      events.push(frame(undefined, 'assistantThreadCreated', { thread: structuredClone(thread) }, nonce, index++));
       for (const message of thread.messages) {
         const eventType = message.role === 'user' ? 'assistantUserMessage' : 'assistantMessageComplete';
         events.push(
@@ -43,6 +49,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
             undefined,
             eventType,
             { threadId: thread.id, message: structuredClone(message) },
+            nonce,
             index++,
           ),
         );
@@ -51,7 +58,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       // re-marks itself so its terminal status survives the snapshot.
       if (thread.status === 'stopped' || thread.status === 'failed') {
         events.push(
-          frame(undefined, 'assistantThreadStatusChanged', { threadId: thread.id, status: thread.status }, index++),
+          frame(undefined, 'assistantThreadStatusChanged', { threadId: thread.id, status: thread.status }, nonce, index++),
         );
       }
     }
@@ -62,7 +69,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
   for (const project of projects) {
-    events.push(frame(project.id, 'projectCreated', { project }, index++));
+    events.push(frame(project.id, 'projectCreated', { project }, nonce, index++));
     const projectState = state.byProject.get(project.id);
     if (!projectState) continue;
 
@@ -70,7 +77,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       a[0].localeCompare(b[0]),
     );
     for (const [lane, on] of automation) {
-      events.push(frame(project.id, 'automationToggled', { lane, on }, index++));
+      events.push(frame(project.id, 'automationToggled', { lane, on }, nonce, index++));
     }
 
     // Planning sessions replay their current record (the creation event
@@ -80,7 +87,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
     );
     for (const session of sessions) {
-      events.push(frame(project.id, 'planningSessionCreated', { session: structuredClone(session) }, index++));
+      events.push(frame(project.id, 'planningSessionCreated', { session: structuredClone(session) }, nonce, index++));
       for (const message of session.messages) {
         const eventType = message.role === 'user' ? 'userMessageReceived' : 'agentMessageComplete';
         events.push(
@@ -88,6 +95,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
             project.id,
             eventType,
             { sessionId: session.id, message: structuredClone(message) },
+            nonce,
             index++,
           ),
         );
@@ -104,6 +112,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
           project.id,
           'agentSessionStarted',
           { cardId: session.cardId, sessionId: session.id, agentKind: 'coder', startedAt: session.startedAt },
+          nonce,
           index++,
         ),
       );
@@ -114,6 +123,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
               project.id,
               'agentMessageComplete',
               { sessionId: session.id, message: structuredClone(entry.message) },
+              nonce,
               index++,
             ),
           );
@@ -123,6 +133,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
               project.id,
               'agentToolCall',
               { sessionId: session.id, toolCallId: entry.toolCallId, toolName: entry.toolName, args: entry.args },
+              nonce,
               index++,
             ),
           );
@@ -132,6 +143,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
               project.id,
               'agentToolResult',
               { sessionId: session.id, toolCallId: entry.toolCallId, content: entry.content, isError: entry.isError },
+              nonce,
               index++,
             ),
           );
@@ -149,6 +161,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
               ...(session.error !== undefined ? { error: session.error } : {}),
               endedAt: session.endedAt ?? session.startedAt,
             },
+            nonce,
             index++,
           ),
         );
@@ -159,7 +172,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       (a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id),
     );
     for (const pipeline of pipelines) {
-      events.push(frame(project.id, 'pipelineSaved', { pipeline: structuredClone(pipeline) }, index++));
+      events.push(frame(project.id, 'pipelineSaved', { pipeline: structuredClone(pipeline) }, nonce, index++));
     }
 
     // Terminal latest-run outcomes are durable dashboard state. Recreate the
@@ -172,6 +185,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
           project.id,
           'pipelineRunStarted',
           { cardId, pipelineId: run.pipelineId },
+          nonce,
           index++,
           run.startedAt,
         ),
@@ -186,6 +200,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
             status: run.status,
             ...(run.error !== undefined ? { error: run.error } : {}),
           },
+          nonce,
           index++,
           run.endedAt ?? run.startedAt,
         ),
@@ -202,6 +217,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
           project.id,
           'pipelineRunStarted',
           { cardId, pipelineId: run.pipelineId },
+          nonce,
           index++,
           startedAt,
         ),
@@ -212,6 +228,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
             project.id,
             'pipelineStepStarted',
             { cardId, pipelineId: run.pipelineId, stepId: run.stepId, kind: run.stepKind },
+            nonce,
             index++,
           ),
         );
@@ -221,7 +238,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     for (const card of [...projectState.cards.values()].sort(
       (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
     )) {
-      events.push(frame(project.id, 'cardCreated', { card: { ...card } }, index++));
+      events.push(frame(project.id, 'cardCreated', { card: { ...card } }, nonce, index++));
     }
     // Blocked cards replay their dependency state (order-insensitive fold).
     for (const card of projectState.cards.values()) {
@@ -231,6 +248,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
             project.id,
             'dependencyStateChanged',
             { cardId: card.id, blocked: true, blockedBy: [...card.blockedBy] },
+            nonce,
             index++,
           ),
         );

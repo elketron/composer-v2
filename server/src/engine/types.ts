@@ -56,4 +56,6 @@ export interface AgentEngine {
     spec: AgentTurnSpec,
     onEvent: (event: AgentTurnEvent) => void,
   ): Promise<AgentTurnOutcome>;
+  /** Releases engine-held resources (serve processes); best-effort. */
+  close?(): void | Promise<void>;
 }

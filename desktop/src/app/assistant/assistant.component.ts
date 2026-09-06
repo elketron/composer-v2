@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal, viewChild, ElementRef } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, viewChild, ElementRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { renderMarkdown } from '../core/markdown';
@@ -62,9 +62,33 @@ export class AssistantComponent {
   });
 
   private readonly composerArea = viewChild<ElementRef<HTMLTextAreaElement>>('composer');
+  private readonly transcriptEl = viewChild<ElementRef<HTMLElement>>('transcript');
+
+  /** Streaming stays pinned to the bottom unless the user scrolled up. */
+  private readonly pinned = signal(true);
+
+  constructor() {
+    // Follow the stream: on any transcript change, snap to the bottom when
+    // the user hasn't scrolled away.
+    effect(() => {
+      this.messages();
+      this.streamingMessage();
+      if (!this.pinned()) return;
+      const pane = this.transcriptEl()?.nativeElement;
+      if (pane) pane.scrollTop = pane.scrollHeight;
+    });
+  }
+
+  protected onTranscriptScroll(): void {
+    const pane = this.transcriptEl()?.nativeElement;
+    if (!pane) return;
+    const atBottom = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48;
+    this.pinned.set(atBottom);
+  }
 
   protected select(threadId: string): void {
     this.assistant.select(threadId);
+    this.pinned.set(true);
   }
 
   protected newThread(): void {
@@ -94,7 +118,10 @@ export class AssistantComponent {
 
   protected retry(): void {
     const thread = this.thread();
-    if (thread) void this.assistant.retryThread(thread.id);
+    if (thread) {
+      this.pinned.set(true);
+      void this.assistant.retryThread(thread.id);
+    }
   }
 
   protected startRename(): void {
@@ -206,6 +233,7 @@ export class AssistantComponent {
       return;
     }
     const text = this.draft();
+    this.pinned.set(true);
     void this.assistant.sendMessage(text).then((sent) => {
       if (sent) {
         this.draft.set('');
