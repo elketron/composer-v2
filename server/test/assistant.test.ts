@@ -581,6 +581,37 @@ describe('the assistant turn', () => {
     expect(replayed?.toolCalls).toEqual(thread.toolCalls);
   });
 
+  it('a_multi_part_turn_lands_only_the_final_reply', async () => {
+    const id = await createThread();
+    engine.enqueue(async ({ emit }) => {
+      // An intermediate part (e.g. text before a tool call): streams live,
+      // never lands durably.
+      emit({ kind: 'messageDelta', messageId: 'm1', delta: 'Let me look around.' });
+      emit({ kind: 'messageComplete', messageId: 'm1', text: 'Let me look around.' });
+      // The turn's final message (the fake pairs the return with the last delta).
+      emit({ kind: 'messageDelta', messageId: 'm2', delta: 'Here is ' });
+      emit({ kind: 'messageDelta', messageId: 'm2', delta: 'the summary.' });
+      return 'Here is the summary.';
+    });
+
+    const sent = await processor.execute(undefined, {
+      type: 'requestAssistantMessage',
+      threadId: id,
+      text: 'what needs me?',
+    });
+    expect(sent.ok).toBe(true);
+    await waitUntil(() => threadOf(id).status === 'idle');
+
+    const agentMessages = threadOf(id).messages.filter((message) => message.role === 'agent');
+    expect(agentMessages).toHaveLength(1);
+    expect(agentMessages[0]?.text).toBe('Here is the summary.');
+    // Exactly one durable completion frame landed (the intermediate part
+    // streamed as ephemeral deltas only).
+    const completions = recorded.filter((frame) => frame.eventType === 'assistantMessageComplete');
+    expect(completions).toHaveLength(1);
+    expect(completions[0]?.projectId).toBeUndefined();
+  });
+
   it('the_thread_scope_rides_the_prompt_and_the_engine_session_is_kept', async () => {
     const alpha = await createProject('alpha');
     const id = await createThread();

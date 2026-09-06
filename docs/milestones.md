@@ -1021,7 +1021,11 @@ turns stay inspectable.
   `toolCall`/`toolResult` turn events (the serve reducer already
   announced/settled tool parts — S22) instead of dropping them. Result
   summaries are capped at 2 000 chars (the log keeps the digest; full
-  outputs stay reachable through the tools themselves).
+  outputs stay reachable through the tools themselves). One durable reply
+  per turn: intermediate text parts stream as ephemeral deltas only and
+  the final message lands at run end — the thread no longer flips `idle`
+  mid-turn, so the strip stays live throughout; a stop lands the latest
+  content (the streaming partial, else the last completed part).
 - **Fold**: the call creates a per-thread entry (idempotent by
   `toolCallId`; `AssistantThread.toolCalls` is additive — old logs fold
   without it); the result patches the entry's summary in place. The

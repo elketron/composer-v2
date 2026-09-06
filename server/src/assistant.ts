@@ -58,8 +58,14 @@ export class AssistantOrchestrator {
   private readonly engineSessions = new Map<string, string>();
   /** Thread id → the in-flight turn's abort controller (the stop kill switch). */
   private readonly controllers = new Map<string, AbortController>();
-  /** Thread id → the streaming message being accumulated (for stop's partial text). */
+  /** Thread id → the part currently streaming (its partial text, for stop). */
   private readonly streaming = new Map<string, { messageId: string; text: string }>();
+  /**
+   * Thread id → the turn's last completed message part. Intermediate parts
+   * stream live but never land durably — one reply per turn, the final one
+   * (the tool strip carries the in-between story). Flushed at run end.
+   */
+  private readonly lastCompletion = new Map<string, { messageId: string; text: string }>();
   /** Thread id → the user message id the in-flight turn answers (reply lineage). */
   private readonly turnParents = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
@@ -122,6 +128,8 @@ export class AssistantOrchestrator {
       this.inFlight.delete(threadId);
       this.reservedIndex.delete(threadId);
       this.lastReserved.delete(threadId);
+      this.lastCompletion.delete(threadId);
+      this.streaming.delete(threadId);
     }
   }
 
@@ -140,6 +148,8 @@ export class AssistantOrchestrator {
       this.inFlight.delete(threadId);
       this.reservedIndex.delete(threadId);
       this.lastReserved.delete(threadId);
+      this.lastCompletion.delete(threadId);
+      this.streaming.delete(threadId);
     }
   }
 
@@ -194,13 +204,14 @@ export class AssistantOrchestrator {
       }
       if (!outcome.ok) {
         if (controller.signal.aborted) {
-          // A user stop: the partial reply (if any) lands as the turn's
-          // content; the thread keeps its canonical `stopped` status.
+          // A user stop: the latest content lands as the turn's one reply —
+          // the part that was streaming, else the last completed part — and
+          // the thread keeps its canonical `stopped` status.
           const stream = this.streaming.get(threadId);
-          const stoppedText =
-            stream?.text !== undefined && stream.text !== '' ? stream.text : 'stopped.';
-          await this.publishAssistantMessage(threadId, stream?.messageId ?? `stopped:${threadId}`, stoppedText);
-          this.streaming.delete(threadId);
+          const last = this.lastCompletion.get(threadId);
+          const messageId = stream?.messageId ?? last?.messageId ?? `stopped:${threadId}`;
+          const text = stream?.text !== undefined && stream.text !== '' ? stream.text : (last?.text ?? 'stopped.');
+          await this.publishAssistantMessage(threadId, messageId, text);
           return;
         }
         // The desktop's send-lock clears on the next assistant message; a
@@ -215,6 +226,13 @@ export class AssistantOrchestrator {
           status: 'failed',
         });
         return;
+      }
+
+      // One durable reply per turn: only the final message lands.
+      const last = this.lastCompletion.get(threadId);
+      this.lastCompletion.delete(threadId);
+      if (last !== undefined) {
+        await this.publishAssistantMessage(threadId, last.messageId, last.text);
       }
 
       const now = this.threadOf(threadId);
@@ -267,12 +285,14 @@ export class AssistantOrchestrator {
       return;
     }
     if (event.kind === 'messageComplete') {
-      // A completed part clears the stream buffer (its text landed durably).
+      // The part's authoritative text buffers for the flush at run end;
+      // nothing durable lands mid-turn (one reply per turn).
+      this.lastCompletion.set(threadId, { messageId: event.messageId, text: event.text });
       const stream = this.streaming.get(threadId);
       if (stream?.messageId === event.messageId) this.streaming.delete(threadId);
+      return;
     }
-    if (event.kind !== 'messageComplete') return;
-    void this.publishAssistantMessage(threadId, event.messageId, event.text);
+    return;
   }
 
   private async publishAssistantMessage(
