@@ -494,6 +494,33 @@ First slice of the product plan's Phase 5 (cross-application UX refinement):
   (`max-width: 100%`, stretch instead of fit-content) and the health chips
   truncate individually.
 
+## S12 — Command palette  ·  done (2026-09-06)
+
+Second slice of Phase 5 (cross-application UX refinement and command palette):
+
+- **Global palette** (`Ctrl/Cmd+K`): `PaletteService` + `PaletteComponent`
+  mount one overlay at the app root — a query input over a ranked result
+  list. Arrow keys move the active entry (cyclically), Enter runs it, Escape
+  and the backdrop close; the input takes focus on open and a footer hints
+  the keys.
+- **Commands**: shell destinations (projects dashboard, settings), per-project
+  navigation (open, board, plan, pipelines, coding — built from shell state so
+  projects appear and disappear without wiring), and actions: new project,
+  refresh project health, and archive project (which reuses the S11
+  confirmation dialog before publishing).
+- **Matching**: case-insensitive ranking — label prefix, then word prefix,
+  then keyword hit, then in-order subsequence fallback.
+- **Discoverability**: a topbar palette button (search glyph + `Ctrl K` hint,
+  hidden on narrow windows) opens the palette for users who have not learned
+  the shortcut.
+- **Tests**: the service spec covers item composition, ranking tiers, cyclic
+  movement, execution closing the palette, and the archive action's
+  confirmation gate (accept publishes, reject does not); the component spec
+  covers Ctrl+K open/focus, Escape close, typed filtering, Enter execution
+  with navigation, arrow-key movement, and backdrop dismissal — verified live
+  in the Electron renderer (open, filter "plan", Enter lands on the plan
+  view, no console errors).
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

@@ -41,6 +41,19 @@
   <div class="spacer"></div>
 
   <div class="actions">
+    <button
+      type="button"
+      class="palette-button"
+      title="command palette (Ctrl+K)"
+      aria-label="open command palette"
+      (click)="openPalette()"
+    >
+      <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" />
+        <path d="M10.5 10.5 L14 14" stroke="currentColor" />
+      </svg>
+      <kbd>Ctrl K</kbd>
+    </button>
     <button type="button" class="add" title="new project" aria-label="new project" (click)="add()">
       +
     </button>

@@ -1,0 +1,37 @@
+@if (palette.isOpen()) {
+  <div class="backdrop" (click)="palette.close()">
+    <div class="palette" role="dialog" aria-modal="true" aria-label="command palette" (click)="$event.stopPropagation()">
+      <input
+        #search
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="type a command…"
+        aria-label="search commands"
+        [value]="palette.query()"
+        (input)="palette.setQuery(search.value)"
+        (keydown)="onKeydown($event)"
+      />
+      <ul role="listbox" aria-label="commands">
+        @for (item of palette.results(); track item.id; let i = $index) {
+          <li
+            role="option"
+            [class.active]="i === palette.activeIndex()"
+            [attr.aria-selected]="i === palette.activeIndex()"
+            (mouseenter)="palette.activeIndex.set(i)"
+            (click)="palette.executeAt(i)"
+          >
+            <span class="label">{{ item.label }}</span>
+            @if (item.hint; as hint) {
+              <span class="hint">{{ hint }}</span>
+            }
+          </li>
+        }
+      </ul>
+      @if (palette.results().length === 0) {
+        <p class="empty">no matching commands</p>
+      }
+      <footer>↑↓ navigate · ↵ run · esc close</footer>
+    </div>
+  </div>
+}

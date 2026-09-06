@@ -3,6 +3,7 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { filter, map } from 'rxjs';
 
+import { PaletteService } from '../core/palette/palette.service';
 import { ShellService } from './shell.service';
 
 /**
@@ -22,6 +23,7 @@ import { ShellService } from './shell.service';
 export class TopbarComponent {
   private readonly shell = inject(ShellService);
   private readonly router = inject(Router);
+  private readonly palette = inject(PaletteService);
 
   protected readonly activeTab = this.shell.activeTab;
   protected readonly model = this.shell.model;
@@ -55,6 +57,10 @@ export class TopbarComponent {
 
   protected add(): void {
     void this.shell.addTab();
+  }
+
+  protected openPalette(): void {
+    this.palette.openPalette();
   }
 
   protected linkDirectory(id: string, event: Event): void {
