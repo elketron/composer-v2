@@ -264,6 +264,14 @@
   font-size: 12px;
 }
 
+.row-stages {
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .row-steps {
   color: var(--text-faint);
   font-size: 12px;
@@ -276,4 +284,101 @@
   margin-left: auto;
   display: flex;
   gap: 6px;
+}
+
+
+.stages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stage {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stage-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  input[type='text'] {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.stage-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.stage-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  input[type='text'] {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 12px;
+    padding: 2px 6px;
+  }
+
+  select {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 12px;
+    padding: 2px 4px;
+  }
+}
+
+.outcome-rule {
+  .rule-label {
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+
+  input[type='text'] {
+    flex: 0 1 180px;
+  }
+}
+
+.flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.error-return {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+
+  select {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 12px;
+    padding: 2px 4px;
+  }
 }

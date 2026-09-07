@@ -1,29 +1,34 @@
-// The pipeline runner (S3): one in-process sequential task per run — no
-// durable runs (D5). Steps execute in order: `command` (child process in
-// the project directory, output captured, wall-clock cap), `agent` (the
-// engine; agentKind names the shipped worker — coder, tester, reviewer,
-// security), `human` (the run parks `waiting`; the gate command resolves
-// it). Lane + sub-state are the board's progress projection (v1
-// on_step_started/on_step_finished semantics): each agent kind works its
-// own lane and checklist stage, command → validation, human → approval,
-// all override moves; a lane the card's type doesn't carry (security is
-// code-only) projects nothing.
+// The pipeline runner (S3, staged in Phase 10): one in-process sequential
+// task per run — no durable runs (D5). A run is a first-class record (R-N)
+// pinned to the pipeline revision it started on, and it executes the steps
+// whose stage is at or after the card's current stage: each step's start
+// moves the card to the step's stage (the fold applies it; hidden stages
+// project to the previous visible column client-side), and finishing the
+// last step moves the card to the terminal stage.
 //
-// A failed step fails the run (the card's retries record it via the
-// fold); the user re-runs. Stop kills the current child — the cancelled
-// `pipelineRunEnded` is already on the stream, so the task exits without
-// publishing anything more. Boot cancels interrupted runs.
+// Step kinds: `command` (child process in the project directory, output
+// captured, wall-clock cap), `agent` (the engine; agentKind names the
+// shipped worker), `human` (the run parks `waiting`; the gate command
+// resolves it). A failed step ends the run `failed` — unless the step's
+// stage configures an error return, in which case the card moves to that
+// earlier stage and the run ends `returned`. A rejected gate behaves the
+// same way. An agent stage may define named outcomes (S36): the agent
+// reports one through the outcome tool mid-turn; a backward rule moves
+// the card and ends the run `returned`, a forward rule proceeds, and a
+// stage that requires the outcome fails a turn without the call. Stop
+// kills the current child — the cancelled `pipelineRunEnded` is already
+// on the stream, so the task exits without publishing more. Boot cancels
+// interrupted runs.
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Bus } from './bus.js';
 import { allocateId, type Processor } from './processor.js';
-import { stepStageOf } from './fold.js';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
 import { ensureAgentFiles } from './agents.js';
 import { resolveModel } from './store.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
-import { isLaneValid, type Card, type Pipeline, type PipelineStep } from './wire/models.js';
+import type { Card, Pipeline, PipelineStage, PipelineStep } from './wire/models.js';
 
 export interface RunnerOptions {
   /** Composer's HTTP base (the MCP tools' callback target). */
@@ -43,15 +48,25 @@ interface GateDecision {
   comment?: string;
 }
 
+/** One outcome report recorded for the run's current agent step (S36). */
+interface OutcomeReport {
+  stepId: string;
+  outcome: string;
+  note?: string;
+}
+
 /** One live run: the drive task's coordination state. */
 interface RunTask {
   projectId: string;
+  runId: string;
   cardId: string;
   pipelineId: string;
   stopped: boolean;
   child: ChildProcess | null;
   abort: AbortController;
   resolveGate: ((decision: GateDecision | 'cancelled') => void) | null;
+  /** The agent's reported outcome for the current step, if one landed. */
+  outcome: OutcomeReport | null;
 }
 
 export class PipelineRunner {
@@ -60,9 +75,7 @@ export class PipelineRunner {
   private readonly engine: AgentEngine;
   private readonly options: Required<Pick<RunnerOptions, 'commandTimeoutMs' | 'agentTimeoutMs'>> & RunnerOptions;
   private readonly tasks = new Map<string, RunTask>();
-  private readonly agentSessions = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
-  private runCounter = 0;
 
   constructor(
     bus: Bus,
@@ -111,22 +124,35 @@ export class PipelineRunner {
   private async onFrame(frame: EventFrame): Promise<void> {
     switch (frame.eventType) {
       case 'pipelineRunStarted': {
-        const body = frame.body as { cardId?: string; pipelineId?: string };
-        if (frame.projectId === undefined || body.cardId === undefined || body.pipelineId === undefined) return;
-        await this.startRun(frame.projectId, body.cardId, body.pipelineId);
+        const body = frame.body as {
+          runId?: string;
+          cardId?: string;
+          pipelineId?: string;
+          revision?: number;
+        };
+        if (
+          frame.projectId === undefined ||
+          body.runId === undefined ||
+          body.cardId === undefined ||
+          body.pipelineId === undefined
+        ) {
+          return;
+        }
+        await this.startRun(frame.projectId, body.runId, body.cardId, body.pipelineId, body.revision);
         return;
       }
       case 'pipelineGateResponded': {
-        const body = frame.body as { cardId?: string; approved?: boolean; comment?: string };
-        if (body.cardId === undefined) return;
-        const task = this.tasks.get(body.cardId);
+        const body = frame.body as { runId?: string; cardId?: string; approved?: boolean; comment?: string };
+        const runId = body.runId ?? (body.cardId !== undefined ? this.bus.state.byProject.get(frame.projectId ?? '')?.activeRuns.get(body.cardId) : undefined);
+        if (runId === undefined) return;
+        const task = this.tasks.get(runId);
         task?.resolveGate?.({ approved: body.approved ?? false, ...(body.comment !== undefined ? { comment: body.comment } : {}) });
         return;
       }
       case 'pipelineRunEnded': {
-        const body = frame.body as { cardId?: string; status?: string };
-        if (body.status !== 'cancelled' || body.cardId === undefined) return;
-        const task = this.tasks.get(body.cardId);
+        const body = frame.body as { runId?: string; cardId?: string; status?: string };
+        if (body.status !== 'cancelled' || body.runId === undefined) return;
+        const task = this.tasks.get(body.runId);
         if (task === undefined) return;
         // The cancelled runEnded is on the stream; the task exits without
         // publishing anything more (v1 semantics). A parked card stays put.
@@ -138,39 +164,71 @@ export class PipelineRunner {
         task.resolveGate?.('cancelled');
         return;
       }
+      case 'pipelineOutcomeReported': {
+        const body = frame.body as { runId?: string; stepId?: string; outcome?: string; note?: string };
+        if (body.runId === undefined || body.stepId === undefined || body.outcome === undefined) return;
+        const task = this.tasks.get(body.runId);
+        if (task === undefined) return;
+        task.outcome = {
+          stepId: body.stepId,
+          outcome: body.outcome,
+          ...(body.note !== undefined ? { note: body.note } : {}),
+        };
+        return;
+      }
       default:
         return;
     }
   }
 
-  private async startRun(projectId: string, cardId: string, pipelineId: string): Promise<void> {
-    if (this.tasks.has(cardId)) return;
-    const pipeline = this.bus.state.byProject.get(projectId)?.pipelines.get(pipelineId);
+  private async startRun(
+    projectId: string,
+    runId: string,
+    cardId: string,
+    pipelineId: string,
+    revision: number | undefined,
+  ): Promise<void> {
+    if (this.tasks.has(runId)) return;
+    const project = this.bus.state.byProject.get(projectId);
+    // The pinned revision wins; a revision the fold no longer holds (or an
+    // unnumbered run) falls back to the pipeline's current definition.
+    const pinned = revision !== undefined ? project?.pipelineRevisions.get(pipelineId)?.get(revision) : undefined;
+    const pipeline = pinned ?? project?.pipelines.get(pipelineId);
     if (pipeline === undefined) return;
     const task: RunTask = {
       projectId,
+      runId,
       cardId,
       pipelineId,
       stopped: false,
       child: null,
       abort: new AbortController(),
       resolveGate: null,
+      outcome: null,
     };
-    this.tasks.set(cardId, task);
-    const runSeq = ++this.runCounter;
+    this.tasks.set(runId, task);
     try {
-      await this.drive(task, pipeline, runSeq);
+      await this.drive(task, pipeline);
     } finally {
-      this.tasks.delete(cardId);
+      this.tasks.delete(runId);
     }
   }
 
-  private async drive(task: RunTask, pipeline: Pipeline, runSeq: number): Promise<void> {
-    const { projectId, cardId } = task;
+  private async drive(task: RunTask, pipeline: Pipeline): Promise<void> {
+    const { projectId, runId, cardId } = task;
     let gate: GateDecision | null = null;
+    const card = this.cardOf(projectId, cardId);
+    if (card === undefined) return;
+    // The run executes from the card's current stage onward: steps in
+    // earlier stages are skipped (a returned card reruns from where it sits).
+    const fromOrder = stageOrderOf(pipeline, card.stageId);
+    const steps = pipeline.steps.filter(
+      (step) => stageOrderOf(pipeline, step.stageId) >= fromOrder,
+    );
 
-    for (const [index, step] of pipeline.steps.entries()) {
+    for (const step of steps) {
       if (task.stopped) return;
+      const stage = pipeline.stages.find((candidate) => candidate.id === step.stageId)!;
 
       // The gate's resolver is armed BEFORE the step's start event — the
       // fold flips the run to `waiting` mid-publish, and a gate answer
@@ -178,93 +236,143 @@ export class PipelineRunner {
       // GATE_WAKE_ATTEMPTS retry, solved by ordering here).
       const gatePromise = step.kind === 'human' ? this.prepareGate(task) : null;
       await this.bus.publish(projectId, 'pipelineStepStarted', {
+        runId,
         cardId,
         pipelineId: pipeline.id,
         stepId: step.id,
         kind: step.kind,
+        stageId: step.stageId,
       });
-      // The board's progress projection: the lane move and the stage's
-      // sub-state go running (v1 on_step_started; override moves). A lane
-      // the card's type doesn't carry projects nothing (security is
-      // code-only) — the step still runs, the card stays put.
-      const card = this.cardOf(projectId, cardId);
-      const lane = laneFor(step, card);
-      const projects = card === undefined || isLaneValid(card.type, lane);
-      if (projects) {
-        await this.processor.execute(projectId, {
-          type: 'requestCardMove',
-          cardId,
-          toLane: lane,
-          override: true,
-        });
-        await this.processor.execute(projectId, {
-          type: 'requestSubStateUpdate',
-          cardId,
-          stage: stepStageOf(step.kind, step.agentKind),
-          status: 'running',
-        });
-      }
 
       const result:
-        | { ok: true; decision?: GateDecision }
+        | { ok: true; decision?: GateDecision; outcome?: OutcomeReport }
         | { ok: false; error: string } =
         step.kind === 'command'
           ? await this.runCommandStep(task, step)
           : step.kind === 'agent'
-            ? await this.runAgentStep(task, step, runSeq, index)
+            ? await this.runAgentStep(task, step, outcomeBriefOf(pipeline, stage))
             : await gatePromise!;
 
       if (task.stopped) return;
+      // The stage's outcome rules (S36) decide how a successful agent turn
+      // settles: a backward outcome returns the card to the rule's stage
+      // (the run ends `returned`, like a rejected gate — the note rides the
+      // move as the rejection comment); a stage that requires the outcome
+      // fails the step when the turn reported nothing.
+      let failure: string | undefined = result.ok ? undefined : result.error;
+      let returnTo: { target: string; report: OutcomeReport } | undefined;
+      if (result.ok && step.kind === 'agent') {
+        const reported = result.outcome;
+        const rule =
+          reported !== undefined
+            ? (stage.outcomes ?? []).find((candidate) => candidate.outcome === reported.outcome)
+            : undefined;
+        if (reported !== undefined && rule?.toStageId !== undefined) {
+          returnTo = { target: rule.toStageId, report: reported };
+        } else if (reported === undefined && (stage.outcomes?.length ?? 0) > 0 && stage.requiresOutcome === true) {
+          const names = (stage.outcomes ?? []).map((candidate) => candidate.outcome).join(', ');
+          failure = `the stage requires an explicit outcome — call composer_report_outcome with one of: ${names}`;
+        }
+      }
+
       await this.bus.publish(projectId, 'pipelineStepFinished', {
+        runId,
         cardId,
         pipelineId: pipeline.id,
         stepId: step.id,
-        ok: result.ok,
-        ...(result.ok ? {} : { error: result.error }),
+        ok: failure === undefined,
+        ...(failure !== undefined ? { error: failure } : {}),
       });
-      if (projects) {
-        await this.processor.execute(projectId, {
-          type: 'requestSubStateUpdate',
-          cardId,
-          stage: stepStageOf(step.kind, step.agentKind),
-          status: result.ok ? 'ok' : 'failed',
-        });
-      }
-      if (!result.ok) {
-        // A failed step fails the run (D5): the user re-runs.
-        await this.bus.publish(projectId, 'pipelineRunEnded', {
-          cardId,
-          pipelineId: pipeline.id,
-          status: 'failed',
-          error: result.error,
-        });
+      if (failure !== undefined) {
+        // A failed step fails the run — unless the step's stage configures
+        // an error return, which moves the card to the earlier stage and
+        // ends the run `returned` (the model's recovery rule).
+        await this.endRun(task, pipeline, stage, 'failed', failure);
         return;
       }
-      if (step.kind === 'human' && result.decision !== undefined) {
+      if (returnTo !== undefined) {
+        const note = returnTo.report.note?.trim();
+        await this.endRun(
+          task,
+          pipeline,
+          stage,
+          'returned',
+          note ? `${returnTo.report.outcome}: ${note}` : `outcome '${returnTo.report.outcome}' returned the card`,
+          note || undefined,
+          returnTo.target,
+        );
+        return;
+      }
+      if (step.kind === 'human' && result.ok && result.decision !== undefined) {
         gate = result.decision;
+        if (!gate.approved) {
+          await this.endRun(
+            task,
+            pipeline,
+            stage,
+            'returned',
+            gate.comment !== undefined && gate.comment.trim() !== ''
+              ? `changes requested: ${gate.comment.trim()}`
+              : 'changes requested at the approval gate',
+            gate.comment,
+          );
+          return;
+        }
       }
     }
 
     await this.bus.publish(projectId, 'pipelineRunEnded', {
+      runId,
       cardId,
       pipelineId: pipeline.id,
+      revision: pipeline.revision,
       status: 'completed',
     });
-    // The terminal routing rides after the run's end (v1 stream order):
-    // an approval gate's decision moves the card — Done on approval, back
-    // to the implement lane with the comment on rejection; anything else
-    // stays put.
-    const last = pipeline.steps.at(-1);
-    if (last?.kind === 'human' && gate !== null) {
-      const card = this.cardOf(projectId, cardId);
-      if (card !== undefined) {
-        if (gate.approved) {
-          await this.moveCard(projectId, cardId, 'done');
-        } else {
-          await this.moveCard(projectId, cardId, implementLaneOf(card.type), gate.comment);
-        }
-      }
+    // The completed run moves the card to the terminal stage (the model's
+    // completion rule; the terminal stage is always the last).
+    const terminal = pipeline.stages.at(-1);
+    if (terminal !== undefined) {
+      await this.bus.publish(projectId, 'cardStageMoved', {
+        cardId,
+        pipelineId: pipeline.id,
+        toStageId: terminal.id,
+      });
     }
+  }
+
+  /**
+   * Ends a run and applies the recovery rule. A plain failure keeps the
+   * card where it is; a return target — the stage's error-return condition
+   * by default, or an outcome rule's earlier stage (S36) — moves the card
+   * there and ends the run `returned`. The optional comment rides the card
+   * move (the gate's rejection comment, the outcome's note).
+   */
+  private async endRun(
+    task: RunTask,
+    pipeline: Pipeline,
+    stage: PipelineStage,
+    status: 'failed' | 'returned',
+    error: string,
+    comment?: string,
+    returnTo: string | undefined = stage.errorReturnToStageId,
+  ): Promise<void> {
+    if (returnTo !== undefined) {
+      await this.bus.publish(task.projectId, 'cardStageMoved', {
+        cardId: task.cardId,
+        pipelineId: pipeline.id,
+        fromStageId: stage.id,
+        toStageId: returnTo,
+        ...(comment !== undefined ? { comment } : {}),
+      });
+    }
+    await this.bus.publish(task.projectId, 'pipelineRunEnded', {
+      runId: task.runId,
+      cardId: task.cardId,
+      pipelineId: pipeline.id,
+      revision: pipeline.revision,
+      status: returnTo !== undefined ? 'returned' : status,
+      ...(error !== '' ? { error } : {}),
+    });
   }
 
   // ---- Step bodies ----
@@ -299,6 +407,7 @@ export class PipelineRunner {
             liveLines++;
             void this.bus
               .publish(task.projectId, 'commandOutput', {
+                runId: task.runId,
                 cardId: task.cardId,
                 pipelineId: task.pipelineId,
                 stepId: step.id,
@@ -342,9 +451,8 @@ export class PipelineRunner {
   private async runAgentStep(
     task: RunTask,
     step: PipelineStep,
-    runSeq: number,
-    stepIndex: number,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    outcomeBrief: string | undefined,
+  ): Promise<{ ok: true; outcome?: OutcomeReport } | { ok: false; error: string }> {
     const directory = this.bus.state.projects.get(task.projectId)?.directory;
     const card = this.cardOf(task.projectId, task.cardId);
     if (directory === undefined) {
@@ -359,6 +467,9 @@ export class PipelineRunner {
     } catch (error) {
       return { ok: false, error: `could not ship agent files: ${String(error)}` };
     }
+    // The outcome report belongs to this step only: anything a previous
+    // step's agent reported is stale by definition.
+    task.outcome = null;
 
     const sessionId = allocateId(this.bus.state.byProject.get(task.projectId)?.agentSessions.keys() ?? [], 'A');
     await this.bus.publish(task.projectId, 'agentSessionStarted', {
@@ -367,7 +478,6 @@ export class PipelineRunner {
       agentKind: step.agentKind ?? 'coder',
       startedAt: nowIso(),
     });
-    this.agentSessions.set(`${runSeq}:${step.id}`, sessionId);
 
     const settings = (await this.options.getModel?.()) ?? {};
     const agentKind = step.agentKind ?? 'coder';
@@ -376,7 +486,7 @@ export class PipelineRunner {
       projectId: task.projectId,
       sessionId,
       projectDirectory: directory,
-      prompt: promptFor(agentKind, card, step),
+      prompt: promptFor(agentKind, card, step, outcomeBrief),
       serverUrl: this.options.serverUrl ?? '',
       mcpScriptPath: this.options.mcpScriptPath ?? '',
       agentName: `composer-${agentKind}`,
@@ -435,7 +545,15 @@ export class PipelineRunner {
       ...(outcome.ok ? {} : { error: outcome.error }),
       endedAt: nowIso(),
     });
-    return outcome.ok ? { ok: true } : { ok: false, error: outcome.error ?? 'the agent step failed' };
+    if (!outcome.ok) {
+      task.outcome = null;
+      return { ok: false, error: outcome.error ?? 'the agent step failed' };
+    }
+    // A report recorded for this step rides the result; the drive applies
+    // the stage's outcome rules to it.
+    const reported = reportedOutcome(task, step.id);
+    task.outcome = null;
+    return { ok: true, ...(reported !== undefined ? { outcome: reported } : {}) };
   }
 
   /** Arms the gate resolver; the returned promise settles on the decision. */
@@ -465,52 +583,21 @@ export class PipelineRunner {
     const messages = session?.transcript.filter((entry) => entry.kind === 'message') ?? [];
     return messages.reduce((max, entry) => (entry.kind === 'message' ? Math.max(max, entry.message.index) : max), 0) + 1;
   }
-
-  private async moveCard(projectId: string, cardId: string, toLane: Card['stage'], comment?: string): Promise<void> {
-    await this.processor.execute(projectId, {
-      type: 'requestCardMove',
-      cardId,
-      toLane,
-      override: true,
-      ...(comment !== undefined ? { comment } : {}),
-    });
-  }
 }
 
-/** The lane a step works in (v1 on_step_started; S33 adds the workers). */
-function laneFor(step: PipelineStep, card: Card | undefined): Card['stage'] {
-  switch (step.kind) {
-    case 'agent':
-      switch (step.agentKind) {
-        case 'tester':
-          return 'validation';
-        case 'reviewer':
-          return 'review';
-        case 'security':
-          return 'security';
-        default:
-          return card !== undefined ? implementLaneOf(card.type) : 'coding';
-      }
-    case 'command':
-      return 'validation';
-    case 'human':
-      return 'approval';
-  }
+/** A stage's forward order in its pipeline (absent = last, so unknown stages never skip ahead). */
+function stageOrderOf(pipeline: Pipeline, stageId: string): number {
+  const index = pipeline.stages.findIndex((stage) => stage.id === stageId);
+  return index >= 0 ? index : pipeline.stages.length;
 }
 
-function implementLaneOf(type: Card['type']): Card['stage'] {
-  switch (type) {
-    case 'coding':
-      return 'coding';
-    case 'design':
-      return 'design';
-    case 'docs':
-      return 'docs';
-  }
+/** The run task's outcome report for one step, if one landed (a function read: property narrowing resets). */
+function reportedOutcome(task: RunTask, stepId: string): OutcomeReport | undefined {
+  return task.outcome?.stepId === stepId ? (task.outcome ?? undefined) : undefined;
 }
 
 /** The worker's brief: the card is the work order; the runtime's own tools are the surface. */
-function promptFor(agentKind: string, card: Card, step: PipelineStep): string {
+function promptFor(agentKind: string, card: Card, step: PipelineStep, outcomeBrief?: string): string {
   const instructions = step.instructions?.trim() !== '' ? step.instructions!.trim() : defaultInstructionOf(agentKind);
   const blockers =
     card.blockedBy.length > 0 ? `\n\nBlockers (already satisfied): ${card.blockedBy.join(', ')}` : '';
@@ -522,11 +609,37 @@ function promptFor(agentKind: string, card: Card, step: PipelineStep): string {
     blockers,
     '',
     `Instructions: ${instructions}`,
+    ...(outcomeBrief !== undefined ? ['', outcomeBrief] : []),
     '',
     closing,
   ]
     .filter((part) => part !== undefined)
     .join('\n');
+}
+
+/**
+ * The agent brief's outcome section (S36): the stage's named outcomes and
+ * what each does. Present only when the stage defines outcomes.
+ */
+function outcomeBriefOf(pipeline: Pipeline, stage: PipelineStage | undefined): string | undefined {
+  const rules = stage?.outcomes ?? [];
+  if (rules.length === 0) return undefined;
+  const lines = rules.map((rule) => {
+    const target =
+      rule.toStageId !== undefined
+        ? `the card returns to ${
+            pipeline.stages.find((candidate) => candidate.id === rule.toStageId)?.label ?? rule.toStageId
+          }`
+        : 'the pipeline proceeds to the next step';
+    return `- ${rule.outcome} — ${target}`;
+  });
+  return [
+    "Outcomes: when the work is done, call `composer_report_outcome` with exactly one of this stage's outcome names:",
+    ...lines,
+    stage?.requiresOutcome === true
+      ? 'This stage requires the call: a finished turn without it fails the step.'
+      : 'The call is optional: a finished turn without it proceeds.',
+  ].join('\n');
 }
 
 function defaultInstructionOf(agentKind: string): string {

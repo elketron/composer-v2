@@ -1,6 +1,6 @@
 // Wire types for the composer server's REST + SSE surface
-// (docs/architecture.md). The contract is owned by the Rust serde models
-// (`server/src/{models,events,http}.rs`): camelCase fields, enums as
+// (docs/architecture.md). The contract is owned by the server's wire models
+// (`server/src/wire/{models,events,commands}.ts`): camelCase fields, enums as
 // lowercase strings, RFC 3339 (microsecond) timestamps, absent optionals
 // omitted. The golden fixture `wire-golden/events.json` at the repo root is
 // asserted against on both sides (server test + this module's spec).
@@ -13,28 +13,11 @@ import {
   Assignee,
   Card,
   CardType,
-  Lane,
-  Stage,
-  SubState,
-  SubStateStage,
-  SubStateStatus,
+  StepStateStatus,
 } from '../models/board.models';
 import { PlanningSessionStatus } from '../models/plan.models';
 
 // ---- Enum const objects (runtime values are the wire strings) ----
-
-export const WireStage = {
-  STAGE_NEW: 'new',
-  STAGE_CODING: 'coding',
-  STAGE_DESIGN: 'design',
-  STAGE_DOCS: 'docs',
-  STAGE_VALIDATION: 'validation',
-  STAGE_REVIEW: 'review',
-  STAGE_SECURITY: 'security',
-  STAGE_APPROVAL: 'approval',
-  STAGE_DONE: 'done',
-} as const;
-export type WireStage = (typeof WireStage)[keyof typeof WireStage];
 
 export const WireCardType = {
   CARD_TYPE_CODING: 'coding',
@@ -43,13 +26,13 @@ export const WireCardType = {
 } as const;
 export type WireCardType = (typeof WireCardType)[keyof typeof WireCardType];
 
-export const WireSubStateStatus = {
-  SUB_STATE_STATUS_PENDING: 'pending',
-  SUB_STATE_STATUS_RUNNING: 'running',
-  SUB_STATE_STATUS_OK: 'ok',
-  SUB_STATE_STATUS_FAILED: 'failed',
+export const WireStepStateStatus = {
+  STEP_STATE_PENDING: 'pending',
+  STEP_STATE_RUNNING: 'running',
+  STEP_STATE_OK: 'ok',
+  STEP_STATE_FAILED: 'failed',
 } as const;
-export type WireSubStateStatus = (typeof WireSubStateStatus)[keyof typeof WireSubStateStatus];
+export type WireStepStateStatus = (typeof WireStepStateStatus)[keyof typeof WireStepStateStatus];
 
 export const WirePlanningSessionStatus = {
   PLANNING_SESSION_STATUS_DRAFTING: 'drafting',
@@ -70,18 +53,18 @@ export const WireRejectionCode = {
   REJECTION_CODE_UNKNOWN_PROJECT: 'unknownProject',
   REJECTION_CODE_UNKNOWN_CARD: 'unknownCard',
   REJECTION_CODE_UNKNOWN_SESSION: 'unknownSession',
-  REJECTION_CODE_INVALID_LANE: 'invalidLane',
+  REJECTION_CODE_UNKNOWN_STAGE: 'unknownStage',
   REJECTION_CODE_BLOCKED: 'blocked',
   REJECTION_CODE_INVALID_TYPE: 'invalidType',
   REJECTION_CODE_INVALID_COMMAND: 'invalidCommand',
   REJECTION_CODE_UNKNOWN_PIPELINE: 'unknownPipeline',
   REJECTION_CODE_UNKNOWN_AGENT_KIND: 'unknownAgentKind',
-  REJECTION_CODE_PIPELINE_ALREADY_RUNNING: 'pipelineAlreadyRunning',
+  REJECTION_CODE_RUN_ACTIVE: 'runActive',
   REJECTION_CODE_PIPELINE_NOT_RUNNING: 'pipelineNotRunning',
 } as const;
 export type WireRejectionCode = (typeof WireRejectionCode)[keyof typeof WireRejectionCode];
 
-// ---- Entity shapes (mirror server/src/models.rs) ----
+// ---- Entity shapes (mirror server/src/wire/models.ts) ----
 
 export interface AssigneeJson {
   readonly role?: string;
@@ -102,14 +85,14 @@ export interface CardJson {
   readonly title?: string;
   readonly description?: string;
   readonly tags?: string[];
-  readonly stage?: WireStage;
+  readonly pipelineId?: string;
+  readonly stageId?: string;
   readonly blockedBy?: string[];
   readonly assignee?: AssigneeJson;
   readonly sessionId?: string;
   readonly branch?: string;
   readonly fileStats?: FileStatsJson;
-  readonly subState?: Record<string, WireSubStateStatus>;
-  readonly retries?: Record<string, number>;
+  readonly stepStates?: Record<string, WireStepStateStatus>;
   readonly rejectionComment?: string;
   readonly createdAt?: string;
   readonly updatedAt?: string;
@@ -181,20 +164,32 @@ export const WirePipelineStepKind = {
 export type WirePipelineStepKind =
   (typeof WirePipelineStepKind)[keyof typeof WirePipelineStepKind];
 
+export interface PipelineStageJson {
+  readonly id: string;
+  readonly label: string;
+  readonly kanbanVisible?: boolean;
+  readonly terminal?: boolean;
+  readonly outcomes?: readonly { readonly outcome: string; readonly toStageId?: string }[];
+  readonly requiresOutcome?: boolean;
+  readonly errorReturnToStageId?: string;
+}
+
 export interface PipelineStepJson {
   readonly id: string;
   readonly kind: WirePipelineStepKind;
+  readonly stageId: string;
   readonly agentKind?: string;
   readonly instructions?: string;
   readonly command?: string;
   readonly description?: string;
-  readonly retries?: number;
 }
 
 export interface PipelineJson {
   readonly id: string;
   readonly projectId: string;
   readonly name: string;
+  readonly revision?: number;
+  readonly stages: PipelineStageJson[];
   readonly steps: PipelineStepJson[];
   readonly updatedAt: string;
 }
@@ -204,6 +199,7 @@ export const WirePipelineRunStatus = {
   PIPELINE_RUN_STATUS_WAITING: 'waiting',
   PIPELINE_RUN_STATUS_COMPLETED: 'completed',
   PIPELINE_RUN_STATUS_FAILED: 'failed',
+  PIPELINE_RUN_STATUS_RETURNED: 'returned',
   PIPELINE_RUN_STATUS_CANCELLED: 'cancelled',
 } as const;
 export type WirePipelineRunStatus =
@@ -279,11 +275,17 @@ export interface DomainEventJson {
   readonly projectId?: string;
   readonly occurredAt?: string;
   readonly cardCreated?: { readonly card: CardJson };
-  readonly cardMoved?: {
+  readonly cardStageMoved?: {
     readonly cardId: string;
-    readonly from: WireStage;
-    readonly to: WireStage;
+    readonly pipelineId: string;
+    readonly fromStageId?: string;
+    readonly toStageId: string;
     readonly comment?: string;
+  };
+  readonly cardPipelineAssigned?: {
+    readonly cardId: string;
+    readonly pipelineId: string;
+    readonly stageId: string;
   };
   readonly cardTypeChanged?: {
     readonly cardId: string;
@@ -295,17 +297,21 @@ export interface DomainEventJson {
     readonly assignee?: AssigneeJson;
   };
   readonly cardArchived?: { readonly cardId: string };
-  readonly subStateUpdated?: {
+  readonly cardStepStateUpdated?: {
     readonly cardId: string;
-    readonly stage: string;
-    readonly status: WireSubStateStatus;
+    readonly stepId: string;
+    readonly status: WireStepStateStatus;
   };
   readonly dependencyStateChanged?: {
     readonly cardId: string;
     readonly blocked: boolean;
     readonly blockedBy: string[];
   };
-  readonly automationToggled?: { readonly lane: WireStage; readonly on: boolean };
+  readonly automationToggled?: {
+    readonly pipelineId: string;
+    readonly stageId: string;
+    readonly on: boolean;
+  };
   readonly planningSessionCreated?: { readonly session: PlanningSessionJson };
   readonly userMessageReceived?: { readonly sessionId: string; readonly message: ChatMessageJson };
   readonly agentMessageDelta?: {
@@ -352,14 +358,22 @@ export interface DomainEventJson {
   };
   readonly pipelineSaved?: { readonly pipeline: PipelineJson };
   readonly pipelineDeleted?: { readonly pipelineId: string };
-  readonly pipelineRunStarted?: { readonly cardId: string; readonly pipelineId: string };
+  readonly pipelineRunStarted?: {
+    readonly runId: string;
+    readonly cardId: string;
+    readonly pipelineId: string;
+    readonly revision: number;
+  };
   readonly pipelineStepStarted?: {
+    readonly runId: string;
     readonly cardId: string;
     readonly pipelineId: string;
     readonly stepId: string;
     readonly kind: WirePipelineStepKind;
+    readonly stageId: string;
   };
   readonly pipelineStepFinished?: {
+    readonly runId: string;
     readonly cardId: string;
     readonly pipelineId: string;
     readonly stepId: string;
@@ -367,17 +381,30 @@ export interface DomainEventJson {
     readonly error?: string;
   };
   readonly pipelineRunEnded?: {
+    readonly runId: string;
     readonly cardId: string;
     readonly pipelineId: string;
+    readonly revision: number;
     readonly status: WirePipelineRunStatus;
     readonly error?: string;
   };
   readonly pipelineGateResponded?: {
+    readonly runId?: string;
     readonly cardId: string;
     readonly approved: boolean;
     readonly comment?: string;
   };
+  /** The agent's named stage outcome (S36) — a decision record. */
+  readonly pipelineOutcomeReported?: {
+    readonly runId: string;
+    readonly cardId: string;
+    readonly pipelineId: string;
+    readonly stepId: string;
+    readonly outcome: string;
+    readonly note?: string;
+  };
   readonly commandOutput?: {
+    readonly runId: string;
     readonly cardId: string;
     readonly pipelineId: string;
     readonly stepId: string;
@@ -431,11 +458,12 @@ export interface DomainEventJson {
 /** The payload field names (the oneof members, camelCase). */
 export const EVENT_KINDS = [
   'cardCreated',
-  'cardMoved',
+  'cardStageMoved',
+  'cardPipelineAssigned',
   'cardTypeChanged',
   'cardAssigned',
   'cardArchived',
-  'subStateUpdated',
+  'cardStepStateUpdated',
   'dependencyStateChanged',
   'automationToggled',
   'planningSessionCreated',
@@ -461,6 +489,7 @@ export const EVENT_KINDS = [
   'pipelineStepFinished',
   'pipelineRunEnded',
   'pipelineGateResponded',
+  'pipelineOutcomeReported',
   'commandOutput',
   'assistantThreadCreated',
   'assistantThreadArchived',
@@ -516,9 +545,12 @@ export type CommandKind =
   | 'requestProjectActivate'
   | 'requestProjectArchive'
   | 'requestProjectRestore'
-  | 'requestCardMove'
+  | 'requestCardStageMove'
+  | 'requestCardPipelineAssign'
+  | 'requestCardReopen'
   | 'requestCardTypeChange'
   | 'requestCardArchive'
+  | 'requestStepStateUpdate'
   | 'requestAutomationToggle'
   | 'requestPlanningSessionCreate'
   | 'requestUserMessage'
@@ -550,7 +582,7 @@ export type CommandKind =
 /**
  * The service-facing command DTO (oneof-shaped). The transport converts it
  * onto the server's action envelope; the field renames live in that mapping,
- * so services keep their own names (`cardId`, `toLane`, …).
+ * so services keep their own names (`cardId`, `toStageId`, …).
  */
 export interface PublishRequestJson {
   readonly projectId?: string;
@@ -565,21 +597,32 @@ export interface PublishRequestJson {
     readonly type: WireCardType;
     readonly tags?: readonly string[];
   };
-  readonly requestCardMove?: {
+  readonly requestCardStageMove?: {
     readonly cardId: string;
-    readonly toLane: WireStage;
+    readonly toStageId: string;
     readonly override?: boolean;
     readonly comment?: string;
   };
+  readonly requestCardPipelineAssign?: { readonly cardId: string; readonly pipelineId: string };
+  readonly requestCardReopen?: { readonly cardId: string };
   readonly requestCardTypeChange?: { readonly cardId: string; readonly toType: WireCardType };
   readonly requestCardAssign?: { readonly cardId: string; readonly assignee?: AssigneeJson };
   readonly requestCardArchive?: { readonly cardId: string };
-  readonly requestAutomationToggle?: { readonly lane: WireStage; readonly on: boolean };
+  readonly requestStepStateUpdate?: {
+    readonly cardId: string;
+    readonly stepId: string;
+    readonly status: WireStepStateStatus;
+  };
+  readonly requestAutomationToggle?: {
+    readonly pipelineId: string;
+    readonly stageId: string;
+    readonly on: boolean;
+  };
   readonly requestPlanningSessionCreate?: { readonly projectId: string };
   readonly requestUserMessage?: { readonly sessionId: string; readonly text: string };
   readonly requestPipelineSave?: { readonly pipeline: PipelineJson };
   readonly requestPipelineDelete?: { readonly pipelineId: string };
-  readonly requestPipelineRun?: { readonly pipelineId: string; readonly cardId: string };
+  readonly requestPipelineRun?: { readonly cardId: string };
   readonly requestPipelineStop?: { readonly cardId: string };
   readonly requestPipelineGateRespond?: {
     readonly cardId: string;
@@ -690,14 +733,26 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
       ...(create.tags?.length ? { tags: [...create.tags] } : {}),
     });
   }
-  if (request.requestCardMove) {
+  if (request.requestCardStageMove) {
     const body: Record<string, unknown> = {
-      id: request.requestCardMove.cardId,
-      stage: request.requestCardMove.toLane,
+      id: request.requestCardStageMove.cardId,
+      stageId: request.requestCardStageMove.toStageId,
     };
-    if (request.requestCardMove.override) body['override'] = true;
-    if (request.requestCardMove.comment) body['comment'] = request.requestCardMove.comment;
+    if (request.requestCardStageMove.override) body['override'] = true;
+    if (request.requestCardStageMove.comment) body['comment'] = request.requestCardStageMove.comment;
     return env('update', 'card', body);
+  }
+  if (request.requestCardPipelineAssign) {
+    return env('update', 'card', {
+      id: request.requestCardPipelineAssign.cardId,
+      pipelineId: request.requestCardPipelineAssign.pipelineId,
+    });
+  }
+  if (request.requestCardReopen) {
+    return env('update', 'card', {
+      id: request.requestCardReopen.cardId,
+      reopened: true,
+    });
   }
   if (request.requestCardTypeChange) {
     return env('update', 'card', {
@@ -716,9 +771,19 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
   if (request.requestCardArchive) {
     return env('delete', 'card', { id: request.requestCardArchive.cardId });
   }
+  if (request.requestStepStateUpdate) {
+    return env('update', 'card', {
+      id: request.requestStepStateUpdate.cardId,
+      stepState: {
+        stepId: request.requestStepStateUpdate.stepId,
+        status: request.requestStepStateUpdate.status,
+      },
+    });
+  }
   if (request.requestAutomationToggle) {
     return env('update', 'automation', {
-      lane: request.requestAutomationToggle.lane,
+      pipelineId: request.requestAutomationToggle.pipelineId,
+      stageId: request.requestAutomationToggle.stageId,
       on: request.requestAutomationToggle.on,
     });
   }
@@ -736,6 +801,7 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
     return env('create', 'pipeline', {
       id: pipeline.id,
       name: pipeline.name,
+      stages: pipeline.stages,
       steps: pipeline.steps,
     });
   }
@@ -744,7 +810,6 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
   }
   if (request.requestPipelineRun) {
     return env('start', 'pipeline', {
-      pipelineId: request.requestPipelineRun.pipelineId,
       cardId: request.requestPipelineRun.cardId,
     });
   }
@@ -853,21 +918,12 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
 
 // ---- Enum mapping (wire strings ↔ domain strings) ----
 
-// Stage, card type, and sub-state status wire strings are the same as the
-// domain strings; the mappings validate and fall back to the server's parse
-// defaults (new / coding / pending).
+// Card type and step-state status wire strings are the same as the domain
+// strings; the mappings validate and fall back to the server's parse
+// defaults (coding / pending).
 
-const STAGE_VALUES: ReadonlySet<string> = new Set(Object.values(WireStage));
 const TYPE_VALUES: ReadonlySet<string> = new Set(Object.values(WireCardType));
-const SUBSTATE_VALUES: ReadonlySet<string> = new Set(Object.values(WireSubStateStatus));
-
-export function stageFromWire(value: string | undefined): Stage {
-  return value !== undefined && STAGE_VALUES.has(value) ? (value as Stage) : 'new';
-}
-
-export function stageToWire(stage: Stage): WireStage {
-  return stage as WireStage;
-}
+const STEPSTATE_VALUES: ReadonlySet<string> = new Set(Object.values(WireStepStateStatus));
 
 export function cardTypeFromWire(value: string | undefined): CardType {
   return value !== undefined && TYPE_VALUES.has(value) ? (value as CardType) : 'coding';
@@ -877,9 +933,9 @@ export function cardTypeToWire(type: CardType): WireCardType {
   return type as WireCardType;
 }
 
-export function subStateStatusFromWire(value: string | undefined): SubStateStatus {
-  return value !== undefined && SUBSTATE_VALUES.has(value)
-    ? (value as SubStateStatus)
+export function stepStateStatusFromWire(value: string | undefined): StepStateStatus {
+  return value !== undefined && STEPSTATE_VALUES.has(value)
+    ? (value as StepStateStatus)
     : 'pending';
 }
 
@@ -897,14 +953,14 @@ export function planningSessionStatusFromWire(
 
 export function cardFromWire(json: CardJson): Card {
   const type = cardTypeFromWire(json.type);
-  const stage = stageFromWire(json.stage);
   return new Card({
     id: json.id ?? '',
     type,
     title: json.title ?? '',
     description: json.description ?? '',
     tags: [...(json.tags ?? [])],
-    stage: Lane.isValidFor(type, stage) ? stage : 'new',
+    pipelineId: json.pipelineId ?? '',
+    stageId: json.stageId ?? '',
     blockedBy: [...(json.blockedBy ?? [])],
     assignee: assigneeFromWire(json.assignee),
     sessionId: json.sessionId || undefined,
@@ -916,8 +972,7 @@ export function cardFromWire(json: CardJson): Card {
           files: json.fileStats.files ?? 0,
         }
       : undefined,
-    subState: subStateFromWire(json.subState),
-    retries: { ...(json.retries ?? {}) },
+    stepStates: stepStatesFromWire(json.stepStates),
     rejectionComment: json.rejectionComment || undefined,
     createdAt: json.createdAt ?? '',
     updatedAt: json.updatedAt ?? '',
@@ -934,10 +989,10 @@ export function assigneeFromWire(json: AssigneeJson | undefined): Assignee | und
   );
 }
 
-function subStateFromWire(json: CardJson['subState']): SubState {
-  const out: Partial<Record<SubStateStage, SubStateStatus>> = {};
-  for (const [stage, status] of Object.entries(json ?? {})) {
-    out[stage as SubStateStage] = subStateStatusFromWire(status);
+function stepStatesFromWire(json: CardJson['stepStates']): Readonly<Record<string, StepStateStatus>> {
+  const out: Record<string, StepStateStatus> = {};
+  for (const [stepId, status] of Object.entries(json ?? {})) {
+    out[stepId] = stepStateStatusFromWire(status);
   }
   return out;
 }

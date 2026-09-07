@@ -9,7 +9,6 @@ import {
   PublishRequestJson,
   PublishResponseJson,
   WireCardType,
-  WireStage,
 } from './wire';
 
 /**
@@ -109,10 +108,10 @@ export function wireCard(overrides: Partial<CardJson> & { id: string }): CardJso
     title: overrides.id,
     description: '',
     tags: [],
-    stage: WireStage.STAGE_NEW,
+    pipelineId: 'PL-1',
+    stageId: 'sg-1',
     blockedBy: [],
-    subState: {},
-    retries: {},
+    stepStates: {},
     createdAt: now,
     updatedAt: now,
     ...overrides,

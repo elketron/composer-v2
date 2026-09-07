@@ -24,6 +24,19 @@ import {
 
 const TOOLS: McpToolDefinition[] = [
   {
+    name: 'report_outcome',
+    description:
+      'Reports your stage outcome for the current pipeline step — required when your task message lists stage outcomes. Pass exactly one of the listed outcome names; the pipeline applies the transition (proceed to the next step, or return the card to an earlier stage). Add a note when the card must go back: what the next attempt still needs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        outcome: { type: 'string', description: "One of the stage's named outcomes, e.g. 'approved'" },
+        note: { type: 'string', description: 'Optional verdict note — what a returned card still needs' },
+      },
+      required: ['outcome'],
+    },
+  },
+  {
     name: 'workflow_start_recording',
     description:
       'Opens a workflow recording for this session: the repeatable procedure you are performing, to be saved into the project (.composer/workflows/) when you stop. Search existing workflows first and follow one when it applies; record a new one only when the procedure is reusable. Give the procedure a short title, a description of when it applies, and tags for later search.',

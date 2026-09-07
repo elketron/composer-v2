@@ -1,21 +1,10 @@
 // Domain records — the wire shapes (camelCase, RFC 3339 timestamps, absent
-// optionals omitted). Ported from v1's serde models with the v2 trims: the
-// workflow-recording domain and the dormant agent-session commands are gone;
-// everything the board, the planning turn, and the pipelines use keeps its
-// v1 shape so the desktop folds unchanged.
+// optionals omitted). Phase 10 replaces the fixed worker-lane Stage enum with
+// pipeline-local stages: every card is assigned to one pipeline, the board
+// projects that pipeline's Kanban-visible stages, and runs are first-class
+// records pinned to a pipeline revision (docs/phase-10-implementation.md).
 
 export type CardType = 'coding' | 'design' | 'docs';
-
-export type Stage =
-  | 'new'
-  | 'coding'
-  | 'design'
-  | 'docs'
-  | 'validation'
-  | 'review'
-  | 'security'
-  | 'approval'
-  | 'done';
 
 export type SubStateStatus = 'pending' | 'running' | 'ok' | 'failed';
 
@@ -38,14 +27,17 @@ export interface Card {
   title: string;
   description: string;
   tags: string[];
-  stage: Stage;
+  /** The one pipeline the card is assigned to; it appears on that pipeline's board tab. */
+  pipelineId: string;
+  /** The card's current stage of its assigned pipeline (may be a hidden stage). */
+  stageId: string;
   blockedBy: string[];
   assignee?: Assignee;
   sessionId?: string;
   branch?: string;
   fileStats?: FileStats;
-  subState: Record<string, SubStateStatus>;
-  retries: Record<string, number>;
+  /** Per-step execution state, keyed by the assigned pipeline's step ids. */
+  stepStates: Record<string, SubStateStatus>;
   rejectionComment?: string;
   createdAt: string;
   updatedAt: string;
@@ -197,27 +189,70 @@ export interface AgentSession {
   transcript: TranscriptEntry[];
 }
 
+// ---- Pipelines (Phase 10): a pipeline owns an ordered stage path and an
+// ordered step list; every step references one of its own stages. Only
+// Kanban-visible stages become board columns. ----
+
 export type PipelineStepKind = 'agent' | 'command' | 'human';
+
+/**
+ * One agent-reported named outcome and where it routes. An absent
+ * `toStageId` proceeds to the next step; a present one must reference a
+ * strictly earlier stage — the run ends `returned` and the task moves there.
+ */
+export interface StageOutcomeRule {
+  outcome: string;
+  toStageId?: string;
+}
+
+export interface PipelineStage {
+  id: string;
+  label: string;
+  /** Whether the stage becomes a Kanban column (the first stage must). */
+  kanbanVisible: boolean;
+  /** The completion stage; exactly one per pipeline, and it must be last. */
+  terminal?: boolean;
+  /** The named outcomes an agent step in this stage may report (S36 enforces). */
+  outcomes?: StageOutcomeRule[];
+  /** Agent steps in this stage must signal their outcome through the tool (S36). */
+  requiresOutcome?: boolean;
+  /** A failed step in this stage returns the task to this earlier stage (S35). */
+  errorReturnToStageId?: string;
+}
 
 export interface PipelineStep {
   id: string;
   kind: PipelineStepKind;
+  /** The stage of this pipeline the step works in (required). */
+  stageId: string;
   agentKind?: string;
   instructions?: string;
   command?: string;
   description?: string;
-  retries?: number;
 }
 
 export interface Pipeline {
   id: string;
   projectId: string;
   name: string;
+  /** 1-based; a save that changes the definition allocates the next revision. */
+  revision: number;
+  /** The ordered stage path (index = forward order). */
+  stages: PipelineStage[];
+  /** The ordered execution steps (each references a stage of this pipeline). */
   steps: PipelineStep[];
   updatedAt: string;
 }
 
-export type PipelineRunStatus = 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
+export type PipelineRunStatus =
+  | 'running'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | /** A backward transition (agent outcome or error condition) ended the run. */ 'returned'
+  | 'cancelled';
+
+/** Stage ids allocate `sg-N`, steps keep `st-N`, runs allocate `R-N`. */
 
 // ---- Work proposals (Phase 8): the assistant drafts board-ready cards;
 // the user edits and confirms; confirmation creates real cards through the
@@ -256,83 +291,6 @@ export interface CardProposal {
   /** Set by confirmation (per-project batches). */
   outcomes?: ProposalOutcome[];
   confirmedAt?: string;
-}
-
-// ---- Lane semantics (v1 design.md §3.1) ----
-
-export const ALL_STAGES: Stage[] = [
-  'new',
-  'coding',
-  'design',
-  'docs',
-  'validation',
-  'review',
-  'security',
-  'approval',
-  'done',
-];
-
-export const AGENT_OWNED: Stage[] = [
-  'coding',
-  'design',
-  'docs',
-  'validation',
-  'review',
-  'security',
-];
-
-/** Lanes per type, left to right. Security is code-only. */
-export function lanesFor(type: CardType): Stage[] {
-  switch (type) {
-    case 'coding':
-      return ['new', 'coding', 'validation', 'review', 'security', 'approval', 'done'];
-    case 'design':
-      return ['new', 'design', 'validation', 'review', 'approval', 'done'];
-    case 'docs':
-      return ['new', 'docs', 'validation', 'review', 'approval', 'done'];
-  }
-}
-
-/** Per-type pipeline checklist stages (v1 design.md §3.3), camelCase keys. */
-export function subStateFor(type: CardType): Record<string, SubStateStatus> {
-  const stages =
-    type === 'coding'
-      ? ['retrieveContext', 'implement', 'writeTests', 'runValidation', 'reviewChanges', 'securityReview', 'humanReview']
-      : ['draft', 'implement', 'runValidation', 'reviewChanges', 'humanReview'];
-  return Object.fromEntries(stages.map((stage) => [stage, 'pending' as const]));
-}
-
-/** The lane a card returns to when its work is rejected. */
-export function implementLaneFor(type: CardType): Stage {
-  switch (type) {
-    case 'coding':
-      return 'coding';
-    case 'design':
-      return 'design';
-    case 'docs':
-      return 'docs';
-  }
-}
-
-export function isLaneValid(type: CardType, stage: Stage): boolean {
-  return lanesFor(type).includes(stage);
-}
-
-/** The C# enum member name — v1's rejection messages interpolate these. */
-const STAGE_CS_NAMES: Record<Stage, string> = {
-  new: 'New',
-  coding: 'Coding',
-  design: 'Design',
-  docs: 'Docs',
-  validation: 'Validation',
-  review: 'Review',
-  security: 'Security',
-  approval: 'Approval',
-  done: 'Done',
-};
-
-export function stageCsName(stage: Stage): string {
-  return STAGE_CS_NAMES[stage];
 }
 
 export function cardTypeCsName(type: CardType): string {

@@ -96,12 +96,14 @@
           <div class="context-block">
             <span class="context-label">todo</span>
             <div class="todo-rows">
-              @for (entry of cardState.checklist(); track entry.stage) {
+              @for (entry of steps(); track entry.step.id) {
                 <div class="todo-row {{ entry.status }}">
                   <span class="status-dot" [class.pulse]="entry.status === 'running'"></span>
-                  <span class="todo-label">{{ entry.label }}</span>
+                  <span class="todo-label">{{ entry.step.description ?? entry.step.instructions ?? entry.step.agentKind ?? entry.step.kind }}</span>
                   <span class="todo-status">{{ entry.status }}</span>
                 </div>
+              } @empty {
+                <p class="state-empty inline">no assigned pipeline</p>
               }
             </div>
           </div>

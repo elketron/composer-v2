@@ -10,8 +10,15 @@ import type { Bus } from './bus.js';
 import type { Processor } from './processor.js';
 import type { Command, CommandOutcome } from './wire/commands.js';
 import { PROTOCOL_VERSION } from './wire/events.js';
-import type { Card, CardType, Pipeline, PipelineStep, ProposalItem, Stage, SubStateStatus } from './wire/models.js';
-import { ALL_STAGES } from './wire/models.js';
+import type {
+  Card,
+  CardType,
+  Pipeline,
+  PipelineStage,
+  PipelineStep,
+  ProposalItem,
+  SubStateStatus,
+} from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
 import type { ComposerSettings, EventStore, SettingsPatch } from './store.js';
 import { dashboardProjects } from './dashboard.js';
@@ -36,8 +43,10 @@ const MCP_COMMAND_TYPES: ReadonlySet<string> = new Set([
   'requestWorkflowRecordStop',
 ]);
 
-/** The worker agents' MCP tool whitelist (S34): recording + retrieval. */
+/** The worker agents' MCP tool whitelist (S34): the outcome signal (S36)
+ * plus the recording and retrieval tools. */
 const WORKER_MCP_TOOLS: ReadonlySet<string> = new Set([
+  'report_outcome',
   'workflow_start_recording',
   'workflow_add_step',
   'workflow_stop_recording',
@@ -355,6 +364,22 @@ export function router(
     if (projectId === '' || sessionId === '' || !WORKER_MCP_TOOLS.has(tool)) {
       return context.json({ error: 'malformed worker call', detail: 'unknown worker tool' }, 400);
     }
+    if (tool === 'report_outcome') {
+      const outcome = typeof args['outcome'] === 'string' ? args['outcome'] : '';
+      if (outcome.trim() === '') {
+        return context.json({ ok: false, error: 'an outcome needs a name' });
+      }
+      const result = await processor.execute(projectId, {
+        type: 'requestPipelineOutcomeReport',
+        sessionId,
+        outcome,
+        ...(typeof args['note'] === 'string' ? { note: args['note'] } : {}),
+      });
+      if (!result.ok) {
+        return context.json({ ok: false, error: result.rejection.message });
+      }
+      return context.json({ ok: true, ...(result.transition !== undefined ? { transition: result.transition } : {}) });
+    }
     if (tool === 'workflow_start_recording') {
       const outcome = await processor.execute(projectId, {
         type: 'requestWorkflowRecordStart',
@@ -533,13 +558,26 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
     case 'update:card': {
       const id = str('id') ?? scopeProjectId;
       if (id === undefined) return null;
-      const hasStage = 'stage' in body;
+      const hasStage = 'stageId' in body;
+      const hasPipeline = 'pipelineId' in body;
       const hasType = 'type' in body;
-      const hasSubState = 'subState' in body;
+      const hasStepState = 'stepState' in body;
       const hasAssignee = 'assignee' in body;
+      const hasReopen = 'reopened' in body;
       // Exactly one mutation field must be present.
-      if (Number(hasStage) + Number(hasType) + Number(hasSubState) + Number(hasAssignee) !== 1)
+      if (
+        Number(hasStage) +
+          Number(hasPipeline) +
+          Number(hasType) +
+          Number(hasStepState) +
+          Number(hasAssignee) +
+          Number(hasReopen) !==
+        1
+      )
         return null;
+      if (hasReopen) {
+        return bool('reopened') === true ? { type: 'requestCardReopen', cardId: id } : null;
+      }
       if (hasAssignee) {
         // An object assigns ({role: 'human'} for the desktop's "assign to
         // me"); null/absent-value unassigns.
@@ -556,11 +594,14 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
             : undefined;
         return { type: 'requestCardAssign', cardId: id, ...(assignee ? { assignee } : {}) };
       }
+      if (hasPipeline) {
+        return { type: 'requestCardPipelineAssign', cardId: id, pipelineId: str('pipelineId') ?? '' };
+      }
       if (hasStage) {
         return {
-          type: 'requestCardMove',
+          type: 'requestCardStageMove',
           cardId: id,
-          toLane: parseStage(str('stage')),
+          toStageId: str('stageId') ?? '',
           override: bool('override') ?? false,
           ...(str('comment') !== undefined ? { comment: str('comment') } : {}),
         };
@@ -568,21 +609,26 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
       if (hasType) {
         return { type: 'requestCardTypeChange', cardId: id, toType: parseCardType(str('type')) };
       }
-      const subState = readObject(body, 'subState');
-      if (subState === undefined || !('stage' in subState) || !('status' in subState)) return null;
+      const stepState = readObject(body, 'stepState');
+      if (stepState === undefined || !('stepId' in stepState) || !('status' in stepState)) return null;
       return {
-        type: 'requestSubStateUpdate',
+        type: 'requestStepStateUpdate',
         cardId: id,
-        stage: typeof subState['stage'] === 'string' ? subState['stage'] : '',
+        stepId: typeof stepState['stepId'] === 'string' ? stepState['stepId'] : '',
         status: parseSubStateStatus(
-          typeof subState['status'] === 'string' ? subState['status'] : '',
+          typeof stepState['status'] === 'string' ? stepState['status'] : '',
         ),
       };
     }
     case 'delete:card':
       return { type: 'requestCardArchive', cardId: str('id') ?? '' };
     case 'update:automation':
-      return { type: 'requestAutomationToggle', lane: parseStage(str('lane')), on: bool('on') ?? false };
+      return {
+        type: 'requestAutomationToggle',
+        pipelineId: str('pipelineId') ?? '',
+        stageId: str('stageId') ?? '',
+        on: bool('on') ?? false,
+      };
     case 'create:planningSession':
       return {
         type: 'requestPlanningSessionCreate',
@@ -601,7 +647,6 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
     case 'start:pipeline':
       return {
         type: 'requestPipelineRun',
-        pipelineId: str('pipelineId') ?? '',
         cardId: str('cardId') ?? '',
       };
     case 'stop:pipeline':
@@ -709,11 +754,6 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
   }
 }
 
-/** Wire-enum parsing: unknown strings fall back to the first variant (v1 rule). */
-function parseStage(value: string | undefined): Stage {
-  return ALL_STAGES.includes(value as Stage) ? (value as Stage) : 'new';
-}
-
 /** The tool result a recording command's outcome becomes (the MCP child's JSON). */
 function outcomeToToolResult(outcome: CommandOutcome): { ok: true; savedPath?: string } | { ok: false; error: string } {
   if (outcome.ok) {
@@ -750,7 +790,9 @@ function readCard(json: unknown, scopeProjectId: string | undefined): Card {
     title: str('title') ?? '',
     description: str('description') ?? '',
     tags: readStringArray(card, 'tags'),
-    stage: parseStage(str('stage') ?? 'new'),
+    // Empty pipeline/stage ids let the processor assign the defaults.
+    pipelineId: str('pipelineId') ?? '',
+    stageId: str('stageId') ?? '',
     blockedBy: readStringArray(card, 'blockedBy'),
     ...(assigneeJson !== undefined
       ? {
@@ -775,30 +817,19 @@ function readCard(json: unknown, scopeProjectId: string | undefined): Card {
           },
         }
       : {}),
-    subState: readSubState(card),
-    retries: readRetries(card),
+    stepStates: readStepStates(card),
     ...(str('rejectionComment') !== undefined ? { rejectionComment: str('rejectionComment') } : {}),
     createdAt: created,
     updatedAt: updated,
   };
 }
 
-function readSubState(card: Record<string, unknown>): Record<string, SubStateStatus> {
-  const json = readObject(card, 'subState');
+function readStepStates(card: Record<string, unknown>): Record<string, SubStateStatus> {
+  const json = readObject(card, 'stepStates');
   if (json === undefined) return {};
   const result: Record<string, SubStateStatus> = {};
   for (const [key, value] of Object.entries(json)) {
     result[key] = parseSubStateStatus(typeof value === 'string' ? value : 'pending');
-  }
-  return result;
-}
-
-function readRetries(card: Record<string, unknown>): Record<string, number> {
-  const json = readObject(card, 'retries');
-  if (json === undefined) return {};
-  const result: Record<string, number> = {};
-  for (const [key, value] of Object.entries(json)) {
-    if (typeof value === 'number' && Number.isFinite(value)) result[key] = value;
   }
   return result;
 }
@@ -809,17 +840,48 @@ function readStringArray(record: Record<string, unknown>, key: string): string[]
   return value.filter((entry): entry is string => typeof entry === 'string' && entry !== '');
 }
 
-/** The pipeline the client meant — steps lenient, per-kind fields as found. */
+/** The pipeline the client meant — stages and steps lenient, per-kind fields as found. */
 function readPipeline(json: unknown, scopeProjectId: string | undefined): Pipeline {
   const record = typeof json === 'object' && json !== null ? (json as Record<string, unknown>) : {};
+  const stages = Array.isArray(record['stages']) ? record['stages'] : [];
   const steps = Array.isArray(record['steps']) ? record['steps'] : [];
   const updatedAt = readString(record, 'updatedAt');
   return {
     id: readString(record, 'id') ?? '',
     projectId: readString(record, 'projectId') ?? scopeProjectId ?? '',
     name: readString(record, 'name') ?? '',
+    // The revision is server-authoritative; the client's value is ignored.
+    revision: typeof record['revision'] === 'number' ? record['revision'] : 0,
+    stages: stages.map((stage) => readPipelineStage(stage)),
     steps: steps.map((step) => readPipelineStep(step)),
     updatedAt: updatedAt !== undefined && Date.parse(updatedAt) > 0 ? updatedAt : '',
+  };
+}
+
+function readPipelineStage(json: unknown): PipelineStage {
+  const record = typeof json === 'object' && json !== null ? (json as Record<string, unknown>) : {};
+  const outcomes = Array.isArray(record['outcomes']) ? record['outcomes'] : [];
+  return {
+    id: readString(record, 'id') ?? '',
+    label: readString(record, 'label') ?? '',
+    kanbanVisible: record['kanbanVisible'] !== false,
+    ...(record['terminal'] === true ? { terminal: true } : {}),
+    ...(outcomes.length > 0
+      ? {
+          outcomes: outcomes.map((rule) => {
+            const outcome = typeof rule === 'object' && rule !== null ? (rule as Record<string, unknown>) : {};
+            const toStageId = readString(outcome, 'toStageId');
+            return {
+              outcome: readString(outcome, 'outcome') ?? '',
+              ...(toStageId !== undefined && toStageId !== '' ? { toStageId } : {}),
+            };
+          }),
+        }
+      : {}),
+    ...(record['requiresOutcome'] === true ? { requiresOutcome: true } : {}),
+    ...(readString(record, 'errorReturnToStageId') !== undefined
+      ? { errorReturnToStageId: readString(record, 'errorReturnToStageId')! }
+      : {}),
   };
 }
 
@@ -827,15 +889,14 @@ function readPipelineStep(json: unknown): PipelineStep {
   const record = typeof json === 'object' && json !== null ? (json as Record<string, unknown>) : {};
   const str = (key: string): string | undefined => readString(record, key);
   const kind = str('kind');
-  const retries = record['retries'];
   return {
     id: str('id') ?? '',
     kind: kind === 'command' || kind === 'human' ? kind : 'agent',
+    stageId: str('stageId') ?? '',
     ...(str('agentKind') !== undefined ? { agentKind: str('agentKind') } : {}),
     ...(str('instructions') !== undefined ? { instructions: str('instructions') } : {}),
     ...(str('command') !== undefined ? { command: str('command') } : {}),
     ...(str('description') !== undefined ? { description: str('description') } : {}),
-    ...(typeof retries === 'number' && Number.isFinite(retries) ? { retries } : {}),
   };
 }
 

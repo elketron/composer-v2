@@ -26,6 +26,9 @@ landing.
   assistant reads and proposes work; it does not edit code or run workflows.
 - Existing projects, cards, plans, pipelines, and run history must survive the
   changes.
+- Pipeline stages define the coding board. The board projects only stages marked
+  as Kanban-visible, while task cards expose finer-grained execution state. See
+  [Pipeline and Kanban model](pipeline-kanban-model.md).
 
 ## Information architecture
 
@@ -317,6 +320,99 @@ Acceptance criteria:
 - Every slice keeps `pnpm verify` green; the protocol bump leaves stale
   servers refused, not silently attached.
 
+## Phase 10 - Pipeline-first Kanban
+
+Status: in progress 2026-09-07 (S35: the staged domain core - pipeline
+stages, per-pipeline board tabs, run records with revisions, run locks,
+error returns, and the staged pipeline editor; S36: the agent outcome
+tool - stage outcome rules, the report tool, required-outcome
+enforcement, and the shipped defaults; the linear visual editor
+follows).
+
+Make each pipeline the source of its task workflow and board projection. A
+project may have multiple pipeline tabs, each showing only the pipeline stages
+configured as Kanban-visible. Execution steps remain visible on task cards and
+in run detail without automatically becoming board columns.
+
+The approved domain behavior, including assignment, run locking, retries,
+pipeline revisions, hidden stages, recovery transitions, and the linear visual
+editor, is defined in the
+[Pipeline and Kanban model](pipeline-kanban-model.md).
+
+Acceptance direction:
+
+- One task is assigned to one pipeline and appears on that pipeline's board
+  tab.
+- Pipeline steps reference ordered stages; multiple steps may share a stage.
+- Active runs own stage transitions and lock manual task movement.
+- Hidden stage activity is shown on the task card while the card remains in its
+  previous visible column.
+- Retries preserve failed runs and reuse the task's prior OpenCode session.
+- Pipeline edits do not mutate active or historical runs.
+- The editor presents a linear visual stage diagram without general graph
+  branching.
+
+## Phase 11 - Assistant capability boundaries
+
+Status: planned 2026-09-07.
+
+Formalize unscoped and multi-project threads, explicit plan updates, knowledge
+provenance, deterministic skill resolution, and optional project indexing. See
+[Assistant, knowledge, and skills model](assistant-knowledge-skills-model.md).
+
+Acceptance direction:
+
+- A thread owns one OpenCode session and one active turn, while separate threads
+  may run concurrently.
+- Zero-project threads retain research and global-knowledge capabilities without
+  gaining project access.
+- Explicit instructions authorize scoped plan updates and global knowledge
+  writes.
+- Built-in Composer skills work on clean installations and cannot be overridden.
+- Project indexing remains optional and is never required for normal operation.
+
+## Phase 12 - Live run workbench
+
+Status: planned 2026-09-07.
+
+Evolve the run page into the resizable Agent, Context, and Terminal workbench
+defined in [Live run workbench](live-run-workbench.md). Preserve one continuous
+OpenCode session across retry attempts while keeping runs and terminal output
+historically distinct.
+
+Acceptance direction:
+
+- Wide layouts provide three resizable panes and narrow layouts provide tabs.
+- The context pane shows task-wide modified files with read-only unified and
+  side-by-side diffs.
+- Model-opened terminals remain grouped by run and allow read-only inspection
+  plus stop control.
+- Restarted terminal processes are reported as interrupted rather than alive.
+- The run composer sends guidance to the task's active OpenCode session.
+
+## Phase 13 - Concurrent worktree scheduler
+
+Status: planned 2026-09-07.
+
+Add durable queued execution and Git worktree isolation as defined in
+[Scheduling and worktrees](scheduling-worktrees.md). This phase replaces the
+current boot-cancellation behavior for active runs with resumable OpenCode
+session continuity.
+
+Acceptance direction:
+
+- Ungrouped tasks receive dedicated worktrees and grouped tasks serialize in a
+  shared project-local worktree.
+- Worktrees are created lazily when queued work receives an execution slot.
+- The configurable scheduler defaults to five concurrently executing worktrees.
+- Queues survive restart, are FIFO by default, and support manual reordering.
+- Existing worktrees rebase when their base advances, using checkpoint commits
+  and a bounded conflict-resolution agent when needed.
+- Integration and worktree cleanup remain user-triggered.
+
+Choices intentionally excluded from the approved phase contracts are maintained
+in [Deferred product decisions](deferred-product-decisions.md).
+
 ## Cross-cutting engineering requirements
 
 - Preserve old event logs through additive fold defaults and migrations.
@@ -344,3 +440,8 @@ Acceptance criteria:
 7. Assistant branching and advanced conversation controls.
 8. Editable work proposals and confirmed card creation.
 9. Docs, diagrams, and the global knowledge library.
+10. Pipeline-defined stages, per-pipeline Kanban tabs, and the visual pipeline
+    editor.
+11. Assistant boundaries, deterministic skills, and knowledge provenance.
+12. Three-pane live run workbench and task-wide diff inspection.
+13. Concurrent queued execution with task and group worktrees.

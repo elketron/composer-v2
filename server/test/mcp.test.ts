@@ -260,10 +260,11 @@ describe('the worker mcp surface', () => {
   };
   const context = { projectId: 'P-1', sessionId: 'A-1' };
 
-  it('tools_list_exposes_the_recording_and_retrieval_tools', async () => {
+  it('tools_list_exposes_the_outcome_recording_and_retrieval_tools', async () => {
     const response = await workerHandleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, caller, context);
     const tools = (response!['result'] as { tools: { name: string }[] }).tools;
     expect(tools.map((tool) => tool.name)).toEqual([
+      'report_outcome',
       'workflow_start_recording',
       'workflow_add_step',
       'workflow_stop_recording',
@@ -294,6 +295,30 @@ describe('the worker mcp surface', () => {
         args: { step: { title: 'Run the checks', command: 'npm test' } },
       },
     ]);
+    const result = response!['result'] as { content: { text: string }[] };
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ ok: true, savedPath: 'procedure.md' });
+  });
+
+  it('the_outcome_tool_reaches_the_worker_caller_with_the_session_context', async () => {
+    const response = await workerHandleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: {
+          name: 'report_outcome',
+          arguments: { outcome: 'changes_requested', note: 'the error path is untested' },
+        },
+      },
+      caller,
+      context,
+    );
+    expect(recorded.at(-1)).toEqual({
+      projectId: 'P-1',
+      sessionId: 'A-1',
+      tool: 'report_outcome',
+      args: { outcome: 'changes_requested', note: 'the error path is untested' },
+    });
     const result = response!['result'] as { content: { text: string }[] };
     expect(JSON.parse(result.content[0]!.text)).toEqual({ ok: true, savedPath: 'procedure.md' });
   });

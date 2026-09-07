@@ -10,9 +10,9 @@ import {
   CARD_TYPES,
   Card,
   CardType,
-  Lane,
-  Stage,
+  StepStateStatus,
 } from '../core/models/board.models';
+import { Pipeline, PipelineStep } from '../core/models/pipeline.models';
 import { PipelineService } from '../pipelines/pipeline.service';
 import { ShellService } from '../shell/shell.service';
 import { BoardService } from './board.service';
@@ -20,10 +20,11 @@ import { BoardService } from './board.service';
 /**
  * Card detail panel: a side panel beside the board on wide windows (the
  * board stays visible and selectable); narrow windows take it full-area.
- * Editable type selector (changing type resets the pipeline checklist),
- * full description, dependency graph in both directions, per-type pipeline
- * checklist, session metadata, the pipeline run (progress, gate affordance,
- * run/stop), the last run's outcome, and the action footer.
+ * Editable type selector (changing type resets the step states), full
+ * description, dependency graph in both directions, the assigned pipeline's
+ * steps with their execution state, session metadata, the pipeline run
+ * (progress, gate affordance, run/stop), the last run's outcome, and the
+ * action footer.
  */
 @Component({
   selector: 'app-card-panel',
@@ -50,12 +51,28 @@ export class CardPanelComponent {
       : null;
 
   protected readonly meta = computed(() => this.card().meta);
-  protected readonly checklist = computed(() => this.card().checklist());
   protected readonly blockers = computed(() => this.card().blockers(this.board.cardsById()));
   protected readonly blocking = computed(() => this.card().blocking(this.board.cards()));
-  protected readonly moveTargets = computed(() =>
-    this.card().lanes.filter((lane) => lane !== this.card().stage),
+
+  /** The card's assigned pipeline (its steps are the checklist). */
+  protected readonly pipeline = computed<Pipeline | undefined>(
+    () => this.pipelines.pipelineById(this.card().pipelineId),
   );
+
+  /** Whether the card sits in its pipeline's terminal (Done) stage. */
+  protected readonly completed = computed(() => {
+    const pipeline = this.pipeline();
+    return pipeline !== undefined && pipeline.terminalStageId === this.card().stageId;
+  });
+
+  /** The pipeline's Kanban-visible stages the card may be dragged to. */
+  protected readonly moveTargets = computed(() => {
+    const pipeline = this.pipeline();
+    if (pipeline === undefined) return [];
+    return pipeline
+      .columns()
+      .filter((stage) => stage.id !== pipeline.visibleStageOf(this.card().stageId));
+  });
 
   constructor() {
     // View effects run after the template pass: focus lands in the panel
@@ -76,16 +93,10 @@ export class CardPanelComponent {
   /** How this card's most recent run ended (undefined = none this session). */
   protected readonly lastRun = computed(() => this.pipelines.lastRunForCard(this.card().id));
 
-  protected readonly runPipeline = computed(() => {
-    const run = this.run();
-    if (run === undefined) return null;
-    return this.pipelines.pipelineById(run.pipelineId) ?? null;
-  });
-
   protected readonly runStep = computed(() => {
     const run = this.run();
-    const pipeline = this.runPipeline();
-    if (run === undefined || pipeline === null || run.stepId === undefined) return null;
+    const pipeline = this.pipeline();
+    if (run === undefined || pipeline === undefined || run.stepId === undefined) return null;
     return pipeline.stepById(run.stepId) ?? null;
   });
 
@@ -132,8 +143,23 @@ export class CardPanelComponent {
     if (projectId) void this.router.navigate(['/projects', projectId, 'coding', 'run', card.id]);
   }
 
-  protected laneLabel(lane: Stage): string {
-    return Lane.label(lane);
+  protected stageLabel(stageId: string): string {
+    return this.pipeline()?.stageById(stageId)?.label ?? stageId;
+  }
+
+  /** The steps of the assigned pipeline with the card's per-step state. */
+  protected stepRows(): { step: PipelineStep; status: StepStateStatus }[] {
+    const pipeline = this.pipeline();
+    if (pipeline === undefined) return [];
+    const states = this.card().stepStates;
+    return pipeline.steps.map((step) => ({
+      step,
+      status: states[step.id] ?? 'pending',
+    }));
+  }
+
+  protected stepStageLabel(step: PipelineStep): string {
+    return this.stageLabel(step.stageId);
   }
 
   protected close(): void {
@@ -158,8 +184,20 @@ export class CardPanelComponent {
     this.board.unassign(this.card().id);
   }
 
-  protected forceMove(lane: string): void {
-    if (lane) void this.board.forceMove(this.card().id, lane as Stage);
+  protected forceMove(stageId: string): void {
+    if (stageId) void this.board.forceMove(this.card().id, stageId);
+  }
+
+  protected reassign(): void {
+    const pipelineId = this.selectedPipelineId();
+    if (pipelineId === '') return;
+    void this.board.assignPipeline(this.card().id, pipelineId).then((result) => {
+      if (result.ok) this.selectedPipelineId.set('');
+    });
+  }
+
+  protected reopen(): void {
+    void this.board.reopen(this.card().id);
   }
 
   protected archive(): void {
@@ -167,11 +205,7 @@ export class CardPanelComponent {
   }
 
   protected startPipeline(): void {
-    const pipelineId = this.selectedPipelineId();
-    if (pipelineId === '') return;
-    void this.pipelines.run(pipelineId, this.card().id).then((ok) => {
-      if (ok) this.selectedPipelineId.set('');
-    });
+    void this.pipelines.run(this.card().id);
   }
 
   protected stopPipeline(): void {

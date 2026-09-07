@@ -71,10 +71,10 @@ describe('dashboard project aggregation', () => {
         id: 'P-1',
         runningRuns: 1,
         waitingApprovals: [
-          { cardId: 'T-2', cardTitle: 'Approve me', pipelineId: 'PL-1' },
+          { runId: 'R-2', cardId: 'T-2', cardTitle: 'Approve me', pipelineId: 'PL-1' },
         ],
         failedRuns: [
-          expect.objectContaining({ cardId: 'T-3', cardTitle: 'Fix me', pipelineId: 'PL-1' }),
+          expect.objectContaining({ runId: 'R-3', cardId: 'T-3', cardTitle: 'Fix me', pipelineId: 'PL-1' }),
         ],
         git: { status: 'clean', branch: 'main' },
       }),
@@ -83,6 +83,22 @@ describe('dashboard project aggregation', () => {
 });
 
 function projectState(): ProjectState {
+  const run = (
+    id: string,
+    cardId: string,
+    status: 'running' | 'waiting' | 'failed' | 'returned',
+    startedAt: string,
+    error?: string,
+  ) => ({
+    id,
+    cardId,
+    pipelineId: 'PL-1',
+    revision: 1,
+    status,
+    startedAt,
+    ...(status === 'running' || status === 'waiting' ? {} : { endedAt: '2026-09-06T01:01:00Z' }),
+    ...(error !== undefined ? { error } : {}),
+  });
   return {
     projectId: 'P-1',
     cards: new Map([
@@ -94,24 +110,16 @@ function projectState(): ProjectState {
     planningSessions: new Map(),
     agentSessions: new Map(),
     pipelines: new Map(),
+    pipelineRevisions: new Map(),
     deletedPipelines: new Set(),
-    pipelineRuns: new Map([
-      ['T-1', { pipelineId: 'PL-1', status: 'running' }],
-      ['T-2', { pipelineId: 'PL-1', status: 'waiting', stepId: 'approve', stepKind: 'human' }],
+    runs: new Map([
+      ['R-1', run('R-1', 'T-1', 'running', '2026-09-06T01:00:00Z')],
+      ['R-2', run('R-2', 'T-2', 'waiting', '2026-09-06T01:00:00Z')],
+      ['R-3', run('R-3', 'T-3', 'failed', '2026-09-06T01:00:00Z', 'tests failed')],
     ]),
-    latestRuns: new Map([
-      ['T-1', { pipelineId: 'PL-1', status: 'running', startedAt: '2026-09-06T01:00:00Z' }],
-      ['T-2', { pipelineId: 'PL-1', status: 'waiting', startedAt: '2026-09-06T01:00:00Z' }],
-      [
-        'T-3',
-        {
-          pipelineId: 'PL-1',
-          status: 'failed',
-          startedAt: '2026-09-06T01:00:00Z',
-          endedAt: '2026-09-06T01:01:00Z',
-          error: 'tests failed',
-        },
-      ],
+    activeRuns: new Map([
+      ['T-1', 'R-1'],
+      ['T-2', 'R-2'],
     ]),
   };
 }
@@ -124,10 +132,10 @@ function card(id: string, title: string) {
     title,
     description: '',
     tags: [],
-    stage: 'coding' as const,
+    pipelineId: 'PL-1' as const,
+    stageId: 'sg-2',
     blockedBy: [],
-    subState: {},
-    retries: {},
+    stepStates: {},
     createdAt: '2026-09-06T01:00:00Z',
     updatedAt: '2026-09-06T01:00:00Z',
   };

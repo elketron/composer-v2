@@ -18,7 +18,7 @@
   @if (projectId() === null) {
     <p class="state-empty inline">open a project first</p>
   } @else if (editing(); as draft) {
-    <!-- The step builder -->
+    <!-- The staged builder: the stage path, then the steps that walk it -->
     <section class="form">
       <label class="name-row">
         <span class="label">name</span>
@@ -29,6 +29,114 @@
           (ngModelChange)="updateName($event)"
         />
       </label>
+
+      <p class="hint">stages are the board's columns (only Kanban-visible ones); steps run in order, each working one stage</p>
+
+      <div class="stages">
+        @for (stage of draft.stages; track stage.id; let si = $index) {
+          <div class="stage">
+            <div class="stage-head">
+              <span class="index">{{ $index + 1 }}</span>
+              <input
+                type="text"
+                placeholder="stage label"
+                [ngModel]="stage.label"
+                (ngModelChange)="updateStage(si, { label: $event })"
+              />
+              <label class="flag">
+                <input
+                  type="checkbox"
+                  [ngModel]="stage.kanbanVisible"
+                  (ngModelChange)="updateStage(si, { kanbanVisible: $event })"
+                />
+                column
+              </label>
+              <label class="flag">
+                <input
+                  type="checkbox"
+                  [ngModel]="stage.terminal"
+                  (ngModelChange)="updateStage(si, { terminal: $event })"
+                />
+                done
+              </label>
+              <span class="spacer"></span>
+              <button class="mini" (click)="moveStage(si, -1)" [disabled]="si === 0" title="move up">
+                <lucide-icon [img]="icons.up" [size]="12" />
+              </button>
+              <button class="mini" (click)="moveStage(si, 1)" [disabled]="si === draft.stages.length - 1" title="move down">
+                <lucide-icon [img]="icons.down" [size]="12" />
+              </button>
+              <button class="mini danger" (click)="removeStage(si)" title="remove stage">
+                <lucide-icon [img]="icons.trash" [size]="12" />
+              </button>
+            </div>
+            <div class="stage-fields">
+              <div class="stage-row">
+                <label class="error-return">
+                  on failure, return to
+                  <select
+                    [ngModel]="stage.errorReturnToStageId"
+                    (ngModelChange)="updateStageErrorReturn(si, $event)"
+                  >
+                    <option value="">nowhere (the card stays)</option>
+                    @for (target of errorTargets(si); track target.id) {
+                      <option [value]="target.id">{{ target.label }}</option>
+                    }
+                  </select>
+                </label>
+                <span class="spacer"></span>
+                <button class="mini" (click)="addOutcome(si)" title="add an agent outcome rule">
+                  <lucide-icon [img]="icons.plus" [size]="12" />
+                  outcome
+                </button>
+              </div>
+              @for (rule of stage.outcomes; track $index) {
+                <div class="stage-row outcome-rule">
+                  <span class="rule-label">on</span>
+                  <input
+                    type="text"
+                    placeholder="outcome name (approved)"
+                    [ngModel]="rule.outcome"
+                    (ngModelChange)="updateOutcome(si, $index, { outcome: $event })"
+                  />
+                  <select
+                    title="what the outcome does"
+                    [ngModel]="rule.toStageId"
+                    (ngModelChange)="updateOutcome(si, $index, { toStageId: $event })"
+                  >
+                    <option value="">proceeds</option>
+                    @for (target of errorTargets(si); track target.id) {
+                      <option [value]="target.id">returns to {{ target.label }}</option>
+                    }
+                  </select>
+                  <button class="mini danger" (click)="removeOutcome(si, $index)" title="remove outcome">
+                    <lucide-icon [img]="icons.trash" [size]="12" />
+                  </button>
+                </div>
+              }
+              @if (stage.outcomes.length > 0) {
+                <div class="stage-row">
+                  <label class="flag" title="agent steps in this stage must report their outcome through the tool">
+                    <input
+                      type="checkbox"
+                      [ngModel]="stage.requiresOutcome"
+                      (ngModelChange)="updateStage(si, { requiresOutcome: $event })"
+                    />
+                    agents must report the outcome
+                  </label>
+                </div>
+              }
+            </div>
+          </div>
+        }
+      </div>
+
+      <div class="add-row">
+        <button class="add" (click)="addStage()">
+          <lucide-icon [img]="icons.plus" [size]="12" />
+          add stage
+        </button>
+      </div>
 
       <p class="hint">steps run in order · agent = the runtime · command = a shell step · gate = waits for approval</p>
 
@@ -43,6 +151,15 @@
               >
                 @for (kind of kinds; track kind) {
                   <option [value]="kind">{{ kindLabel(kind) }}</option>
+                }
+              </select>
+              <select
+                title="the stage this step works in"
+                [ngModel]="step.stageId"
+                (ngModelChange)="updateStep($index, { stageId: $event })"
+              >
+                @for (stage of draft.stages; track stage.id) {
+                  <option [value]="stage.id">{{ stage.label || stage.id }}</option>
                 }
               </select>
               <input
@@ -89,14 +206,6 @@
                     placeholder="shell command (npm test)"
                     [ngModel]="step.command"
                     (ngModelChange)="updateStep($index, { command: $event })"
-                  />
-                  <input
-                    class="narrow"
-                    type="number"
-                    min="0"
-                    placeholder="retries"
-                    [ngModel]="step.retries"
-                    (ngModelChange)="updateStepRetries($index, $event)"
                   />
                 </div>
               }
@@ -150,6 +259,7 @@
           <div class="row-main">
             <span class="row-name">{{ pipeline.name }}</span>
             <span class="row-id">{{ pipeline.id }}</span>
+            <span class="row-stages">{{ stageSummary(pipeline) }}</span>
             <span class="row-steps">{{ stepSummary(pipeline) }}</span>
           </div>
           <div class="row-actions">

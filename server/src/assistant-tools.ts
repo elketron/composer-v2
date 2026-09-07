@@ -14,7 +14,7 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isAbsolute, resolve, sep } from 'node:path';
-import type { State } from './fold.js';
+import type { RunRecord, State } from './fold.js';
 import { readGitStatus, type GitRunner } from './dashboard.js';
 import type { KnowledgeStore } from './knowledge.js';
 
@@ -145,20 +145,33 @@ function composerOverview(state: State, scope: string[], projectId: string | und
     const projectState = state.byProject.get(project.id);
     const cards = [...(projectState?.cards.values() ?? [])];
     const byStage: Record<string, number> = {};
-    for (const card of cards) byStage[card.stage] = (byStage[card.stage] ?? 0) + 1;
-    const runs = [...(projectState?.latestRuns.entries() ?? [])].map(([cardId, run]) => ({
-      cardId,
-      cardTitle: projectState?.cards.get(cardId)?.title ?? cardId,
+    for (const card of cards) {
+      const pipeline = projectState?.pipelines.get(card.pipelineId);
+      const label = pipeline?.stages.find((stage) => stage.id === card.stageId)?.label ?? card.stageId;
+      byStage[label] = (byStage[label] ?? 0) + 1;
+    }
+    const latestRunByCard = new Map<string, RunRecord>();
+    for (const run of projectState?.runs.values() ?? []) {
+      const latest = latestRunByCard.get(run.cardId);
+      if (latest === undefined || run.startedAt >= latest.startedAt) latestRunByCard.set(run.cardId, run);
+    }
+    const runs = [...latestRunByCard.values()].map((run) => ({
+      runId: run.id,
+      cardId: run.cardId,
+      cardTitle: projectState?.cards.get(run.cardId)?.title ?? run.cardId,
       pipelineId: run.pipelineId,
       status: run.status,
       ...(run.error !== undefined ? { error: run.error } : {}),
     }));
-    const activeRuns = [...(projectState?.pipelineRuns.entries() ?? [])].map(([cardId, run]) => ({
-      cardId,
-      pipelineId: run.pipelineId,
-      status: run.status,
-      stepKind: run.stepKind,
-    }));
+    const activeRuns = [...(projectState?.runs.values() ?? [])]
+      .filter((run) => run.status === 'running' || run.status === 'waiting')
+      .map((run) => ({
+        runId: run.id,
+        cardId: run.cardId,
+        pipelineId: run.pipelineId,
+        status: run.status,
+        stepKind: run.stepKind,
+      }));
     const sessions = [...(projectState?.planningSessions.values() ?? [])].map((session) => ({
       id: session.id,
       status: session.status,
@@ -184,7 +197,11 @@ function composerCard(state: State, scope: string[], projectId: string, cardId: 
   if (!card) {
     return { ok: false, error: `unknown card ${cardId}` };
   }
-  const latestRun = projectState?.latestRuns.get(cardId);
+  let latestRun: RunRecord | undefined;
+  for (const run of projectState?.runs.values() ?? []) {
+    if (run.cardId !== cardId) continue;
+    if (latestRun === undefined || run.startedAt >= latestRun.startedAt) latestRun = run;
+  }
   const transcriptSessions = [...(projectState?.agentSessions.values() ?? [])]
     .filter((session) => session.cardId === cardId)
     .map((session) => ({

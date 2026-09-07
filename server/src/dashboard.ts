@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
-import type { State } from './fold.js';
+import type { RunRecord, State } from './fold.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -17,8 +17,9 @@ export interface DashboardProject {
   name: string;
   directory?: string;
   runningRuns: number;
-  waitingApprovals: Array<{ cardId: string; cardTitle: string; pipelineId: string }>;
+  waitingApprovals: Array<{ runId: string; cardId: string; cardTitle: string; pipelineId: string }>;
   failedRuns: Array<{
+    runId: string;
     cardId: string;
     cardTitle: string;
     pipelineId: string;
@@ -88,30 +89,39 @@ export async function dashboardProjects(
 
   return mapLimit(projects, 4, async (project) => {
     const projectState = state.byProject.get(project.id);
-    const waitingApprovals = [...(projectState?.pipelineRuns.entries() ?? [])]
-      .filter(([, run]) => run.status === 'waiting')
-      .map(([cardId, run]) => ({
-        cardId,
-        cardTitle: projectState?.cards.get(cardId)?.title ?? cardId,
+    const waitingApprovals = [...(projectState?.runs.values() ?? [])]
+      .filter((run) => run.status === 'waiting')
+      .map((run) => ({
+        runId: run.id,
+        cardId: run.cardId,
+        cardTitle: projectState?.cards.get(run.cardId)?.title ?? run.cardId,
         pipelineId: run.pipelineId,
-      }));
-    const failedRuns = [...(projectState?.latestRuns.entries() ?? [])]
-      .filter(([, run]) => run.status === 'failed')
-      .map(([cardId, run]) => ({
-        cardId,
-        cardTitle: projectState?.cards.get(cardId)?.title ?? cardId,
+      }))
+      .sort((a, b) => a.cardId.localeCompare(b.cardId));
+    // The card's latest run feeds health: failed and returned runs are both
+    // actionable (a returned run means work came back from a later stage).
+    const latestRunByCard = new Map<string, RunRecord>();
+    for (const run of projectState?.runs.values() ?? []) {
+      const latest = latestRunByCard.get(run.cardId);
+      if (latest === undefined || run.startedAt >= latest.startedAt) latestRunByCard.set(run.cardId, run);
+    }
+    const failedRuns = [...latestRunByCard.values()]
+      .filter((run) => run.status === 'failed' || run.status === 'returned')
+      .map((run) => ({
+        runId: run.id,
+        cardId: run.cardId,
+        cardTitle: projectState?.cards.get(run.cardId)?.title ?? run.cardId,
         pipelineId: run.pipelineId,
         ...(run.error !== undefined ? { error: run.error } : {}),
         ...(run.endedAt !== undefined ? { endedAt: run.endedAt } : {}),
-      }));
+      }))
+      .sort((a, b) => a.cardId.localeCompare(b.cardId));
 
     return {
       id: project.id,
       name: project.name,
       ...(project.directory !== undefined ? { directory: project.directory } : {}),
-      runningRuns:
-        [...(projectState?.pipelineRuns.values() ?? [])].filter((run) => run.status === 'running')
-          .length,
+      runningRuns: [...(projectState?.runs.values() ?? [])].filter((run) => run.status === 'running').length,
       waitingApprovals,
       failedRuns,
       git: await readGit(project.directory),

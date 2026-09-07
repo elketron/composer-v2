@@ -11,7 +11,7 @@
  * catalog or commands), together with the gateway's copy in
  * desktop/electron/server-registry.js.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 7;
 
 import type {
   AgentSession,
@@ -31,7 +31,6 @@ import type {
   PlanningSession,
   Project,
   ProposalOutcome,
-  Stage,
   SubStateStatus,
   WorkflowInfo,
 } from './models.js';
@@ -40,12 +39,24 @@ export interface CardCreated {
   card: Card;
 }
 
-/** Comment is set when the move is an approval → implement-lane rejection. */
-export interface CardMoved {
+/**
+ * The card moved to a stage of its assigned pipeline — a validated manual
+ * move (with the rejection comment when it leaves the terminal stage) or a
+ * run-driven transition.
+ */
+export interface CardStageMoved {
   cardId: string;
-  from: Stage;
-  to: Stage;
+  pipelineId: string;
+  fromStageId?: string;
+  toStageId: string;
   comment?: string;
+}
+
+/** Assignment always places the card in the pipeline's first stage; assigning a completed card reopens it. */
+export interface CardPipelineAssigned {
+  cardId: string;
+  pipelineId: string;
+  stageId: string;
 }
 
 export interface CardTypeChanged {
@@ -64,9 +75,10 @@ export interface CardArchived {
   cardId: string;
 }
 
-export interface SubStateUpdated {
+/** One step's execution state (a run's progress or a manual tick). */
+export interface CardStepStateUpdated {
   cardId: string;
-  stage: string;
+  stepId: string;
   status: SubStateStatus;
 }
 
@@ -76,8 +88,10 @@ export interface DependencyStateChanged {
   blockedBy: string[];
 }
 
+/** Automation toggles are keyed per pipeline stage (Phase 10). */
 export interface AutomationToggled {
-  lane: Stage;
+  pipelineId: string;
+  stageId: string;
   on: boolean;
 }
 
@@ -176,20 +190,25 @@ export interface PipelineDeleted {
   pipelineId: string;
 }
 
-/** The validated run command; the runner starts the execution. */
+/** The validated run command; the runner starts the execution. The run pins the pipeline's current revision. */
 export interface PipelineRunStarted {
+  runId: string;
   cardId: string;
   pipelineId: string;
+  revision: number;
 }
 
 export interface PipelineStepStarted {
+  runId: string;
   cardId: string;
   pipelineId: string;
   stepId: string;
   kind: PipelineStepKind;
+  stageId: string;
 }
 
 export interface PipelineStepFinished {
+  runId: string;
   cardId: string;
   pipelineId: string;
   stepId: string;
@@ -198,17 +217,36 @@ export interface PipelineStepFinished {
 }
 
 export interface PipelineRunEnded {
+  runId: string;
   cardId: string;
   pipelineId: string;
+  revision: number;
   status: PipelineRunStatus;
   error?: string;
 }
 
 /** A parked approval gate was answered; the run resumes. */
 export interface PipelineGateResponded {
+  runId?: string;
   cardId: string;
   approved: boolean;
   comment?: string;
+}
+
+/**
+ * The agent's named stage outcome (S36): the outcome tool's validated
+ * decision record. The runner applies the transition — a rule with a
+ * target stage returns the card there and ends the run `returned`; a rule
+ * without one proceeds. The fold derives nothing from it (the card move
+ * and the run end are the state changes).
+ */
+export interface PipelineOutcomeReported {
+  runId: string;
+  cardId: string;
+  pipelineId: string;
+  stepId: string;
+  outcome: string;
+  note?: string;
 }
 
 /**
@@ -216,6 +254,7 @@ export interface PipelineGateResponded {
  * durable record is the step's finish (ok/error tail), not the transcript.
  */
 export interface CommandOutput {
+  runId: string;
   cardId: string;
   pipelineId: string;
   stepId: string;
@@ -380,11 +419,12 @@ export interface WorkflowDeleted {
 
 export interface EventBodyMap {
   cardCreated: CardCreated;
-  cardMoved: CardMoved;
+  cardStageMoved: CardStageMoved;
+  cardPipelineAssigned: CardPipelineAssigned;
   cardTypeChanged: CardTypeChanged;
   cardAssigned: CardAssigned;
   cardArchived: CardArchived;
-  subStateUpdated: SubStateUpdated;
+  cardStepStateUpdated: CardStepStateUpdated;
   dependencyStateChanged: DependencyStateChanged;
   automationToggled: AutomationToggled;
   planningSessionCreated: PlanningSessionCreated;
@@ -410,6 +450,7 @@ export interface EventBodyMap {
   pipelineStepFinished: PipelineStepFinished;
   pipelineRunEnded: PipelineRunEnded;
   pipelineGateResponded: PipelineGateResponded;
+  pipelineOutcomeReported: PipelineOutcomeReported;
   commandOutput: CommandOutput;
   assistantThreadCreated: AssistantThreadCreated;
   assistantThreadArchived: AssistantThreadArchived;
@@ -442,11 +483,12 @@ export type EventBody<N extends EventName = EventName> = EventBodyMap[N];
 /** Every event name, in catalog order (the golden fixture's order). */
 export const EVENT_NAMES = Object.keys({
   cardCreated: null,
-  cardMoved: null,
+  cardStageMoved: null,
+  cardPipelineAssigned: null,
   cardTypeChanged: null,
   cardAssigned: null,
   cardArchived: null,
-  subStateUpdated: null,
+  cardStepStateUpdated: null,
   dependencyStateChanged: null,
   automationToggled: null,
   planningSessionCreated: null,
@@ -472,6 +514,7 @@ export const EVENT_NAMES = Object.keys({
   pipelineStepFinished: null,
   pipelineRunEnded: null,
   pipelineGateResponded: null,
+  pipelineOutcomeReported: null,
   commandOutput: null,
   assistantThreadCreated: null,
   assistantThreadArchived: null,

@@ -9,9 +9,7 @@ import {
   cardTypeFromWire,
   cardTypeToWire,
   domainEventKind,
-  stageFromWire,
-  stageToWire,
-  subStateStatusFromWire,
+  stepStateStatusFromWire,
 } from '../core/events/wire';
 import {
   Assignee,
@@ -19,17 +17,21 @@ import {
   Card,
   CardData,
   CardType,
-  Lane,
-  Stage,
 } from '../core/models/board.models';
+import { PipelineService } from '../pipelines/pipeline.service';
 import { ShellService } from '../shell/shell.service';
 
-export type MoveRejection = 'unknown-card' | 'invalid-lane' | 'blocked' | 'unavailable';
+export type MoveRejection =
+  | 'unknown-card'
+  | 'unknown-stage'
+  | 'run-active'
+  | 'blocked'
+  | 'unavailable';
 
 export type MoveResult =
   { readonly ok: true } | { readonly ok: false; readonly reason: MoveRejection };
 
-/** Set after an approval → implement-lane rejection drag, awaiting an optional comment. */
+/** Set after a drag out of the terminal stage, awaiting an optional comment. */
 export interface RejectionPrompt {
   readonly cardId: string;
 }
@@ -38,13 +40,16 @@ export interface RejectionPrompt {
 interface PendingRejection {
   readonly projectId: string;
   readonly cardId: string;
-  readonly toLane: Stage;
+  readonly toStageId: string;
   readonly before: Card;
 }
 
 /**
- * Board state: a fold of the Events gRPC stream (CardCreated, CardMoved, …)
- * with optimistic commands over Events.Publish (docs/frontend/design.md §6.3).
+ * Board state: a fold of the event stream (CardCreated, CardStageMoved, …)
+ * with optimistic commands. Phase 10: cards carry their assigned pipeline
+ * and current stage; moves are stage moves and lock while a run is active;
+ * the board's columns come from the assigned pipeline's visible stages
+ * (the columns component owns that projection).
  *
  * The UI issues commands (requestMove, changeType, toggleAutomation, …); each
  * applies locally, publishes, and reverts on a typed rejection. The canonical
@@ -54,8 +59,11 @@ interface PendingRejection {
  */
 @Injectable({ providedIn: 'root' })
 export class BoardService {
+  private static readonly SEEN_IDS_CAP = 4096;
+
   private readonly events = inject(EventsClient);
   private readonly shell = inject(ShellService);
+  private readonly pipelines = inject(PipelineService);
 
   private readonly cardsByProject = signal<ReadonlyMap<string, readonly Card[]>>(new Map());
   private readonly automationByProject = signal<ReadonlyMap<string, AutomationState>>(
@@ -68,16 +76,22 @@ export class BoardService {
 
   readonly cardsById = computed(() => new Map(this.cards().map((c) => [c.id, c])));
 
+  /** Whether a card has reached its pipeline's terminal stage. */
+  private readonly isDoneOf = (card: Card): boolean => {
+    const pipeline = this.pipelines.pipelineById(card.pipelineId);
+    return pipeline !== undefined && pipeline.terminalStageId === card.stageId;
+  };
+
   readonly blockedIds = computed(() => {
     const byId = this.cardsById();
     return new Set(
       this.cards()
-        .filter((c) => c.isBlockedIn(byId))
+        .filter((c) => c.isBlockedIn(byId, this.isDoneOf))
         .map((c) => c.id),
     );
   });
 
-  /** Automation toggles per agent-owned lane of the active project. */
+  /** Automation toggles per pipeline stage of the active project. */
   readonly automation = computed(
     () => this.automationByProject().get(this.projectId() ?? '') ?? AutomationState.initial(),
   );
@@ -89,12 +103,14 @@ export class BoardService {
     return id === null ? null : (this.cardsById().get(id) ?? null);
   });
 
-  /** Awaiting an optional comment after a rejection drag (design.md §3.4). */
+  /** Awaiting an optional comment after a terminal-stage-exit drag (design.md §3.4). */
   readonly rejectionPrompt = signal<RejectionPrompt | null>(null);
   private pendingRejection: PendingRejection | null = null;
 
   /** Set while a create is in flight; the next cardCreated echo opens the panel. */
   private openAfterCreate = false;
+
+  private readonly seenEventIds = new Map<string, true>();
 
   constructor() {
     this.events.events$.subscribe((event) => this.fold(event));
@@ -104,8 +120,8 @@ export class BoardService {
 
   /**
    * RequestCardCreate: the only way to author a card outside the planner.
-   * The server allocates the id; the card lands via its `cardCreated` echo
-   * (and opens in the detail panel).
+   * The server assigns the id, the default pipeline, and the first stage;
+   * the card lands via its `cardCreated` echo (and opens in the detail panel).
    */
   async createCard(draft: {
     title: string;
@@ -137,55 +153,108 @@ export class BoardService {
   }
 
   /**
-   * RequestCardMove. Dragging to New unassigns; dragging from Approval back
-   * to the type's implement lane is a rejection and opens the comment prompt
-   * before publishing, so the comment rides on the move (design.md §3.4).
+   * RequestCardStageMove. Dragging out of the pipeline's terminal stage is a
+   * rejection-style move and opens the comment prompt before publishing, so
+   * the comment rides on the move (design.md §3.4). A run on the card locks
+   * it (the server rejects; the optimistic patch reverts).
    */
-  async requestMove(cardId: string, toLane: Stage): Promise<MoveResult> {
+  async requestMove(cardId: string, toStageId: string): Promise<MoveResult> {
     const card = this.cardsById().get(cardId);
     if (!card) return { ok: false, reason: 'unknown-card' };
-    if (!card.isLaneValid(toLane)) return { ok: false, reason: 'invalid-lane' };
-    if (card.isBlockedIn(this.cardsById())) return { ok: false, reason: 'blocked' };
-    if (card.stage === toLane) return { ok: true };
+    const pipeline = this.pipelines.pipelineById(card.pipelineId);
+    if (pipeline === undefined || pipeline.stageById(toStageId) === undefined) {
+      return { ok: false, reason: 'unknown-stage' };
+    }
+    if (this.pipelines.runForCard(cardId) !== undefined) {
+      return { ok: false, reason: 'run-active' };
+    }
+    if (card.isBlockedIn(this.cardsById(), this.isDoneOf)) return { ok: false, reason: 'blocked' };
+    if (card.stageId === toStageId) return { ok: true };
 
-    if (card.isRejectionMove(toLane)) {
+    if (card.isRejectionMove(toStageId, pipeline.terminalStageId)) {
       this.flushPendingRejection();
       const projectId = this.projectId();
       if (!projectId) return { ok: false, reason: 'unavailable' };
-      this.pendingRejection = { projectId, cardId, toLane, before: card };
-      this.patch(cardId, { stage: toLane, updatedAt: now() });
+      this.pendingRejection = { projectId, cardId, toStageId, before: card };
+      this.patch(cardId, { stageId: toStageId, updatedAt: now() });
       this.rejectionPrompt.set({ cardId });
       return { ok: true };
     }
-    return this.move(cardId, toLane, card, {});
+    return this.move(cardId, toStageId, card, {});
   }
 
-  /** RequestCardMove with override: type-validity enforced, blockers bypassed. */
-  async forceMove(cardId: string, toLane: Stage): Promise<MoveResult> {
+  /** RequestCardStageMove with override: stage validity enforced, blockers bypassed. */
+  async forceMove(cardId: string, toStageId: string): Promise<MoveResult> {
     const card = this.cardsById().get(cardId);
     if (!card) return { ok: false, reason: 'unknown-card' };
-    if (!card.isLaneValid(toLane)) return { ok: false, reason: 'invalid-lane' };
-    if (card.stage === toLane) return { ok: true };
-    return this.move(cardId, toLane, card, { override: true });
+    const pipeline = this.pipelines.pipelineById(card.pipelineId);
+    if (pipeline === undefined || pipeline.stageById(toStageId) === undefined) {
+      return { ok: false, reason: 'unknown-stage' };
+    }
+    if (this.pipelines.runForCard(cardId) !== undefined) {
+      return { ok: false, reason: 'run-active' };
+    }
+    if (card.stageId === toStageId) return { ok: true };
+    return this.move(cardId, toStageId, card, { override: true });
   }
 
-  /** Flip an agent-owned lane's automation toggle (RequestAutomationToggle). */
-  async toggleAutomation(lane: Stage): Promise<void> {
+  /** RequestCardPipelineAssign — the card moves to the pipeline's first stage. */
+  async assignPipeline(cardId: string, pipelineId: string): Promise<MoveResult> {
     const projectId = this.projectId();
-    if (!projectId || !Lane.isAgentOwned(lane)) return;
-    const before = this.automation();
-    this.setAutomation(projectId, before.set(lane, !before.isOn(lane)));
+    const card = this.cardsById().get(cardId);
+    if (!card || !projectId) return { ok: false, reason: 'unavailable' };
+    const pipeline = this.pipelines.pipelineById(pipelineId);
+    if (pipeline === undefined) return { ok: false, reason: 'unknown-stage' };
+    const before = card;
+
+    this.patch(cardId, { pipelineId, stageId: pipeline.stages[0]?.id ?? '', updatedAt: now() });
     const response = await this.events.publish({
       projectId,
-      requestAutomationToggle: { lane: stageToWire(lane), on: !before.isOn(lane) },
+      requestCardPipelineAssign: { cardId, pipelineId },
+    });
+    if (response.ok) return { ok: true };
+    this.restoreIn(projectId, before);
+    return { ok: false, reason: rejectionReason(response.rejectionCode) };
+  }
+
+  /** RequestCardReopen — a completed card returns to its pipeline's first stage. */
+  async reopen(cardId: string): Promise<MoveResult> {
+    const projectId = this.projectId();
+    const card = this.cardsById().get(cardId);
+    if (!card || !projectId) return { ok: false, reason: 'unavailable' };
+    const pipeline = this.pipelines.pipelineById(card.pipelineId);
+    const firstStage = pipeline?.stages[0]?.id;
+    if (pipeline === undefined || firstStage === undefined) {
+      return { ok: false, reason: 'unknown-stage' };
+    }
+    const before = card;
+
+    this.patch(cardId, { stageId: firstStage, updatedAt: now() });
+    const response = await this.events.publish({
+      projectId,
+      requestCardReopen: { cardId },
+    });
+    if (response.ok) return { ok: true };
+    this.restoreIn(projectId, before);
+    return { ok: false, reason: rejectionReason(response.rejectionCode) };
+  }
+
+  /** Flip a pipeline stage's automation toggle (RequestAutomationToggle). */
+  async toggleAutomation(pipelineId: string, stageId: string): Promise<void> {
+    const projectId = this.projectId();
+    if (!projectId) return;
+    const before = this.automation();
+    this.setAutomation(projectId, before.toggle(pipelineId, stageId));
+    const response = await this.events.publish({
+      projectId,
+      requestAutomationToggle: { pipelineId, stageId, on: !before.isOn(pipelineId, stageId) },
     });
     if (!response.ok) this.setAutomation(projectId, before);
   }
 
   /**
-   * RequestCardTypeChange: the server resets the sub-state checklist to the
-   * new type's stages; a stage the new type doesn't route through falls back
-   * to New (design.md §3.3).
+   * RequestCardTypeChange: the server resets the step states; the stage
+   * stays where it is (stages are pipeline-local, not type-bound).
    */
   async changeType(cardId: string, type: CardType): Promise<MoveResult> {
     const card = this.cardsById().get(cardId);
@@ -194,12 +263,7 @@ export class BoardService {
     const projectId = this.projectId();
     if (!projectId) return { ok: false, reason: 'unavailable' };
 
-    this.patch(cardId, {
-      type,
-      subState: Card.initialSubState(type),
-      stage: Lane.isValidFor(type, card.stage) ? card.stage : 'new',
-      updatedAt: now(),
-    });
+    this.patch(cardId, { type, stepStates: {}, updatedAt: now() });
     const response = await this.events.publish({
       projectId,
       requestCardTypeChange: { cardId, toType: cardTypeToWire(type) },
@@ -287,6 +351,14 @@ export class BoardService {
   // ---- Event fold (stream → signals; idempotent) ----
 
   private fold(event: DomainEventJson): void {
+    if (event.id) {
+      if (this.seenEventIds.has(event.id)) return;
+      this.seenEventIds.set(event.id, true);
+      if (this.seenEventIds.size > BoardService.SEEN_IDS_CAP) {
+        const oldest = this.seenEventIds.keys().next().value;
+        if (oldest !== undefined) this.seenEventIds.delete(oldest);
+      }
+    }
     const projectId = event.projectId ?? '';
     switch (domainEventKind(event)) {
       case 'cardCreated': {
@@ -306,14 +378,22 @@ export class BoardService {
         }
         break;
       }
-      case 'cardMoved': {
-        const payload = event.cardMoved;
+      case 'cardStageMoved': {
+        const payload = event.cardStageMoved;
         if (!payload?.cardId) break;
-        const stage = stageFromWire(payload.to);
         this.patchIn(projectId, payload.cardId, (card) => ({
-          stage,
-          assignee: stage === 'new' ? undefined : card.assignee,
+          stageId: payload.toStageId,
           rejectionComment: payload.comment ? payload.comment : card.rejectionComment,
+          updatedAt: event.occurredAt ?? card.updatedAt,
+        }));
+        break;
+      }
+      case 'cardPipelineAssigned': {
+        const payload = event.cardPipelineAssigned;
+        if (!payload?.cardId) break;
+        this.patchIn(projectId, payload.cardId, (card) => ({
+          pipelineId: payload.pipelineId,
+          stageId: payload.stageId,
           updatedAt: event.occurredAt ?? card.updatedAt,
         }));
         break;
@@ -324,8 +404,7 @@ export class BoardService {
         const type = cardTypeFromWire(payload.to);
         this.patchIn(projectId, payload.cardId, (card) => ({
           type,
-          subState: Card.initialSubState(type),
-          stage: Lane.isValidFor(type, card.stage) ? card.stage : 'new',
+          stepStates: {},
           updatedAt: event.occurredAt ?? card.updatedAt,
         }));
         break;
@@ -346,23 +425,25 @@ export class BoardService {
         if (this.selectedId() === cardId) this.closeCard();
         break;
       }
-      case 'subStateUpdated': {
-        const payload = event.subStateUpdated;
-        if (!payload?.cardId || !payload.stage) break;
+      case 'cardStepStateUpdated': {
+        const payload = event.cardStepStateUpdated;
+        if (!payload?.cardId || !payload.stepId) break;
         this.patchIn(projectId, payload.cardId, (card) => ({
-          subState: { ...card.subState, [payload.stage!]: subStateStatusFromWire(payload.status) },
+          stepStates: {
+            ...card.stepStates,
+            [payload.stepId!]: stepStateStatusFromWire(payload.status),
+          },
           updatedAt: event.occurredAt ?? card.updatedAt,
         }));
         break;
       }
       case 'automationToggled': {
         const payload = event.automationToggled;
-        if (!payload?.lane) break;
+        if (!payload?.pipelineId || !payload.stageId) break;
         const current = this.automationByProject().get(projectId) ?? AutomationState.initial();
-        // Canonical JSON omits defaults: an absent `on` means false.
         this.setAutomation(
           projectId,
-          current.set(stageFromWire(payload.lane), payload.on ?? false),
+          current.set(payload.pipelineId, payload.stageId, payload.on ?? false),
         );
         break;
       }
@@ -374,23 +455,19 @@ export class BoardService {
 
   private async move(
     cardId: string,
-    toLane: Stage,
+    toStageId: string,
     before: Card,
     options: { readonly override?: boolean },
   ): Promise<MoveResult> {
     const projectId = this.projectId();
     if (!projectId) return { ok: false, reason: 'unavailable' };
 
-    this.patch(cardId, {
-      stage: toLane,
-      assignee: toLane === 'new' ? undefined : before.assignee,
-      updatedAt: now(),
-    });
+    this.patch(cardId, { stageId: toStageId, updatedAt: now() });
     const response = await this.events.publish({
       projectId,
-      requestCardMove: {
+      requestCardStageMove: {
         cardId,
-        toLane: stageToWire(toLane),
+        toStageId,
         override: options.override ?? false,
         comment: '',
       },
@@ -403,9 +480,9 @@ export class BoardService {
   private async publishRejection(pending: PendingRejection, comment: string): Promise<void> {
     const response = await this.events.publish({
       projectId: pending.projectId,
-      requestCardMove: {
+      requestCardStageMove: {
         cardId: pending.cardId,
-        toLane: stageToWire(pending.toLane),
+        toStageId: pending.toStageId,
         override: false,
         comment,
       },
@@ -499,8 +576,10 @@ function rejectionReason(code: string | undefined): MoveRejection {
   switch (code) {
     case WireRejectionCode.REJECTION_CODE_UNKNOWN_CARD:
       return 'unknown-card';
-    case WireRejectionCode.REJECTION_CODE_INVALID_LANE:
-      return 'invalid-lane';
+    case WireRejectionCode.REJECTION_CODE_UNKNOWN_STAGE:
+      return 'unknown-stage';
+    case WireRejectionCode.REJECTION_CODE_RUN_ACTIVE:
+      return 'run-active';
     case WireRejectionCode.REJECTION_CODE_BLOCKED:
       return 'blocked';
     default:

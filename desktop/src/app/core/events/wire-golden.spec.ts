@@ -3,9 +3,9 @@ import {
   EventFrameJson,
   WireAgentSessionStatus,
   WireCardType,
+  WirePipelineRunStatus,
   WirePlanningSessionStatus,
-  WireStage,
-  WireSubStateStatus,
+  WireStepStateStatus,
   domainEventKind,
   frameToDomainEvent,
 } from './wire';
@@ -77,24 +77,31 @@ describe('wire-golden/events.json', () => {
     const kinds = byKind();
     const card = (kinds.get('cardCreated')?.body as { card: Record<string, unknown> }).card;
     expect(Object.values(WireCardType)).toContain(card['type']);
-    expect(card['stage']).toBe(WireStage.STAGE_CODING);
-    for (const status of Object.values(card['subState'] as Record<string, string>)) {
-      expect(Object.values(WireSubStateStatus)).toContain(status);
+    for (const status of Object.values(card['stepStates'] as Record<string, string>)) {
+      expect(Object.values(WireStepStateStatus)).toContain(status);
     }
 
-    const moved = kinds.get('cardMoved')?.body as { from: string; to: string };
-    expect(moved.from).toBe(WireStage.STAGE_NEW);
-    expect(moved.to).toBe(WireStage.STAGE_CODING);
+    const moved = kinds.get('cardStageMoved')?.body as { fromStageId: string; toStageId: string };
+    expect(moved.fromStageId).toBe('sg-2');
+    expect(moved.toStageId).toBe('sg-3');
+
+    const assigned = kinds.get('cardPipelineAssigned')?.body as { pipelineId: string; stageId: string };
+    expect(assigned.pipelineId).toBe('PL-1');
+    expect(assigned.stageId).toBe('sg-1');
 
     const typeChanged = kinds.get('cardTypeChanged')?.body as { from: string; to: string };
     expect(typeChanged.from).toBe(WireCardType.CARD_TYPE_CODING);
     expect(typeChanged.to).toBe(WireCardType.CARD_TYPE_DESIGN);
 
-    const subState = kinds.get('subStateUpdated')?.body as { status: string };
-    expect(subState.status).toBe(WireSubStateStatus.SUB_STATE_STATUS_RUNNING);
+    const stepState = kinds.get('cardStepStateUpdated')?.body as { status: string };
+    expect(stepState.status).toBe(WireStepStateStatus.STEP_STATE_RUNNING);
 
-    const toggled = kinds.get('automationToggled')?.body as { lane: string };
-    expect(toggled.lane).toBe(WireStage.STAGE_CODING);
+    const toggled = kinds.get('automationToggled')?.body as { pipelineId: string; stageId: string };
+    expect(toggled.pipelineId).toBe('PL-1');
+    expect(toggled.stageId).toBe('sg-2');
+
+    const runEnded = kinds.get('pipelineRunEnded')?.body as { status: string };
+    expect(Object.values(WirePipelineRunStatus)).toContain(runEnded.status);
 
     const session = (kinds.get('planningSessionCreated')?.body as { session: { status: string } })
       .session;

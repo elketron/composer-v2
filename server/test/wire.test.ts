@@ -32,12 +32,13 @@ describe('wire-golden/events.json', () => {
     const byKind = new Map(frames.map((frame) => [frame.eventType as EventName, frame]));
     const card = (byKind.get('cardCreated')?.body as { card: Record<string, unknown> }).card;
     expect(['coding', 'design', 'docs']).toContain(card['type']);
-    expect(card['stage']).toBe('coding');
-    for (const status of Object.values(card['subState'] as Record<string, string>)) {
+    for (const status of Object.values(card['stepStates'] as Record<string, string>)) {
       expect(['pending', 'running', 'ok', 'failed']).toContain(status);
     }
     const runEnded = byKind.get('pipelineRunEnded')?.body as { status: string };
-    expect(['running', 'waiting', 'completed', 'failed', 'cancelled']).toContain(runEnded.status);
+    expect(['running', 'waiting', 'completed', 'failed', 'returned', 'cancelled']).toContain(
+      runEnded.status,
+    );
   });
 
   it('every frame re-serializes identically (the server is the fixture source)', () => {

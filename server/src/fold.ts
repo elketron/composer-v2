@@ -1,47 +1,58 @@
 // The current-state projection: a fold of every canonical event, per
 // project keyed, idempotent (v1 architecture.md §Projection). Re-applying
 // events yields the same state; the SSE snapshot is built from it.
+//
+// Phase 10: cards carry their assigned pipeline and current stage, pipelines
+// keep every revision (runs pin theirs), and runs are first-class records.
 
 import type { EventBodyMap, EventName } from './wire/events.js';
 import type { EventEnvelope } from './wire/envelope.js';
-import { isLaneValid, subStateFor } from './wire/models.js';
 import type {
   AssistantThread,
+  Card,
   CardProposal,
   ChatMessage,
   Pipeline,
   PipelineRunStatus,
+  PipelineStepKind,
   PlanningSession,
   Project,
-  Stage,
 } from './wire/models.js';
 
-/** Where a card's pipeline run is (keyed by card id, one per card). */
-export interface PipelineRunProgress {
+/**
+ * One pipeline run: an immutable attempt pinned to the pipeline revision it
+ * started on. Active runs also carry their current position.
+ */
+export interface RunRecord {
+  id: string;
+  cardId: string;
   pipelineId: string;
-  status: 'running' | 'waiting';
-  stepId?: string;
-  stepKind?: 'agent' | 'command' | 'human';
-}
-
-export interface LatestPipelineRun {
-  pipelineId: string;
+  revision: number;
   status: PipelineRunStatus;
   startedAt: string;
   endedAt?: string;
   error?: string;
+  stageId?: string;
+  stepId?: string;
+  stepKind?: PipelineStepKind;
 }
 
 export interface ProjectState {
   projectId: string;
-  cards: Map<string, CardState>;
-  automation: Map<Stage, boolean>;
+  cards: Map<string, Card>;
+  /** Automation toggles per pipeline stage: pipelineId → stageId → on. */
+  automation: Map<string, Map<string, boolean>>;
   planningSessions: Map<string, PlanningSession>;
   agentSessions: Map<string, AgentSessionState>;
+  /** Each pipeline's current definition (the highest folded revision). */
   pipelines: Map<string, Pipeline>;
+  /** Every revision ever saved, for the runs that pinned them. */
+  pipelineRevisions: Map<string, Map<number, Pipeline>>;
   deletedPipelines: Set<string>;
-  pipelineRuns: Map<string, PipelineRunProgress>;
-  latestRuns: Map<string, LatestPipelineRun>;
+  /** Every run record, active and terminal (keyed by run id). */
+  runs: Map<string, RunRecord>;
+  /** The active run per card (at most one). */
+  activeRuns: Map<string, string>;
 }
 
 export type TranscriptEntryState =
@@ -62,26 +73,6 @@ export interface AgentSessionState {
   transcript: TranscriptEntryState[];
 }
 
-export interface CardState {
-  id: string;
-  projectId: string;
-  type: 'coding' | 'design' | 'docs';
-  title: string;
-  description: string;
-  tags: string[];
-  stage: Stage;
-  blockedBy: string[];
-  assignee?: { role: string; model?: string; effort?: string };
-  sessionId?: string;
-  branch?: string;
-  fileStats?: { added: number; removed: number; files: number };
-  subState: Record<string, 'pending' | 'running' | 'ok' | 'failed'>;
-  retries: Record<string, number>;
-  rejectionComment?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface State {
   projects: Map<string, Project>;
   byProject: Map<string, ProjectState>;
@@ -100,31 +91,21 @@ export function newState(): State {
   };
 }
 
-/**
- * The card sub-state stage a pipeline step works in (v1, M3). An agent
- * step works in its kind's stage (S33): the coder implements, the tester
- * runs validation, the reviewer reviews, the security agent
- * security-reviews. The fold's replay calls pass no agentKind (the wire's
- * step events carry only the step kind), which lands on 'implement'.
- */
-export function stepStageOf(kind: 'agent' | 'command' | 'human', agentKind?: string): string {
-  switch (kind) {
-    case 'agent':
-      switch (agentKind) {
-        case 'tester':
-          return 'runValidation';
-        case 'reviewer':
-          return 'reviewChanges';
-        case 'security':
-          return 'securityReview';
-        default:
-          return 'implement';
-      }
-    case 'command':
-      return 'runValidation';
-    case 'human':
-      return 'humanReview';
+/** The card's visible Kanban column: the last visible stage at or before its stage. */
+export function visibleStageOf(pipeline: Pipeline | undefined, stageId: string): string | undefined {
+  if (pipeline === undefined) return undefined;
+  const order = pipeline.stages.findIndex((stage) => stage.id === stageId);
+  if (order < 0) return undefined;
+  for (let index = order; index >= 0; index--) {
+    const stage = pipeline.stages[index];
+    if (stage?.kanbanVisible) return stage.id;
   }
+  return undefined;
+}
+
+/** Whether a card sits in its pipeline's terminal (completion) stage. */
+export function isTerminal(pipeline: Pipeline | undefined, card: Card): boolean {
+  return pipeline?.stages.find((stage) => stage.id === card.stageId)?.terminal === true;
 }
 
 function projectStateOf(state: State, projectId: string): ProjectState {
@@ -137,9 +118,10 @@ function projectStateOf(state: State, projectId: string): ProjectState {
       planningSessions: new Map(),
       agentSessions: new Map(),
       pipelines: new Map(),
+      pipelineRevisions: new Map(),
       deletedPipelines: new Set(),
-      pipelineRuns: new Map(),
-      latestRuns: new Map(),
+      runs: new Map(),
+      activeRuns: new Map(),
     };
     state.byProject.set(projectId, project);
   }
@@ -190,16 +172,21 @@ export function apply(state: State, envelope: EventEnvelope): void {
       cards.set(body.card.id, structuredClone(body.card));
       break;
     }
-    case 'cardMoved': {
-      const body = envelope.body as EventBodyMap['cardMoved'];
+    case 'cardStageMoved': {
+      const body = envelope.body as EventBodyMap['cardStageMoved'];
       const card = projectStateOf(state, projectId).cards.get(body.cardId);
       if (!card) break;
-      card.stage = body.to;
-      // Dragging to New unassigns (v1 design.md §3.4).
-      if (body.to === 'new') card.assignee = undefined;
-      // The move's comment is the rejection comment of an approval →
-      // implement-lane drag; every move carries it (possibly empty).
+      card.stageId = body.toStageId;
       if (body.comment !== undefined) card.rejectionComment = body.comment;
+      card.updatedAt = envelope.occurredAt;
+      break;
+    }
+    case 'cardPipelineAssigned': {
+      const body = envelope.body as EventBodyMap['cardPipelineAssigned'];
+      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      if (!card) break;
+      card.pipelineId = body.pipelineId;
+      card.stageId = body.stageId;
       card.updatedAt = envelope.occurredAt;
       break;
     }
@@ -208,8 +195,7 @@ export function apply(state: State, envelope: EventEnvelope): void {
       const card = projectStateOf(state, projectId).cards.get(body.cardId);
       if (!card) break;
       card.type = body.to;
-      card.subState = subStateFor(body.to);
-      if (!isLaneValid(body.to, card.stage)) card.stage = 'new';
+      card.stepStates = {};
       card.updatedAt = envelope.occurredAt;
       break;
     }
@@ -226,11 +212,11 @@ export function apply(state: State, envelope: EventEnvelope): void {
       projectStateOf(state, projectId).cards.delete(body.cardId);
       break;
     }
-    case 'subStateUpdated': {
-      const body = envelope.body as EventBodyMap['subStateUpdated'];
+    case 'cardStepStateUpdated': {
+      const body = envelope.body as EventBodyMap['cardStepStateUpdated'];
       const card = projectStateOf(state, projectId).cards.get(body.cardId);
       if (!card) break;
-      card.subState[body.stage] = body.status;
+      card.stepStates[body.stepId] = body.status;
       card.updatedAt = envelope.occurredAt;
       break;
     }
@@ -239,7 +225,13 @@ export function apply(state: State, envelope: EventEnvelope): void {
       break;
     case 'automationToggled': {
       const body = envelope.body as EventBodyMap['automationToggled'];
-      projectStateOf(state, projectId).automation.set(body.lane as Stage, body.on);
+      const project = projectStateOf(state, projectId);
+      let stages = project.automation.get(body.pipelineId);
+      if (!stages) {
+        stages = new Map();
+        project.automation.set(body.pipelineId, stages);
+      }
+      stages.set(body.stageId, body.on);
       break;
     }
 
@@ -300,8 +292,20 @@ export function apply(state: State, envelope: EventEnvelope): void {
     case 'pipelineSaved': {
       const body = envelope.body as EventBodyMap['pipelineSaved'];
       const project = projectStateOf(state, projectId);
-      project.pipelines.set(body.pipeline.id, structuredClone(body.pipeline));
-      project.deletedPipelines.delete(body.pipeline.id);
+      const pipeline = structuredClone(body.pipeline);
+      // Revisions may fold in any order across reconnects; the highest wins
+      // as current, and every revision lands in the pinned history.
+      const current = project.pipelines.get(pipeline.id);
+      if (current === undefined || pipeline.revision >= current.revision) {
+        project.pipelines.set(pipeline.id, pipeline);
+      }
+      let revisions = project.pipelineRevisions.get(pipeline.id);
+      if (!revisions) {
+        revisions = new Map();
+        project.pipelineRevisions.set(pipeline.id, revisions);
+      }
+      revisions.set(pipeline.revision, pipeline);
+      project.deletedPipelines.delete(pipeline.id);
       break;
     }
     case 'pipelineDeleted': {
@@ -309,73 +313,82 @@ export function apply(state: State, envelope: EventEnvelope): void {
       const project = projectStateOf(state, projectId);
       project.pipelines.delete(body.pipelineId);
       // The tombstone keeps the boot seed from resurrecting the default.
+      // The pinned revisions stay: historical runs keep theirs.
       project.deletedPipelines.add(body.pipelineId);
       break;
     }
     case 'pipelineRunStarted': {
       const body = envelope.body as EventBodyMap['pipelineRunStarted'];
       const project = projectStateOf(state, projectId);
-      project.pipelineRuns.set(body.cardId, {
+      project.runs.set(body.runId, {
+        id: body.runId,
+        cardId: body.cardId,
         pipelineId: body.pipelineId,
-        status: 'running',
-      });
-      project.latestRuns.set(body.cardId, {
-        pipelineId: body.pipelineId,
+        revision: body.revision,
         status: 'running',
         startedAt: envelope.occurredAt,
       });
+      project.activeRuns.set(body.cardId, body.runId);
       break;
     }
     case 'pipelineStepStarted': {
       const body = envelope.body as EventBodyMap['pipelineStepStarted'];
-      const run = projectStateOf(state, projectId).pipelineRuns.get(body.cardId);
-      if (!run) break;
-      run.stepId = body.stepId;
-      run.stepKind = body.kind;
-      // Only a gate waits; an agent or command step runs.
-      run.status = body.kind === 'human' ? 'waiting' : 'running';
-      const latest = projectStateOf(state, projectId).latestRuns.get(body.cardId);
-      if (latest) latest.status = run.status;
+      const project = projectStateOf(state, projectId);
+      const run = runOf(project, body.runId, body.cardId);
+      if (run) {
+        run.stageId = body.stageId;
+        run.stepId = body.stepId;
+        run.stepKind = body.kind;
+        // Only a gate waits; an agent or command step runs.
+        run.status = body.kind === 'human' ? 'waiting' : 'running';
+      }
+      // The run owns stage transitions: the card follows the step's stage
+      // (hidden stages project to the previous visible column client-side).
+      const card = project.cards.get(body.cardId);
+      if (card) {
+        card.stageId = body.stageId;
+        card.stepStates[body.stepId] = 'running';
+        card.updatedAt = envelope.occurredAt;
+      }
       break;
     }
     case 'pipelineStepFinished': {
       const body = envelope.body as EventBodyMap['pipelineStepFinished'];
       const project = projectStateOf(state, projectId);
-      if (body.ok) break;
+      const run = runOf(project, body.runId, body.cardId);
+      if (run && run.stepId === body.stepId) {
+        if (body.error !== undefined) run.error = body.error;
+      }
       const card = project.cards.get(body.cardId);
-      if (!card) break;
-      // Every failed attempt is recorded on the card's retries, keyed by
-      // the stage the step works in (v1 fold, M3).
-      const kind = project.pipelineRuns.get(body.cardId)?.stepKind ?? 'agent';
-      const stage = stepStageOf(kind);
-      card.retries[stage] = (card.retries[stage] ?? 0) + 1;
-      card.updatedAt = envelope.occurredAt;
+      if (card) {
+        card.stepStates[body.stepId] = body.ok ? 'ok' : 'failed';
+        card.updatedAt = envelope.occurredAt;
+      }
       break;
     }
     case 'pipelineRunEnded': {
       const body = envelope.body as EventBodyMap['pipelineRunEnded'];
       const project = projectStateOf(state, projectId);
-      const previous = project.latestRuns.get(body.cardId);
-      project.latestRuns.set(body.cardId, {
-        pipelineId: body.pipelineId,
-        status: body.status,
-        startedAt: previous?.startedAt ?? envelope.occurredAt,
-        endedAt: envelope.occurredAt,
-        ...(body.error !== undefined ? { error: body.error } : {}),
-      });
-      project.pipelineRuns.delete(body.cardId);
+      const run = runOf(project, body.runId, body.cardId);
+      if (run) {
+        run.status = body.status;
+        run.endedAt = envelope.occurredAt;
+        if (body.error !== undefined) run.error = body.error;
+        run.stepId = undefined;
+        run.stepKind = undefined;
+      }
+      project.activeRuns.delete(body.cardId);
       break;
     }
     case 'pipelineGateResponded': {
       const body = envelope.body as EventBodyMap['pipelineGateResponded'];
-      const run = projectStateOf(state, projectId).pipelineRuns.get(body.cardId);
-      if (run) run.status = 'running';
-      const latest = projectStateOf(state, projectId).latestRuns.get(body.cardId);
-      if (latest) latest.status = 'running';
+      const project = projectStateOf(state, projectId);
+      const run = runOf(project, body.runId, body.cardId);
+      if (run && run.status === 'waiting') run.status = 'running';
       break;
     }
 
-    // ---- Agent sessions (the coder's card-bound sessions) ----
+    // ---- Agent sessions (the workers' card-bound sessions) ----
 
     case 'agentSessionStarted': {
       const body = envelope.body as EventBodyMap['agentSessionStarted'];
@@ -552,8 +565,12 @@ export function apply(state: State, envelope: EventEnvelope): void {
   }
 }
 
-/** Pipeline state accessors (unused before their slice; typed now). */
-export type { Pipeline };
+/** The run a step/gate/end event belongs to: by runId, or the card's active run. */
+function runOf(project: ProjectState, runId: string | undefined, cardId: string): RunRecord | undefined {
+  if (runId !== undefined) return project.runs.get(runId);
+  const active = project.activeRuns.get(cardId);
+  return active !== undefined ? project.runs.get(active) : undefined;
+}
 
 /**
  * Folds one thread message. Message indexes are the transcript's order —

@@ -17,7 +17,7 @@ import {
   PlanningSession,
   PlanningSessionData,
 } from '../core/models/plan.models';
-import { Assignee, Card, CardType, Stage } from '../core/models/board.models';
+import { Assignee, Card, CardType } from '../core/models/board.models';
 
 /**
  * Planning sessions: a fold of the event stream (PlanningSessionCreated,
@@ -489,13 +489,13 @@ function upsertMessage(
 interface CardDto {
   readonly id?: unknown;
   readonly type?: unknown;
-  readonly stage?: unknown;
+  readonly pipelineId?: unknown;
+  readonly stageId?: unknown;
   readonly createdAt?: unknown;
   readonly updatedAt?: unknown;
   readonly tags?: unknown;
   readonly blockedBy?: unknown;
-  readonly subState?: unknown;
-  readonly retries?: unknown;
+  readonly stepStates?: unknown;
   readonly title?: unknown;
   readonly description?: unknown;
   readonly assignee?: unknown;
@@ -522,13 +522,11 @@ function asCommittedCard(value: unknown): Card | null {
   const dto = value as CardDto;
   if (typeof dto.id !== 'string') return null;
   const type = cardType(dto.type);
-  const stage = cardStage(dto.stage, type);
   const timestamp = typeof dto.createdAt === 'string' ? dto.createdAt : new Date().toISOString();
   const updatedAt = typeof dto.updatedAt === 'string' ? dto.updatedAt : timestamp;
   const tags = arrayOfStrings(dto.tags);
   const blockedBy = arrayOfStrings(dto.blockedBy);
-  const subState = isRecord(dto.subState) ? dto.subState : {};
-  const retries = isRecord(dto.retries) ? dto.retries : {};
+  const stepStates = isRecord(dto.stepStates) ? dto.stepStates : {};
 
   return new Card({
     id: dto.id,
@@ -536,14 +534,14 @@ function asCommittedCard(value: unknown): Card | null {
     title: typeof dto.title === 'string' ? dto.title : 'Untitled card',
     description: typeof dto.description === 'string' ? dto.description : '',
     tags,
-    stage,
+    pipelineId: typeof dto.pipelineId === 'string' ? dto.pipelineId : '',
+    stageId: typeof dto.stageId === 'string' ? dto.stageId : '',
     blockedBy,
     assignee: asAssignee(dto.assignee),
     sessionId: typeof dto.sessionId === 'string' ? dto.sessionId : undefined,
     branch: typeof dto.branch === 'string' ? dto.branch : undefined,
     fileStats: asFileStats(dto.fileStats),
-    subState: subState as Card['subState'],
-    retries: retries as Readonly<Record<string, number>>,
+    stepStates: stepStates as Card['stepStates'],
     createdAt: timestamp,
     updatedAt,
   });
@@ -575,24 +573,6 @@ function asFileStats(
 
 function cardType(value: unknown): CardType {
   return value === 'design' || value === 'docs' || value === 'coding' ? value : 'coding';
-}
-
-function cardStage(value: unknown, type: CardType): Stage {
-  const stage = typeof value === 'string' ? value : 'new';
-  const valid: readonly Stage[] = [
-    'new',
-    'coding',
-    'design',
-    'docs',
-    'validation',
-    'review',
-    'security',
-    'approval',
-    'done',
-  ];
-  return valid.includes(stage as Stage) && (type === 'coding' || stage !== 'security')
-    ? (stage as Stage)
-    : 'new';
 }
 
 function arrayOfStrings(value: unknown): string[] {

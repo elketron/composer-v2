@@ -133,17 +133,25 @@ describe('composer state reads', () => {
 
     await processor.execute(alpha, {
       type: 'requestCardCreate',
-      card: { id: '', projectId: alpha, type: 'coding', title: 'Ship it', description: '', tags: [], stage: 'new', blockedBy: [], subState: {}, retries: {}, createdAt: '', updatedAt: '' },
+      card: { id: '', projectId: alpha, type: 'coding', title: 'Ship it', description: '', tags: [], pipelineId: '', stageId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
     });
-    await bus.publish(alpha, 'pipelineRunEnded', {
+    await bus.publish(alpha, 'pipelineRunStarted', {
+      runId: 'R-1',
       cardId: 'T-1',
       pipelineId: 'PL-1',
+      revision: 1,
+    });
+    await bus.publish(alpha, 'pipelineRunEnded', {
+      runId: 'R-1',
+      cardId: 'T-1',
+      pipelineId: 'PL-1',
+      revision: 1,
       status: 'failed',
       error: 'tests red',
     });
 
     const single = JSON.parse((await call(id, 'composer_overview', { projectId: alpha })).content as string);
-    expect(single.cards).toEqual({ total: 1, byStage: { new: 1 } });
+    expect(single.cards).toEqual({ total: 1, byStage: { New: 1 } });
     expect(single.latestRuns).toEqual([expect.objectContaining({ status: 'failed', error: 'tests red' })]);
 
     const portfolio = JSON.parse((await call(id, 'composer_overview')).content as string);
@@ -155,7 +163,7 @@ describe('composer state reads', () => {
     const id = await createThread([alpha]);
     await processor.execute(alpha, {
       type: 'requestCardCreate',
-      card: { id: '', projectId: alpha, type: 'coding', title: 'Ship it', description: 'the work', tags: [], stage: 'new', blockedBy: [], subState: {}, retries: {}, createdAt: '', updatedAt: '' },
+      card: { id: '', projectId: alpha, type: 'coding', title: 'Ship it', description: 'the work', tags: [], pipelineId: '', stageId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
     });
     const detail = JSON.parse((await call(id, 'composer_card', { projectId: alpha, cardId: 'T-1' })).content as string);
     expect(detail).toMatchObject({ id: 'T-1', title: 'Ship it', description: 'the work' });

@@ -16,14 +16,39 @@ function card(overrides: Partial<CardData> = {}): Card {
     title: 'Test card',
     description: 'A description',
     tags: ['ui'],
-    stage: 'coding',
+    pipelineId: 'PL-1',
+    stageId: 'sg-2',
     blockedBy: [],
-    subState: {},
-    retries: {},
+    stepStates: {},
     createdAt: new Date(Date.now() - 3_600_000).toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
   });
+}
+
+/** The staged pipeline body seeded into PipelineService so card lookups resolve. */
+function pipelineBody(projectId = 'P-1', hiddenValidation = false) {
+  return {
+    pipeline: {
+      id: 'PL-1',
+      projectId,
+      name: 'Standard coding card',
+      revision: 1,
+      updatedAt: new Date().toISOString(),
+      stages: [
+        { id: 'sg-1', label: 'New', kanbanVisible: true },
+        { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
+        { id: 'sg-3', label: 'Validation', kanbanVisible: !hiddenValidation },
+        { id: 'sg-4', label: 'Approval', kanbanVisible: true },
+        { id: 'sg-5', label: 'Done', kanbanVisible: true, terminal: true },
+      ],
+      steps: [
+        { id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'coder', instructions: 'Implement.' },
+        { id: 'st-2', kind: 'command', stageId: 'sg-3', command: 'npm test', description: 'Tests' },
+        { id: 'st-3', kind: 'human', stageId: 'sg-4', description: 'Approval' },
+      ],
+    },
+  };
 }
 
 describe('BoardCardComponent', () => {
@@ -37,10 +62,17 @@ describe('BoardCardComponent', () => {
     }).compileComponents();
   });
 
+  /**
+   * Renders first (services subscribe at construction), then seeds the
+   * project and its pipeline so the folds land.
+   */
   async function render(c: Card, blocked = false) {
     const fixture = TestBed.createComponent(BoardCardComponent);
     fixture.componentRef.setInput('card', c);
     fixture.componentRef.setInput('blocked', blocked);
+    await fixture.whenStable();
+    seedProject(events, 'P-1');
+    events.emit(wireEvent('pipelineSaved', pipelineBody(), 'P-1'));
     await fixture.whenStable();
     return fixture;
   }
@@ -61,12 +93,13 @@ describe('BoardCardComponent', () => {
     expect(el.querySelector('.dot.pulse')).toBeNull();
   });
 
-  it('pulses the assignee dot while an agent works the card', async () => {
-    const el = (
-      await render(
-        card({ assignee: Assignee.for('coder', 'gpt-5.4', 'medium'), stage: 'coding' }),
-      )
-    ).nativeElement as HTMLElement;
+  it('pulses the assignee dot while a run works the card', async () => {
+    const fixture = await render(card({ assignee: Assignee.for('coder', 'gpt-5.4', 'medium') }));
+    const el = fixture.nativeElement as HTMLElement;
+    events.emit(
+      wireEvent('pipelineRunStarted', { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', revision: 1 }),
+    );
+    await fixture.whenStable();
     expect(el.textContent).toContain('gpt-5.4 · medium');
     expect(el.querySelector('.dot.pulse')).toBeTruthy();
   });
@@ -82,29 +115,76 @@ describe('BoardCardComponent', () => {
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('.run-chip')).toBeNull();
 
-    // The run selector keys on the shell's active tab; the seed
-    // auto-activates the project (services subscribed at render).
-    seedProject(events, 'P-1');
-    events.emit(wireEvent('pipelineRunStarted', { cardId: 'T-1', pipelineId: 'PL-1' }));
+    events.emit(
+      wireEvent('pipelineRunStarted', { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', revision: 1 }),
+    );
     await fixture.whenStable();
     const chip = el.querySelector('.run-chip');
     expect(chip?.textContent).toContain('queued');
     expect(chip?.classList).not.toContain('waiting');
 
     events.emit(
-      wireEvent('pipelineStepStarted', { cardId: 'T-1', pipelineId: 'PL-1', stepId: 'st-3', kind: 'human' }),
+      wireEvent('pipelineStepStarted', {
+        runId: 'R-1',
+        cardId: 'T-1',
+        pipelineId: 'PL-1',
+        stepId: 'st-3',
+        kind: 'human',
+        stageId: 'sg-4',
+      }),
     );
     await fixture.whenStable();
     expect(el.querySelector('.run-chip')?.textContent).toContain('approval');
     expect(el.querySelector('.run-chip')?.classList).toContain('waiting');
 
-    events.emit(wireEvent('pipelineRunEnded', { cardId: 'T-1', pipelineId: 'PL-1', status: 'completed' }));
+    events.emit(
+      wireEvent('pipelineRunEnded', {
+        runId: 'R-1',
+        cardId: 'T-1',
+        pipelineId: 'PL-1',
+        revision: 1,
+        status: 'completed',
+      }),
+    );
     await fixture.whenStable();
     expect(el.querySelector('.run-chip')).toBeNull();
   });
 
+  it('shows the hidden stage and current step when execution is inside a hidden stage', async () => {
+    // A revision where sg-3 (Validation) is not a Kanban column.
+    const hidden = card({ stageId: 'sg-3' });
+    const fixture = await render(hidden);
+    const el = fixture.nativeElement as HTMLElement;
+    const body = pipelineBody();
+    (body.pipeline.stages[2] as { kanbanVisible: boolean }).kanbanVisible = false;
+    (body.pipeline as { revision: number }).revision = 2;
+    events.emit(wireEvent('pipelineSaved', body, 'P-1'));
+    await fixture.whenStable();
+    expect(el.querySelector('.hidden-stage')?.textContent).toContain('Validation');
+
+    events.emit(
+      wireEvent('pipelineRunStarted', { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', revision: 2 }),
+    );
+    events.emit(
+      wireEvent('pipelineStepStarted', {
+        runId: 'R-1',
+        cardId: 'T-1',
+        pipelineId: 'PL-1',
+        stepId: 'st-2',
+        kind: 'command',
+        stageId: 'sg-3',
+      }),
+    );
+    await fixture.whenStable();
+    expect(el.querySelector('.hidden-stage')?.textContent).toContain('Tests');
+
+    // A visible stage renders no hidden-stage line.
+    const visible = (await render(card({ id: 'T-2', stageId: 'sg-2' }))).nativeElement as HTMLElement;
+    expect(visible.querySelector('.hidden-stage')).toBeNull();
+  });
+
   it('renders the lock chip with blocker count when blocked', async () => {
-    const el = (await render(card({ stage: 'new', blockedBy: ['T-9', 'T-10'] }), true))
+    const el = (await render(card({ stageId: 'sg-1', blockedBy: ['T-9', 'T-10'] }), true))
       .nativeElement as HTMLElement;
     const lock = el.querySelector('.lock');
     expect(lock?.textContent?.trim()).toContain('2');

@@ -6,7 +6,11 @@ import { randomUUID } from 'node:crypto';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
 import type { EventName } from './wire/events.js';
-import type { CardState, State } from './fold.js';
+import type { ProjectState, State } from './fold.js';
+import type { Card } from './wire/models.js';
+
+/** Terminal runs replayed per card (older attempts stay in the log). */
+const TERMINAL_RUNS_PER_CARD = 20;
 
 function frame(
   projectId: string | undefined,
@@ -81,11 +85,11 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     const projectState = state.byProject.get(project.id);
     if (!projectState) continue;
 
-    const automation = [...projectState.automation.entries()].sort((a, b) =>
-      a[0].localeCompare(b[0]),
-    );
-    for (const [lane, on] of automation) {
-      events.push(frame(project.id, 'automationToggled', { lane, on }, nonce, index++));
+    const automations = [...projectState.automation.entries()].sort(([a], [b]) => a.localeCompare(b));
+    for (const [pipelineId, stages] of automations) {
+      for (const [stageId, on] of [...stages.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        events.push(frame(project.id, 'automationToggled', { pipelineId, stageId, on }, nonce, index++));
+      }
     }
 
     // Planning sessions replay their current record (the creation event
@@ -181,23 +185,37 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       }
     }
 
-    const pipelines = [...projectState.pipelines.values()].sort(
-      (a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id),
-    );
-    for (const pipeline of pipelines) {
+    // Every saved pipeline revision replays (runs pin theirs; the fold's
+    // highest-revision rule picks up the current definition).
+    const revisions = [...projectState.pipelineRevisions.values()]
+      .flatMap((byRevision) => [...byRevision.values()])
+      .sort(
+        (a, b) =>
+          a.updatedAt.localeCompare(b.updatedAt) ||
+          a.id.localeCompare(b.id) ||
+          a.revision - b.revision,
+      );
+    for (const pipeline of revisions) {
       events.push(frame(project.id, 'pipelineSaved', { pipeline: structuredClone(pipeline) }, nonce, index++));
     }
 
-    // Terminal latest-run outcomes are durable dashboard state. Recreate the
-    // run lifecycle at its original timestamps so the projection round-trips.
-    const latestRuns = [...projectState.latestRuns.entries()].sort(([a], [b]) => a.localeCompare(b));
-    for (const [cardId, run] of latestRuns) {
+    // Run records replay as compact started/ended pairs at their original
+    // timestamps (active runs additionally replay their current step, so
+    // the fold lands on the same run status and card position).
+    const runs = [...projectState.runs.values()].sort(
+      (a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id),
+    );
+    const terminalCountByCard = new Map<string, number>();
+    for (const run of runs) {
       if (run.status === 'running' || run.status === 'waiting') continue;
+      const seen = terminalCountByCard.get(run.cardId) ?? 0;
+      terminalCountByCard.set(run.cardId, seen + 1);
+      if (seen >= TERMINAL_RUNS_PER_CARD) continue;
       events.push(
         frame(
           project.id,
           'pipelineRunStarted',
-          { cardId, pipelineId: run.pipelineId },
+          { runId: run.id, cardId: run.cardId, pipelineId: run.pipelineId, revision: run.revision },
           nonce,
           index++,
           run.startedAt,
@@ -208,8 +226,10 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
           project.id,
           'pipelineRunEnded',
           {
-            cardId,
+            runId: run.id,
+            cardId: run.cardId,
             pipelineId: run.pipelineId,
+            revision: run.revision,
             status: run.status,
             ...(run.error !== undefined ? { error: run.error } : {}),
           },
@@ -219,28 +239,31 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
         ),
       );
     }
-
-    // Active pipeline runs replay as runStarted (+ the current step, so
-    // the fold lands on the same run status).
-    const runs = [...projectState.pipelineRuns.entries()].sort(([a], [b]) => a.localeCompare(b));
-    for (const [cardId, run] of runs) {
-      const startedAt = projectState.latestRuns.get(cardId)?.startedAt;
+    for (const run of runs) {
+      if (run.status !== 'running' && run.status !== 'waiting') continue;
       events.push(
         frame(
           project.id,
           'pipelineRunStarted',
-          { cardId, pipelineId: run.pipelineId },
+          { runId: run.id, cardId: run.cardId, pipelineId: run.pipelineId, revision: run.revision },
           nonce,
           index++,
-          startedAt,
+          run.startedAt,
         ),
       );
-      if (run.stepId !== undefined && run.stepKind !== undefined) {
+      if (run.stepId !== undefined && run.stepKind !== undefined && run.stageId !== undefined) {
         events.push(
           frame(
             project.id,
             'pipelineStepStarted',
-            { cardId, pipelineId: run.pipelineId, stepId: run.stepId, kind: run.stepKind },
+            {
+              runId: run.id,
+              cardId: run.cardId,
+              pipelineId: run.pipelineId,
+              stepId: run.stepId,
+              kind: run.stepKind,
+              stageId: run.stageId,
+            },
             nonce,
             index++,
           ),
@@ -255,7 +278,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     }
     // Blocked cards replay their dependency state (order-insensitive fold).
     for (const card of projectState.cards.values()) {
-      if (isBlocked(projectState.cards, card)) {
+      if (isBlocked(projectState, card)) {
         events.push(
           frame(
             project.id,
@@ -271,10 +294,12 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
   return events;
 }
 
-function isBlocked(cards: Map<string, CardState>, card: CardState): boolean {
+function isBlocked(projectState: ProjectState, card: Card): boolean {
   if (card.blockedBy.length === 0) return false;
   return card.blockedBy.some((blocker) => {
-    const other = cards.get(blocker);
-    return other !== undefined && other.stage !== 'done';
+    const other = projectState.cards.get(blocker);
+    if (other === undefined) return false;
+    const pipeline = projectState.pipelines.get(other.pipelineId);
+    return pipeline?.stages.find((stage) => stage.id === other.stageId)?.terminal !== true;
   });
 }

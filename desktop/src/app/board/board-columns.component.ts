@@ -1,19 +1,18 @@
 import { CdkDrag, CdkDragDrop, CdkDropList, CdkDropListGroup } from '@angular/cdk/drag-drop';
-import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { LucideAngularModule } from 'lucide-angular';
 
-import { Card, Column, DisplayColumn, Lane } from '../core/models/board.models';
+import { Card } from '../core/models/board.models';
+import { Pipeline, PipelineStage } from '../core/models/pipeline.models';
 import { BoardCardComponent } from './board-card.component';
 import { BoardService } from './board.service';
 
 /**
- * The board: one column per work state — backlog | coder | tester |
- * reviewer | security | approval | done — so the board reads as the path
- * work takes through the agents. The type-named implement stages collapse
- * into the coder column (a drop lands on the card's own implement stage);
- * type is a card attribute and a filter, not board structure. Agent-worked
- * columns carry automation toggles; the coder column's toggle reflects and
- * drives every type-implement stage.
+ * The board: one column per Kanban-visible stage of the selected pipeline
+ * (Phase 10). A card's column is the last visible stage at or before its
+ * current stage — a hidden-stage task stays in its previous visible column
+ * while its card shows the hidden stage and the current step. Every stage
+ * column carries its automation toggle.
  */
 @Component({
   selector: 'app-board-columns',
@@ -25,42 +24,33 @@ import { BoardService } from './board.service';
 export class BoardColumnsComponent {
   private readonly board = inject(BoardService);
 
+  readonly pipeline = input.required<Pipeline>();
   readonly cards = input.required<readonly Card[]>();
   readonly blockedIds = input.required<ReadonlySet<string>>();
 
-  protected readonly columns = Column.ALL;
+  protected readonly columns = computed(() => this.pipeline().columns());
 
-  protected columnLabel(column: DisplayColumn): string {
-    return Column.label(column);
+  /** A card's column: the last visible stage at or before its stage. */
+  protected columnOf(card: Card): string | undefined {
+    return this.pipeline().visibleStageOf(card.stageId);
   }
 
-  protected agentOwned(column: DisplayColumn): boolean {
-    return Column.isAgentOwned(column);
+  protected cardsIn(column: PipelineStage): readonly Card[] {
+    return this.cards().filter((card) => this.columnOf(card) === column.id);
   }
 
-  protected cardsIn(column: DisplayColumn): readonly Card[] {
-    return Column.inColumn(this.cards(), column);
+  protected automationOn(column: PipelineStage): boolean {
+    return this.board.automation().isOn(this.pipeline().id, column.id);
   }
 
-  /** A column's toggle: on only when every stage under it is on. */
-  protected automationOn(column: DisplayColumn): boolean {
-    return Column.STAGES_OF[column].every((stage) => this.board.automation().isOn(stage));
+  protected toggleAutomation(column: PipelineStage): void {
+    void this.board.toggleAutomation(this.pipeline().id, column.id);
   }
 
-  /** Drive every agent-owned stage of the column to the toggled value. */
-  protected toggleAutomation(column: DisplayColumn): void {
-    const target = !this.automationOn(column);
-    for (const stage of Column.STAGES_OF[column]) {
-      if (Lane.isAgentOwned(stage) && this.board.automation().isOn(stage) !== target) {
-        void this.board.toggleAutomation(stage);
-      }
-    }
-  }
-
-  protected onDrop(event: CdkDragDrop<DisplayColumn>): void {
+  protected onDrop(event: CdkDragDrop<PipelineStage>): void {
     if (event.previousContainer === event.container) return;
     const card = event.item.data as Card;
-    this.board.requestMove(card.id, Column.dropStage(event.container.data, card.type));
+    void this.board.requestMove(card.id, event.container.data.id);
   }
 
   protected open(card: Card): void {

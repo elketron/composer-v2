@@ -6,8 +6,9 @@ adapter, agent loops, buffers, budgets, tool surfaces, session bridges)
 inside spect — the layer pi-mono and opencode already are. v2 keeps the
 board, the event backbone, the planning turn, and pipelines on cards, and
 **delegates agent execution to opencode**: a pipeline `agent` step launches
-`opencode run --agent <name>` in the project directory with a named,
-editable agent; composer observes the session (its existing
+`opencode run --agent <name>` in the task or group worktree with a named,
+editable agent (S0-S34 used the linked project directory before D12); composer
+observes the session (its existing
 `agentSession*` / `agentMessage*` wire) and gates it (approval steps).
 
 Status legend: **done** / **active** / **planned**. The gate is
@@ -26,6 +27,10 @@ automated tests — agent calls run against a scripted fake engine.
 | D6 | 2026-09-04 | **The event log is the only store-side truth.** Project ids derive from `event_log` itself (`store.projectIds()`); no registry table beside it. Replay skips ephemeral events (`agentMessageDelta`). | Dual-write (log + registry) bit the first S0 demo: the registry was never populated, rehydrate replayed nothing. Deleted on principle. |
 | D7 | 2026-09-04 | **Deployment: standalone server, attach-only desktops.** The server is a plain Node process (`COMPOSER_HTTP_ADDR`); the desktop's gateway probes `COMPOSER_SERVER_URL`, optionally spawns via `COMPOSER_SERVER_CMD` (e.g. `wsl -e bash -c "..."` on a Windows laptop with the server inside WSL), else spawns the workspace build, else is attach-only. Permissive CORS stays (the renderer connects directly). | The company-laptop flow: server inside WSL, Windows desktop attaching over localhost forwarding. |
 | D8 | 2026-09-04 | **Composer's domain tools reach the agent over MCP.** `edit_document` / `create_tickets` (planner) are exposed by a composer MCP server (stdio) that issues the same validated commands — commits stay validated regardless of model behavior. | Engine-agnostic (MCP is the generic tool protocol), and prompt discipline moves into the agent definition files instead of runtime code. |
+| D9 | 2026-09-07 | **Pipelines define stages and Kanban tabs.** Steps reference ordered pipeline-local stages; only stages marked Kanban-visible become columns. Active runs control task movement, retries create new runs while reusing the task's OpenCode session, and the editor shows the linear forward path. See [`pipeline-kanban-model.md`](pipeline-kanban-model.md). | The board should communicate meaningful work state without turning every agent or command into a column, while the card and run views retain execution detail. |
+| D10 | 2026-09-07 | **Assistant scope may be empty or span projects.** One thread owns one OpenCode session and active turn; explicit instructions authorize selected-project plan updates and provenance-bearing global knowledge writes. Composer skills outrank project and global skills; project indexing is optional. See [`assistant-knowledge-skills-model.md`](assistant-knowledge-skills-model.md). | The assistant is the unstructured intelligence layer, but its project access, writes, and runtime dependencies must remain explicit and deterministic. |
+| D11 | 2026-09-07 | **The live run view is a three-pane workbench.** Agent session output, read-only context and task-wide diffs, and model-opened terminals remain distinct; retry attempts share a session but retain run boundaries. See [`live-run-workbench.md`](live-run-workbench.md). | Session continuity is useful for intervention and retry, while immutable attempts and attributable terminal output preserve observability. |
+| D12 | 2026-09-07 | **Concurrent runs use queued worktree isolation and survive restart.** Ungrouped tasks receive dedicated worktrees; task groups share one serial worktree; the default global execution limit is five worktrees. Interrupted agent steps resume their OpenCode session. See [`scheduling-worktrees.md`](scheduling-worktrees.md). This supersedes D5's no-durable-run and boot-cancellation recovery decisions and D2's direct project-directory execution rule. | Parallel work must not share a mutable checkout, and durable queues plus session continuation provide useful recovery without pretending OS terminal processes survived. |
 
 ## S0 — Skeleton + wire + desktop  ·  done (2026-09-05)
 
@@ -1601,6 +1606,158 @@ Research notes for later slices:
 - The worker surface carries no git/file tools: the workers use
   opencode's own (read/write/bash/…) as before; only composer-side
   effects went through MCP.
+
+## S35 — Staged pipelines: the board becomes the pipeline's projection  ·  done (2026-09-07)
+
+Phase 10's domain core (D9). The fixed worker-lane Stage machine is gone: a
+pipeline now owns an ordered stage path and an ordered step list (every step
+references one of its own stages), every card is assigned to exactly one
+pipeline and sits in one of its stages, and runs are first-class records
+pinned to a pipeline revision. The wire was redesigned cleanly (no
+deployments — old dev logs are dropped, not migrated); `PROTOCOL_VERSION`
+5 → 6, golden regenerated to 56 frames on both sides. The product decisions
+the model contract left open are recorded in
+[`phase-10-implementation.md`](phase-10-implementation.md); the
+deferred-decisions register was updated accordingly.
+
+- **Wire** (models/events/commands): `Pipeline` gains `stages:
+  PipelineStage[]` (label, kanbanVisible, terminal, per-stage outcomes /
+  requiresOutcome for S37, errorReturnToStageId) and `revision`; `Card`
+  swaps `stage`/`subState`/`retries` for `pipelineId`/`stageId`/`stepStates`
+  (per-step state keyed by real step ids); run lifecycle events carry
+  `runId`/`revision` (and `stageId` on step starts); new events
+  `cardStageMoved`, `cardPipelineAssigned`, `cardStepStateUpdated` replace
+  `cardMoved`/`subStateUpdated`; `automationToggled` keys per
+  `<pipelineId, stageId>`; `PipelineRunStatus` gains `returned`. Commands:
+  `requestCardStageMove`, `requestCardPipelineAssign`, `requestCardReopen`,
+  `requestStepStateUpdate`, `requestPipelineRun {cardId}` (the pipeline
+  resolves from the card's assignment), `requestAutomationToggle
+  {pipelineId, stageId, on}`; rejection codes gain `unknownStage` and
+  `runActive` (`pipelineAlreadyRunning`/`invalidLane` die with the lanes).
+- **Processor**: staged-pipeline validation in full — ≥1 stage/step (≤64),
+  unique stage and step ids, every step's stage in its own pipeline, the
+  step sequence's stage order non-decreasing (the normal path never moves
+  backward), the first stage Kanban-visible, exactly one terminal stage and
+  it must be last, outcome/error-return targets strictly earlier stages. A
+  changed save allocates the next revision (an unchanged save is a no-op);
+  the fold keeps every revision for run pinning. Cards are assigned at
+  creation (default pipeline `PL-1`, else first; first stage), and pipeline
+  deletion rejects while cards are assigned. Stage moves require no active
+  run, the target stage, and satisfied blockers unless overridden; drags out
+  of the terminal stage keep the rejection-comment flow; assignment always
+  places the card in the new pipeline's first stage (reopening a completed
+  card is the same event); `requestPipelineRun` allocates `R-N` pinned to the
+  current revision and rejects terminal cards (`reopen` first).
+- **Runner**: one in-process task per run keyed by `runId`; it executes the
+  steps whose stage is at or after the card's current stage (steps in earlier
+  stages are skipped — a returned card reruns from where it sits). Each
+  step's start moves the card to the step's stage (the fold applies it; the
+  board projects hidden stages to the previous visible column); finishing
+  the last step moves the card to the terminal stage. A failed step ends the
+  run `failed` in place — unless the step's stage configures
+  `errorReturnToStageId`, which moves the card and ends the run `returned`
+  (a rejected gate behaves the same, its comment riding the move). Boot
+  cancels interrupted runs by run id.
+- **Fold/snapshot**: per-project `runs`/`activeRuns` replace
+  `pipelineRuns`/`latestRuns` (the dashboard derives the latest run per card
+  from run records; `returned` is actionable health); snapshots replay every
+  pipeline revision as `pipelineSaved` and runs as compact
+  started/ended pairs (last 20 terminal per card, active runs with their
+  current step).
+- **Desktop**: the board renders one tab per pipeline with the tab's cards;
+  columns are the current revision's Kanban-visible stages and a card's
+  column is the last visible stage at or before its `stageId` — hidden-stage
+  execution stays in the previous column while the card shows the hidden
+  stage and the current step directly. Stage columns carry the automation
+  toggles (per stage now). The card panel's checklist is the assigned
+  pipeline's steps with per-step status; the run affordance runs the card's
+  own pipeline (no picker), reassignment is an explicit select, and
+  completed cards get a reopen button; run/step-state commands rekeyed.
+  The pipeline editor authors the stage path (label, column, done,
+  error-return) beside the step builder (each step picks its stage), with
+  the server's forward-path validation mirrored client-side. The run view's
+  todo block lists the pipeline's steps; `returned` runs style as
+  actionable outcomes.
+- **Dashboard**: the aggregation reads run records (`runId` on
+  waiting/failed items; failed-or-returned latest runs feed the inbox).
+
+Exit criteria (met): `pnpm verify` (server 184, desktop 281 + gateway 7 —
+the gateway spec pins both `PROTOCOL_VERSION` copies together, now at 6).
+Server suites cover staged authoring (forward path, terminal, error-return
+and outcome-target rules), revision allocation and pinning, the run walk
+(start-from-stage skip, hidden stages via the fold, gate approve/return),
+the run lock, boot cancel, and snapshot round-trips into equal state; the
+desktop specs cover tabs, column projection (including a hidden-stage
+revision), the step checklist, run/reopen/reassign affordances, and the
+wire golden at 56 frames. Live smoke deferred to the next slice's real-run
+check.
+
+## S36 — Agent outcomes: the outcome tool  ·  done (2026-09-07)
+
+Phase 10's second slice: an agent stage's outcome rules become runtime
+behavior. An agent step in a stage that defines `outcomes` reports its
+verdict through a new worker tool (`composer_report_outcome`) instead of
+leaving it implicit: a rule with a target stage returns the card to that
+earlier stage and ends the run `returned` (the model's backward
+transition), a rule without one proceeds, and a stage marked
+`requiresOutcome` fails a successful turn that reported nothing. Stages
+without outcomes keep S35's proceed-on-success. The wire gains one event;
+`PROTOCOL_VERSION` 6 → 7, golden regenerated to 57 frames on both sides.
+
+- **Wire**: `pipelineOutcomeReported {runId, cardId, pipelineId, stepId,
+  outcome, note?}` — durable, project-scoped, a decision record: the fold
+  derives nothing from it (the card move and the run end are the state
+  changes), and the snapshot needs no replay of it. New command
+  `requestPipelineOutcomeReport {sessionId, outcome, note?}` — MCP-only
+  like the planner's document tools (no action mapping).
+- **Processor** (`reportOutcome`): the session must exist and be running
+  (`unknownSession`/`invalidCommand`), its card must have an active run
+  (`pipelineNotRunning`) at an agent step (`invalidCommand`), and the
+  named outcome must exist on the step's stage — read from the run's
+  **pinned revision**, so an edited pipeline never changes a live run's
+  rules. Rejections teach: the message lists the stage's allowed outcome
+  names. The tool result tells the model what its verdict does
+  (`transition`: proceeds, or returns to `<stage label>`).
+- **Runner**: the report frame lands on the run task (keyed to the current
+  step; a stale report from a previous step never applies). After a
+  successful agent turn the stage's rules settle the step before
+  `pipelineStepFinished` publishes — a backward outcome publishes the step
+  ok (the turn did its work) then moves the card and ends the run
+  `returned` with `outcome: note` as the error text and the note as the
+  rejection comment (the gate's flow); a missing required outcome
+  publishes the step **failed** with the teaching error, which then flows
+  through the stage's `errorReturnToStageId` like any failure. The agent
+  brief carries the stage's outcome vocabulary (names, what each does,
+  and whether the call is required) whenever the stage defines outcomes.
+- **Worker MCP**: `report_outcome` joins the worker surface (six tools) —
+  `{outcome, note?}`, routed through `/mcp/worker` to the validated
+  processor command.
+- **Defaults**: the seeded `PL-1` gains the Review stage between
+  Validation and Approval — `Review [visible] → Done` becomes
+  `Review [visible, outcomes: approved → proceed · changes_requested →
+  Implementation, requiresOutcome] → Approval → Done`, with a reviewer
+  agent step. Every worker agent definition (coder/tester/reviewer/
+  security) ships an outcomes paragraph: report the verdict before
+  finishing when the task lists stage outcomes.
+- **Desktop**: the pipeline editor's stage rows author outcome rules
+  (name + proceeds/returns-to-earlier select, remove) with the
+  `agents must report the outcome` flag, mirrored client-side validation
+  (names required and unique per stage, return targets strictly earlier);
+  removing a stage drops outcome rules and error returns that targeted
+  it. Wire types + kinds gain the event; the registry pin moved to 7.
+
+Exit criteria (met): `pnpm verify` (server 192, desktop 283 + gateway 7).
+The runner suite covers the backward return (card move, rejection comment,
+`returned` error text, re-run from where the card sits), the forward
+proceed, the required-outcome failure through the stage error return, the
+brief's vocabulary, and the no-outcomes rejection mid-turn; the processor
+suite covers session/run/step-kind/name validation and pinned-revision
+reads (a rule dropped in revision 2 still reports on a revision-1 run and
+vanishes for a revision-2 run); the MCP suite pins the six-tool surface;
+the worker-route e2e drives the real `/mcp/worker` path — reviewer parks,
+reports through HTTP, turn releases, card returns and the run ends
+`returned`. The joint S35+S36 real-run smoke (a live opencode reviewer
+reporting its verdict) runs when a live stack is next booted.
 
 ## Testing strategy
 

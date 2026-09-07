@@ -10,10 +10,6 @@ import type { Bus } from './bus.js';
 import type { Command, CommandOutcome, Rejection, TicketEmission } from './wire/commands.js';
 import { nowIso } from './wire/envelope.js';
 import {
-  cardTypeCsName,
-  isLaneValid,
-  stageCsName,
-  subStateFor,
   type AssistantThread,
   type Assignee,
   type Card,
@@ -21,17 +17,17 @@ import {
   type CardType,
   type ChatMessage,
   type Pipeline,
+  type PipelineStage,
   type PipelineStep,
   type PlanningSession,
   type ProposalItem,
   type ProposalOutcome,
   type Project,
-  type Stage,
   type SubStateStatus,
   type WorkflowStep,
 } from './wire/models.js';
-import type { PipelineRunProgress } from './fold.js';
-import { defaultPipeline } from './pipelines.js';
+import { defaultPipeline, DEFAULT_PIPELINE_ID } from './pipelines.js';
+import type { RunRecord } from './fold.js';
 import { PIPELINE_AGENT_KINDS } from './agents.js';
 import { deleteDoc as deleteDocFile, renameDoc as renameDocFile, saveDoc as saveDocFile } from './docs.js';
 import { deleteWorkflow as deleteWorkflowFile, saveWorkflow, MAX_WORKFLOW_STEPS } from './workflows.js';
@@ -80,18 +76,22 @@ export class Processor {
         return this.createCards(projectId, [command.card]);
       case 'requestCardsCreate':
         return this.createCards(projectId, command.cards);
-      case 'requestCardMove':
-        return this.moveCard(projectId, command.cardId, command.toLane, command.override, command.comment);
+      case 'requestCardStageMove':
+        return this.moveCardStage(projectId, command.cardId, command.toStageId, command.override, command.comment);
+      case 'requestCardPipelineAssign':
+        return this.assignCardPipeline(projectId, command.cardId, command.pipelineId);
+      case 'requestCardReopen':
+        return this.reopenCard(projectId, command.cardId);
       case 'requestCardTypeChange':
         return this.changeCardType(projectId, command.cardId, command.toType);
       case 'requestCardAssign':
         return this.assignCard(projectId, command.cardId, command.assignee);
       case 'requestCardArchive':
         return this.archiveCard(projectId, command.cardId);
-      case 'requestSubStateUpdate':
-        return this.updateSubState(projectId, command.cardId, command.stage, command.status);
+      case 'requestStepStateUpdate':
+        return this.updateStepState(projectId, command.cardId, command.stepId, command.status);
       case 'requestAutomationToggle':
-        return this.toggleAutomation(projectId, command.lane, command.on);
+        return this.toggleAutomation(projectId, command.pipelineId, command.stageId, command.on);
       case 'requestPlanningSessionCreate':
         return this.createPlanningSession(command.projectId);
       case 'requestUserMessage':
@@ -105,11 +105,13 @@ export class Processor {
       case 'requestPipelineDelete':
         return this.deletePipeline(projectId, command.pipelineId);
       case 'requestPipelineRun':
-        return this.runPipeline(projectId, command.pipelineId, command.cardId);
+        return this.runPipeline(projectId, command.cardId);
       case 'requestPipelineStop':
         return this.stopPipeline(projectId, command.cardId);
       case 'requestPipelineGateRespond':
         return this.gateRespond(projectId, command.cardId, command.approved, command.comment);
+      case 'requestPipelineOutcomeReport':
+        return this.reportOutcome(projectId, command.sessionId, command.outcome, command.note);
       case 'requestAssistantThreadCreate':
         return this.createAssistantThread(command.name);
       case 'requestAssistantThreadArchive':
@@ -251,7 +253,10 @@ export class Processor {
       return rejected('unknownProject', `Unknown project ${commandProjectId}`);
     }
     if (project.archivedAt !== undefined) return ok();
-    if ((this.bus.state.byProject.get(commandProjectId)?.pipelineRuns.size ?? 0) > 0) {
+    const activeRuns = [...(this.bus.state.byProject.get(commandProjectId)?.runs.values() ?? [])].some(
+      (run) => run.status === 'running' || run.status === 'waiting',
+    );
+    if (activeRuns) {
       return rejected('invalidCommand', `Project ${commandProjectId} has an active pipeline run`);
     }
     await this.bus.publish(commandProjectId, 'projectArchived', {
@@ -286,6 +291,8 @@ export class Processor {
    * Creates one or more cards (v1 `create_cards`): the scope must exist and
    * every `blockedBy` must reference a card that exists at command time
    * (in-batch cross-references are planner-ticket territory, not this).
+   * Every card is assigned to a pipeline — the requested one, else the
+   * project's default — and begins in that pipeline's first stage.
    * Events publish per card, so each allocation sees the previous one.
    */
   private async createCards(scope: string | undefined, cards: Card[]): Promise<CommandOutcome> {
@@ -304,17 +311,31 @@ export class Processor {
 
     const now = nowIso();
     for (const card of cards) {
+      const pipeline =
+        card.pipelineId !== ''
+          ? this.pipelinesOf(scope).get(card.pipelineId)
+          : this.defaultPipelineOf(scope);
+      if (pipeline === undefined) {
+        return rejected(
+          card.pipelineId !== '' ? 'unknownPipeline' : 'invalidCommand',
+          card.pipelineId !== ''
+            ? `Unknown pipeline ${card.pipelineId}`
+            : `Project ${scope} has no pipeline to assign the card to`,
+        );
+      }
       const created: Card = {
         ...card,
         id: card.id !== '' ? card.id : this.allocateCardId(scope),
         projectId: scope,
-        subState: Object.keys(card.subState).length > 0 ? card.subState : subStateFor(card.type),
+        pipelineId: pipeline.id,
+        stageId: firstStageOf(pipeline).id,
+        stepStates: card.stepStates ?? {},
         createdAt: isSet(card.createdAt) ? card.createdAt : now,
         updatedAt: now,
       };
       existing.set(created.id, created);
       await this.bus.publish(scope, 'cardCreated', { card: created });
-      if (isBlockedIn(existing, created)) {
+      if (isBlockedIn(existing, created, this.pipelinesOf(scope))) {
         await this.bus.publish(scope, 'dependencyStateChanged', {
           cardId: created.id,
           blocked: true,
@@ -326,15 +347,16 @@ export class Processor {
   }
 
   /**
-   * Moves a card (v1 `move_card`): lane must be valid for the type, the
-   * same lane is a no-op, and unsatisfied blockers reject unless
-   * overridden. Dependents whose blocked-ness flips get a
-   * dependencyStateChanged.
+   * Moves a card to a stage of its assigned pipeline: the move needs no
+   * active run (the pipeline owns transitions while one runs), the target
+   * must be a stage of the card's pipeline, the same stage is a no-op, and
+   * unsatisfied blockers reject unless overridden. Dependents whose
+   * blocked-ness flips get a dependencyStateChanged.
    */
-  private async moveCard(
+  private async moveCardStage(
     scope: string | undefined,
     cardId: string,
-    toLane: Stage,
+    toStageId: string,
     override: boolean,
     comment: string | undefined,
   ): Promise<CommandOutcome> {
@@ -343,32 +365,93 @@ export class Processor {
       return rejected('unknownCard', `Unknown card ${cardId}`);
     }
     const { projectId, card } = found;
-    if (!isLaneValid(card.type, toLane)) {
-      return rejected(
-        'invalidLane',
-        `Lane ${stageCsName(toLane)} is not valid for ${cardTypeCsName(card.type)} cards`,
-      );
+    const pipeline = this.pipelinesOf(projectId).get(card.pipelineId);
+    if (pipeline === undefined) {
+      return rejected('unknownPipeline', `Card ${cardId} has no assigned pipeline`);
     }
-    if (card.stage === toLane) {
+    if (!pipeline.stages.some((stage) => stage.id === toStageId)) {
+      return rejected('unknownStage', `Stage '${toStageId}' is not a stage of pipeline ${pipeline.id}`);
+    }
+    if (this.activeRunOf(projectId, cardId) !== null) {
+      return rejected('runActive', `Card ${cardId} has an active pipeline run`);
+    }
+    if (card.stageId === toStageId) {
       return ok();
     }
     const before = this.cardsOf(projectId);
-    if (!override && isBlockedIn(before, card)) {
+    if (!override && isBlockedIn(before, card, this.pipelinesOf(projectId))) {
       return rejected('blocked', `Card ${cardId} has unsatisfied blockers`);
     }
 
-    await this.bus.publish(projectId, 'cardMoved', {
+    await this.bus.publish(projectId, 'cardStageMoved', {
       cardId: card.id,
-      from: card.stage,
-      to: toLane,
+      pipelineId: pipeline.id,
+      fromStageId: card.stageId,
+      toStageId,
       ...(comment !== undefined ? { comment } : {}),
     });
-    const moved: Card = { ...card, stage: toLane };
+    const moved: Card = { ...card, stageId: toStageId };
     await this.appendDependencyTransitions(projectId, before, moved);
     return ok();
   }
 
-  /** Changes a card's type (v1 `change_card_type`); the fold resets sub-state. */
+  /**
+   * Assigns a card to a pipeline (it appears on that pipeline's board tab).
+   * The assignment always places the card in the pipeline's first stage;
+   * assigning a completed card reopens it. Needs no active run.
+   */
+  private async assignCardPipeline(
+    scope: string | undefined,
+    cardId: string,
+    pipelineId: string,
+  ): Promise<CommandOutcome> {
+    const found = this.findCard(scope, cardId);
+    if (!found) {
+      return rejected('unknownCard', `Unknown card ${cardId}`);
+    }
+    const { projectId, card } = found;
+    const pipeline = this.pipelinesOf(projectId).get(pipelineId);
+    if (pipeline === undefined) {
+      return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
+    }
+    if (this.activeRunOf(projectId, cardId) !== null) {
+      return rejected('runActive', `Card ${cardId} has an active pipeline run`);
+    }
+    await this.bus.publish(projectId, 'cardPipelineAssigned', {
+      cardId: card.id,
+      pipelineId: pipeline.id,
+      stageId: firstStageOf(pipeline).id,
+    });
+    return ok();
+  }
+
+  /** Reopens a completed card: it returns to its pipeline's first stage. */
+  private async reopenCard(scope: string | undefined, cardId: string): Promise<CommandOutcome> {
+    const found = this.findCard(scope, cardId);
+    if (!found) {
+      return rejected('unknownCard', `Unknown card ${cardId}`);
+    }
+    const { projectId, card } = found;
+    const pipeline = this.pipelinesOf(projectId).get(card.pipelineId);
+    if (pipeline === undefined) {
+      return rejected('unknownPipeline', `Card ${cardId} has no assigned pipeline`);
+    }
+    if (!isTerminalStage(pipeline, card.stageId)) {
+      return rejected('invalidCommand', `Card ${cardId} is not completed`);
+    }
+    if (this.activeRunOf(projectId, cardId) !== null) {
+      return rejected('runActive', `Card ${cardId} has an active pipeline run`);
+    }
+    await this.bus.publish(projectId, 'cardStageMoved', {
+      cardId: card.id,
+      pipelineId: pipeline.id,
+      fromStageId: card.stageId,
+      toStageId: firstStageOf(pipeline).id,
+    });
+    return ok();
+  }
+
+  /** Changes a card's type (v1 `change_card_type`); the fold resets step states. */
   private async changeCardType(
     scope: string | undefined,
     cardId: string,
@@ -416,35 +499,50 @@ export class Processor {
     return ok();
   }
 
-  /** Updates one sub-state key (v1 `update_sub_state`); unvalidated passthrough. */
-  private async updateSubState(
+  /** Updates one step's execution state; the card must be idle. */
+  private async updateStepState(
     scope: string | undefined,
     cardId: string,
-    stage: string,
+    stepId: string,
     status: SubStateStatus,
   ): Promise<CommandOutcome> {
     const found = this.findCard(scope, cardId);
     if (!found) {
       return rejected('unknownCard', `Unknown card ${cardId}`);
     }
-    await this.bus.publish(found.projectId, 'subStateUpdated', {
+    const pipeline = this.pipelinesOf(found.projectId).get(found.card.pipelineId);
+    if (pipeline === undefined || !pipeline.steps.some((step) => step.id === stepId)) {
+      return rejected('unknownStage', `Step '${stepId}' is not a step of the card's pipeline`);
+    }
+    if (this.activeRunOf(found.projectId, cardId) !== null) {
+      return rejected('runActive', `Card ${cardId} has an active pipeline run`);
+    }
+    await this.bus.publish(found.projectId, 'cardStepStateUpdated', {
       cardId: found.card.id,
-      stage,
+      stepId,
       status,
     });
     return ok();
   }
 
-  /** Toggles a lane's automation (v1 `toggle_automation`); per project. */
+  /** Toggles a stage's automation (v1 `toggle_automation`), per pipeline stage. */
   private async toggleAutomation(
     scope: string | undefined,
-    lane: Stage,
+    pipelineId: string,
+    stageId: string,
     on: boolean,
   ): Promise<CommandOutcome> {
     if (scope === undefined || !this.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
-    await this.bus.publish(scope, 'automationToggled', { lane, on });
+    const pipeline = this.pipelinesOf(scope).get(pipelineId);
+    if (pipeline === undefined) {
+      return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
+    }
+    if (!pipeline.stages.some((stage) => stage.id === stageId)) {
+      return rejected('unknownStage', `Stage '${stageId}' is not a stage of pipeline ${pipelineId}`);
+    }
+    await this.bus.publish(scope, 'automationToggled', { pipelineId, stageId, on });
     return ok();
   }
 
@@ -572,6 +670,10 @@ export class Processor {
       if (ticket.key !== undefined) cardIdByKey.set(ticket.key, ids[offset]!);
     });
 
+    const pipeline = this.defaultPipelineOf(found.projectId);
+    if (pipeline === undefined) {
+      return rejected('invalidCommand', `Project ${found.projectId} has no pipeline to assign the tickets to`);
+    }
     const now = nowIso();
     const emitted: Card[] = tickets.map((ticket, offset) => ({
       id: ids[offset]!,
@@ -580,10 +682,10 @@ export class Processor {
       title: ticket.title,
       description: ticket.description,
       tags: [],
-      stage: 'new',
+      pipelineId: pipeline.id,
+      stageId: firstStageOf(pipeline).id,
       blockedBy: ticket.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
-      subState: subStateFor(ticket.cardType),
-      retries: {},
+      stepStates: {},
       sessionId: found.session.id,
       createdAt: now,
       updatedAt: now,
@@ -653,10 +755,11 @@ export class Processor {
   ): Promise<void> {
     const after = new Map(before);
     after.set(moved.id, moved);
+    const pipelines = this.pipelinesOf(projectId);
     for (const dependent of before.values()) {
       if (!dependent.blockedBy.includes(moved.id)) continue;
-      const was = isBlockedIn(before, dependent);
-      const now = isBlockedIn(after, dependent);
+      const was = isBlockedIn(before, dependent, pipelines);
+      const now = isBlockedIn(after, dependent, pipelines);
       if (was !== now) {
         await this.bus.publish(projectId, 'dependencyStateChanged', {
           cardId: dependent.id,
@@ -670,9 +773,11 @@ export class Processor {
   // ---- Pipelines ----
 
   /**
-   * Saves a user-authored pipeline (v1 `save_pipeline`): an empty id
-   * allocates the next `PL-N`, a known id upserts. A pipeline that can
-   * never run is rejected here, before any event exists.
+   * Saves a user-authored pipeline: an empty id allocates the next `PL-N`,
+   * a known id upserts. The definition is validated in full (stages, the
+   * forward path, terminal stage); a save that changes nothing is a no-op,
+   * a changed save allocates the next revision — active and historical runs
+   * keep the revision they started on.
    */
   private async savePipeline(scope: string | undefined, pipeline: Pipeline): Promise<CommandOutcome> {
     if (scope === undefined || !this.bus.state.projects.has(scope)) {
@@ -683,33 +788,113 @@ export class Processor {
     if (name === '') {
       return rejection('Pipeline name is required');
     }
+    if (pipeline.stages.length === 0) {
+      return rejection('A pipeline needs at least one stage');
+    }
     if (pipeline.steps.length === 0) {
       return rejection('A pipeline needs at least one step');
     }
     if (pipeline.steps.length > MAX_PIPELINE_STEPS) {
       return rejection(`Pipeline has ${pipeline.steps.length} steps; the limit is ${MAX_PIPELINE_STEPS}`);
     }
-    const seen = new Set<string>();
+
+    const seenStages = new Set<string>();
+    const stageOrder = new Map<string, number>();
+    for (const [index, stage] of pipeline.stages.entries()) {
+      const id = stage.id.trim();
+      if (id === '') {
+        return rejection(`Stage ${index + 1} needs an id`);
+      }
+      if (seenStages.has(id)) {
+        return rejection(`Stage id '${id}' appears twice`);
+      }
+      seenStages.add(id);
+      stageOrder.set(id, index);
+    }
+    for (const [index, stage] of normalizeStages(pipeline.stages).entries()) {
+      const label = `Stage ${index + 1}`;
+      if (stage.label.trim() === '') {
+        return rejection(`${label} needs a label`);
+      }
+      for (const outcome of stage.outcomes ?? []) {
+        if (outcome.outcome.trim() === '') {
+          return rejection(`${label}: an outcome needs a name`);
+        }
+        if (outcome.toStageId !== undefined) {
+          const target = stageOrder.get(outcome.toStageId);
+          if (target === undefined) {
+            return rejection(`${label}: outcome '${outcome.outcome}' names an unknown stage`);
+          }
+          if (target >= index) {
+            return rejection(
+              `${label}: outcome '${outcome.outcome}' may only return to an earlier stage`,
+            );
+          }
+        }
+      }
+      const outcomeNames = (stage.outcomes ?? []).map((rule) => rule.outcome.trim());
+      if (new Set(outcomeNames).size !== outcomeNames.length) {
+        return rejection(`${label}: outcome names must be unique`);
+      }
+      if (stage.errorReturnToStageId !== undefined) {
+        const target = stageOrder.get(stage.errorReturnToStageId);
+        if (target === undefined) {
+          return rejection(`${label}: the error condition names an unknown stage`);
+        }
+        if (target >= index) {
+          return rejection(`${label}: the error condition may only return to an earlier stage`);
+        }
+      }
+    }
+
+    const seenSteps = new Set<string>();
+    let lastOrder = -1;
     for (const [index, step] of pipeline.steps.entries()) {
       const label = `Step ${index + 1}`;
       const id = step.id.trim();
       if (id === '') {
         return rejection(`${label} needs an id`);
       }
-      if (seen.has(id)) {
+      if (seenSteps.has(id)) {
         return rejection(`Step id '${id}' appears twice`);
       }
-      seen.add(id);
+      seenSteps.add(id);
+      const stageIndex = stageOrder.get(step.stageId);
+      if (stageIndex === undefined) {
+        return rejection(`${label}: stage '${step.stageId}' is not a stage of this pipeline`);
+      }
+      if (stageIndex < lastOrder) {
+        return rejection(`${label}: the normal path must not move to an earlier stage`);
+      }
+      lastOrder = stageIndex;
       const message = validatePipelineStep(step);
       if (message !== null) {
         return rejection(`${label}: ${message}`);
       }
     }
+
+    const terminals = pipeline.stages.filter((stage) => stage.terminal === true);
+    if (terminals.length !== 1) {
+      return rejection('A pipeline needs exactly one terminal (Done) stage');
+    }
+    if (pipeline.stages[pipeline.stages.length - 1]?.terminal !== true) {
+      return rejection('The terminal stage must be the last stage');
+    }
+    if (pipeline.stages[0]?.kanbanVisible !== true) {
+      return rejection('The first stage must be Kanban-visible');
+    }
+
     const id = pipeline.id.trim() !== '' ? pipeline.id.trim() : allocateId(this.pipelinesOf(scope).keys(), 'PL');
+    const current = this.pipelinesOf(scope).get(id);
+    if (current !== undefined && sameDefinition(current, pipeline, name)) {
+      return ok();
+    }
     const saved: Pipeline = {
       id,
       projectId: scope,
       name,
+      revision: (current?.revision ?? 0) + 1,
+      stages: normalizeStages(pipeline.stages),
       steps: pipeline.steps,
       updatedAt: nowIso(),
     };
@@ -718,57 +903,72 @@ export class Processor {
   }
 
   /**
-   * Deletes a user-authored pipeline (v1 `delete_pipeline`): the
-   * tombstone keeps the boot seed from resurrecting the default.
+   * Deletes a user-authored pipeline (v1 `delete_pipeline`): the tombstone
+   * keeps the boot seed from resurrecting the default. A pipeline with
+   * assigned cards rejects — reassign them first.
    */
   private async deletePipeline(scope: string | undefined, pipelineId: string): Promise<CommandOutcome> {
     if (scope === undefined || !this.pipelinesOf(scope).has(pipelineId)) {
       return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
+    }
+    const assigned = [...this.cardsOf(scope).values()].filter((card) => card.pipelineId === pipelineId);
+    if (assigned.length > 0) {
+      return rejected(
+        'invalidCommand',
+        `Pipeline ${pipelineId} still has ${assigned.length} assigned card${assigned.length === 1 ? '' : 's'}`,
+      );
     }
     await this.bus.publish(scope, 'pipelineDeleted', { pipelineId });
     return ok();
   }
 
   /**
-   * Runs a pipeline on a card (v1 `run_pipeline`): the validated event is
-   * the runner's trigger.
+   * Runs a card's assigned pipeline: the validated run event allocates the
+   * run (pinned to the pipeline's current revision) and is the runner's
+   * trigger. The run executes from the card's current stage onward.
    */
-  private async runPipeline(
-    scope: string | undefined,
-    pipelineId: string,
-    cardId: string,
-  ): Promise<CommandOutcome> {
+  private async runPipeline(scope: string | undefined, cardId: string): Promise<CommandOutcome> {
     if (scope === undefined || !this.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
-    if (!this.pipelinesOf(scope).has(pipelineId)) {
-      return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
-    }
-    if (!this.cardsOf(scope).has(cardId)) {
+    const card = this.cardsOf(scope).get(cardId);
+    if (card === undefined) {
       return rejected('unknownCard', `Unknown card ${cardId}`);
+    }
+    const pipeline = this.pipelinesOf(scope).get(card.pipelineId);
+    if (pipeline === undefined) {
+      return rejected('unknownPipeline', `Card ${cardId} has no assigned pipeline`);
     }
     if (this.bus.state.projects.get(scope)?.directory === undefined) {
       return rejected('invalidCommand', `Project ${scope} has no directory set`);
     }
-    if (this.bus.state.byProject.get(scope)?.pipelineRuns.has(cardId)) {
-      return rejected('pipelineAlreadyRunning', `Card ${cardId} already has a running pipeline`);
+    if (this.activeRunOf(scope, cardId) !== null) {
+      return rejected('runActive', `Card ${cardId} already has a running pipeline`);
     }
-    const pipeline = this.pipelinesOf(scope).get(pipelineId)!;
+    if (isTerminalStage(pipeline, card.stageId)) {
+      return rejected('invalidCommand', `Card ${cardId} is completed — reopen it to run again`);
+    }
     const kind = pipeline.steps.find((step) => step.kind === 'agent')?.agentKind;
     if (kind !== undefined && !PIPELINE_AGENT_KINDS.includes(kind)) {
       return rejected('unknownAgentKind', `Agent kind '${kind}' has no implementation yet`);
     }
 
-    await this.bus.publish(scope, 'pipelineRunStarted', { cardId, pipelineId });
-    return ok();
+    const runId = allocateId(this.runsOf(scope).keys(), 'R');
+    await this.bus.publish(scope, 'pipelineRunStarted', {
+      runId,
+      cardId,
+      pipelineId: pipeline.id,
+      revision: pipeline.revision,
+    });
+    return { ok: true, runId };
   }
 
   /**
-   * Stops a card's active run (v1 `stop_pipeline`): the event is the
-   * canonical record and the runner's kill trigger.
+   * Stops a card's active run: the event is the canonical record and the
+   * runner's kill trigger.
    */
   private async stopPipeline(scope: string | undefined, cardId: string): Promise<CommandOutcome> {
-    const run = this.runOf(scope, cardId);
+    const run = this.activeRunOf(scope, cardId);
     if (run === null) {
       return rejected(
         this.findCard(scope, cardId) === null ? 'unknownCard' : 'pipelineNotRunning',
@@ -776,8 +976,10 @@ export class Processor {
       );
     }
     await this.bus.publish(scope!, 'pipelineRunEnded', {
+      runId: run.id,
       cardId,
       pipelineId: run.pipelineId,
+      revision: run.revision,
       status: 'cancelled',
     });
     return ok();
@@ -793,7 +995,7 @@ export class Processor {
     approved: boolean,
     comment: string | undefined,
   ): Promise<CommandOutcome> {
-    const run = this.runOf(scope, cardId);
+    const run = this.activeRunOf(scope, cardId);
     if (run === null) {
       const unknown = this.findCard(scope, cardId) === null;
       return rejected(
@@ -805,11 +1007,85 @@ export class Processor {
       return rejected('pipelineNotRunning', `Card ${cardId}'s pipeline is not waiting at a gate`);
     }
     await this.bus.publish(scope!, 'pipelineGateResponded', {
+      runId: run.id,
       cardId,
       approved,
       ...(comment !== undefined ? { comment } : {}),
     });
     return ok();
+  }
+
+  /**
+   * The outcome tool's validated path (S36): a running agent session
+   * signals its stage outcome. The run must be live at an agent step
+   * whose stage — on the run's pinned revision — defines the named
+   * outcome. The event is the decision record; the runner applies the
+   * transition (proceed, or return the card to the rule's stage).
+   */
+  private async reportOutcome(
+    scope: string | undefined,
+    sessionId: string,
+    outcome: string,
+    note: string | undefined,
+  ): Promise<CommandOutcome> {
+    if (scope === undefined || !this.bus.state.projects.has(scope)) {
+      return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
+    }
+    const project = this.bus.state.byProject.get(scope);
+    const session = project?.agentSessions.get(sessionId);
+    if (session === undefined) {
+      return rejected('unknownSession', `Unknown session ${sessionId}`);
+    }
+    if (session.status !== 'running') {
+      return rejected('invalidCommand', `Session ${sessionId} is not running`);
+    }
+    const cardId = session.cardId;
+    const run = this.activeRunOf(scope, cardId);
+    if (run === null) {
+      return rejected('pipelineNotRunning', `Card ${cardId} has no running pipeline`);
+    }
+    if (run.stepKind !== 'agent' || run.stepId === undefined || run.stageId === undefined) {
+      return rejected('invalidCommand', `Card ${cardId}'s pipeline is not at an agent step`);
+    }
+    // The run's pinned revision owns the stage semantics — an edited
+    // pipeline never changes a live run's rules.
+    const pipeline =
+      project?.pipelineRevisions.get(run.pipelineId)?.get(run.revision) ??
+      this.pipelinesOf(scope).get(run.pipelineId);
+    const stage = pipeline?.stages.find((candidate) => candidate.id === run.stageId);
+    if (pipeline === undefined || stage === undefined) {
+      return rejected('unknownPipeline', `Run ${run.id} names an unknown pipeline or stage`);
+    }
+    const rules = stage.outcomes ?? [];
+    const name = outcome.trim();
+    const rule = rules.find((candidate) => candidate.outcome === name);
+    if (name === '' || rule === undefined) {
+      const names = rules.map((candidate) => `'${candidate.outcome}'`).join(', ');
+      return rejected(
+        'invalidCommand',
+        names === ''
+          ? `Stage ${stage.label} defines no outcomes to report`
+          : `outcome '${name}' is not one of stage ${stage.label}'s outcomes: ${names}`,
+      );
+    }
+    const trimmedNote = note?.trim();
+    await this.bus.publish(scope, 'pipelineOutcomeReported', {
+      runId: run.id,
+      cardId,
+      pipelineId: run.pipelineId,
+      stepId: run.stepId,
+      outcome: name,
+      ...(trimmedNote !== undefined && trimmedNote !== '' ? { note: trimmedNote } : {}),
+    });
+    return {
+      ok: true,
+      transition:
+        rule.toStageId !== undefined
+          ? `the card returns to ${
+              pipeline.stages.find((candidate) => candidate.id === rule.toStageId)?.label ?? rule.toStageId
+            } when the step finishes`
+          : 'the pipeline proceeds when the step finishes',
+    };
   }
 
   // ---- Pipeline helpers ----
@@ -818,13 +1094,24 @@ export class Processor {
     return this.bus.state.byProject.get(projectId)?.pipelines ?? new Map();
   }
 
-  private runOf(
-    scope: string | undefined,
-    cardId: string,
-  ): PipelineRunProgress | null {
-    if (scope === undefined) return null;
-    const run = this.bus.state.byProject.get(scope)?.pipelineRuns.get(cardId);
-    return run ?? null;
+  private runsOf(projectId: string): Map<string, RunRecord> {
+    return this.bus.state.byProject.get(projectId)?.runs ?? new Map();
+  }
+
+  /** The card's active run, if any (at most one). */
+  private activeRunOf(projectId: string | undefined, cardId: string): RunRecord | null {
+    if (projectId === undefined) return null;
+    const project = this.bus.state.byProject.get(projectId);
+    const runId = project?.activeRuns.get(cardId);
+    return (runId !== undefined ? project?.runs.get(runId) : undefined) ?? null;
+  }
+
+  /** The project's default pipeline: PL-1 when present, else the first by id. */
+  private defaultPipelineOf(projectId: string): Pipeline | undefined {
+    const pipelines = this.pipelinesOf(projectId);
+    if (pipelines.size === 0) return undefined;
+    if (pipelines.has(DEFAULT_PIPELINE_ID)) return pipelines.get(DEFAULT_PIPELINE_ID);
+    return pipelines.get([...pipelines.keys()].sort()[0]!);
   }
 
   // ---- Global assistant (Phase 6): commands without a project scope ----
@@ -1076,6 +1363,11 @@ export class Processor {
       batch.forEach((item, offset) => {
         if (item.key !== undefined) cardIdByKey.set(item.key, ids[offset]!);
       });
+      const pipeline = this.defaultPipelineOf(projectId);
+      if (pipeline === undefined) {
+        outcomes.push({ projectId, ok: false, error: `project ${projectId} has no pipeline to assign the cards to` });
+        continue;
+      }
       const now = nowIso();
       const created: Card[] = batch.map((item, offset) => ({
         id: ids[offset]!,
@@ -1084,10 +1376,10 @@ export class Processor {
         title: item.title,
         description: item.description,
         tags: [],
-        stage: 'new',
+        pipelineId: pipeline.id,
+        stageId: firstStageOf(pipeline).id,
         blockedBy: item.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
-        subState: subStateFor(item.cardType),
-        retries: {},
+        stepStates: {},
         createdAt: now,
         updatedAt: now,
       }));
@@ -1406,12 +1698,56 @@ function rejected(code: Rejection['code'], message: string): CommandOutcome {
   return { ok: false, rejection: { code, message } };
 }
 
-/** Blocked while any blocker exists and is not done (missing blockers don't block). */
-function isBlockedIn(cardsById: Map<string, Card>, card: Card): boolean {
+/** Blocked while any blocker exists and has not reached its pipeline's terminal stage. */
+function isBlockedIn(cardsById: Map<string, Card>, card: Card, pipelines: Map<string, Pipeline>): boolean {
   return card.blockedBy.some((id) => {
     const blocker = cardsById.get(id);
-    return blocker !== undefined && blocker.stage !== 'done';
+    if (blocker === undefined) return false;
+    return !isTerminalStage(pipelines.get(blocker.pipelineId), blocker.stageId);
   });
+}
+
+/** The pipeline's first stage — a new or reopened card begins here. */
+function firstStageOf(pipeline: Pipeline): PipelineStage {
+  return pipeline.stages[0]!;
+}
+
+/** Whether a stage id is the pipeline's terminal (completion) stage. */
+function isTerminalStage(pipeline: Pipeline | undefined, stageId: string): boolean {
+  return pipeline?.stages.find((stage) => stage.id === stageId)?.terminal === true;
+}
+
+/** Fills the stage defaults the lenient wire allows (visibility, trimmed labels). */
+function normalizeStages(stages: PipelineStage[]): PipelineStage[] {
+  return stages.map((stage) => ({
+    id: stage.id.trim(),
+    label: stage.label.trim(),
+    kanbanVisible: stage.kanbanVisible !== false,
+    ...(stage.terminal === true ? { terminal: true } : {}),
+    ...(stage.outcomes !== undefined && stage.outcomes.length > 0
+      ? {
+          outcomes: stage.outcomes.map((rule) => ({
+            outcome: rule.outcome.trim(),
+            ...(rule.toStageId !== undefined && rule.toStageId.trim() !== ''
+              ? { toStageId: rule.toStageId.trim() }
+              : {}),
+          })),
+        }
+      : {}),
+    ...(stage.requiresOutcome === true ? { requiresOutcome: true } : {}),
+    ...(stage.errorReturnToStageId !== undefined && stage.errorReturnToStageId.trim() !== ''
+      ? { errorReturnToStageId: stage.errorReturnToStageId.trim() }
+      : {}),
+  }));
+}
+
+/** Whether a save would change the definition (name, stages, or steps). */
+function sameDefinition(current: Pipeline, next: Pipeline, name: string): boolean {
+  return (
+    current.name === name &&
+    JSON.stringify(normalizeStages(current.stages)) === JSON.stringify(normalizeStages(next.stages)) &&
+    JSON.stringify(current.steps) === JSON.stringify(next.steps)
+  );
 }
 
 /** A timestamp the client actually set (v1's DEFAULT_TIMESTAMP sentinel → absent here). */

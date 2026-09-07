@@ -9,6 +9,7 @@ import {
 import {
   Pipeline,
   PipelineStep,
+  RunOutcome,
   RunProgress,
 } from '../core/models/pipeline.models';
 import { ShellService } from '../shell/shell.service';
@@ -17,7 +18,9 @@ import { ShellService } from '../shell/shell.service';
  * Pipelines and their runs: a fold of the event stream (PipelineSaved,
  * PipelineDeleted, PipelineRunStarted/StepStarted/StepFinished/RunEnded,
  * PipelineGateResponded) plus the agent sessions agent steps open
- * (AgentSessionStarted/Ended). Commands publish over the same transport —
+ * (AgentSessionStarted/Ended). Phase 10: runs are first-class records
+ * (R-N, pinned to a pipeline revision); step starts carry the step's stage
+ * and the board follows it. Commands publish over the same transport —
  * the server validates; a rejection is returned to the caller (the editor
  * shows it).
  */
@@ -31,6 +34,7 @@ export class PipelineService {
   private readonly pipelinesByProject = signal<ReadonlyMap<string, readonly Pipeline[]>>(
     new Map(),
   );
+  /** The active run per card (at most one), keyed cardId → RunProgress. */
   private readonly runsByProject = signal<ReadonlyMap<string, ReadonlyMap<string, RunProgress>>>(
     new Map(),
   );
@@ -101,8 +105,8 @@ export class PipelineService {
     return this.publish(projectId, { requestPipelineDelete: { pipelineId } });
   }
 
-  run(pipelineId: string, cardId: string): Promise<boolean> {
-    return this.publish(this.projectId() ?? '', { requestPipelineRun: { pipelineId, cardId } });
+  run(cardId: string): Promise<boolean> {
+    return this.publish(this.projectId() ?? '', { requestPipelineRun: { cardId } });
   }
 
   stop(cardId: string): Promise<boolean> {
@@ -163,7 +167,11 @@ export class PipelineService {
         if (!json?.id) break;
         const pipeline = Pipeline.fromWire(json);
         this.pipelinesByProject.update((map) => {
-          const pipelines = (map.get(projectId) ?? []).filter((p) => p.id !== pipeline.id);
+          // Revisions may arrive out of order across reconnects; the
+          // highest revision wins as current.
+          const pipelines = (map.get(projectId) ?? []).filter(
+            (p) => p.id !== pipeline.id || p.revision > pipeline.revision,
+          );
           const next = new Map(map);
           next.set(projectId, [...pipelines, pipeline]);
           return next;
@@ -185,7 +193,9 @@ export class PipelineService {
         const payload = event.pipelineRunStarted;
         if (!payload?.cardId) break;
         this.setRun(projectId, payload.cardId, {
+          runId: payload.runId ?? '',
           pipelineId: payload.pipelineId ?? '',
+          revision: payload.revision ?? 1,
           status: 'running',
         });
         // A fresh run starts with a clean build pane.
@@ -207,6 +217,8 @@ export class PipelineService {
         if (current === undefined) break;
         this.setRun(projectId, payload.cardId, {
           ...current,
+          runId: payload.runId ?? current.runId,
+          stageId: payload.stageId ?? current.stageId,
           stepId: payload.stepId,
           stepKind: payload.kind ?? 'agent',
           status: payload.kind === 'human' ? 'waiting' : 'running',
@@ -229,7 +241,8 @@ export class PipelineService {
         });
         this.lastRunsByProject.update((map) => {
           const outcome: RunOutcome = {
-            status: payload.status === 'failed' ? 'failed' : 'completed',
+            runId: payload.runId ?? finished?.runId ?? '',
+            status: payload.status === 'failed' ? 'failed' : (payload.status ?? 'completed'),
             // The finished run's agent session — the transcript outlives the run.
             ...(finished?.sessionId ? { sessionId: finished.sessionId } : {}),
             ...(payload.error ? { error: payload.error } : {}),
@@ -373,9 +386,9 @@ export class PipelineService {
         });
         break;
       }
-      // pipelineStepFinished: the outcome rides the step's sub-state and
-      // the card's retries (the board folds those); gate responses flip
-      // the run back to running, which the next step's start re-sets.
+      // pipelineStepFinished: the outcome rides the card's step states and
+      // the run record (the board folds those); gate responses flip the run
+      // back to running, which the next step's start re-sets.
     }
   }
 
@@ -419,14 +432,6 @@ export class PipelineService {
     this.rejection.set(response.rejectionMessage ?? 'the server refused the request');
     return false;
   }
-}
-
-/** How a card's most recent pipeline run ended. */
-export interface RunOutcome {
-  readonly status: 'completed' | 'failed';
-  /** The finished run's agent session (its transcript outlives the run). */
-  readonly sessionId?: string;
-  readonly error?: string;
 }
 
 export interface AgentSessionView {

@@ -1,22 +1,13 @@
 import { Code, FileText, LucideIconData, PenTool } from 'lucide-angular';
 
 // Board domain models (docs/frontend/design.md §6.1) — readonly, behavior-rich
-// classes. All board logic lives here as model methods; components render
-// models and forward events, services only hold state and issue commands.
-// Models never do I/O.
+// classes. Phase 10: cards belong to one pipeline and sit in one of its
+// stages; the fixed worker-lane Stage machine is gone (the board projects
+// pipeline stages; see pipeline.models.ts). All board logic lives here as
+// model methods; components render models and forward events, services only
+// hold state and issue commands. Models never do I/O.
 
 export type CardType = 'coding' | 'design' | 'docs';
-
-export type Stage =
-  | 'new'
-  | 'coding'
-  | 'design'
-  | 'docs'
-  | 'validation'
-  | 'review'
-  | 'security'
-  | 'approval'
-  | 'done';
 
 export type AgentRole =
   | 'coder'
@@ -27,22 +18,9 @@ export type AgentRole =
   | 'security'
   | 'human';
 
-export type SubStateStage =
-  | 'retrieveContext'
-  | 'implement'
-  | 'writeTests'
-  | 'runValidation'
-  | 'reviewChanges'
-  | 'securityReview'
-  | 'humanReview'
-  | 'draft'
-  | 'peerReview';
+export type StepStateStatus = 'pending' | 'running' | 'ok' | 'failed';
 
-export type SubStateStatus = 'pending' | 'running' | 'ok' | 'failed';
-
-export type SubState = Readonly<Partial<Record<SubStateStage, SubStateStatus>>>;
-
-/** Board type filter: the All swimlane or one per-type board. */
+/** Board type filter: all cards or one per-type slice of the board. */
 export type BoardFilter = 'all' | CardType;
 
 export const CARD_TYPES: readonly CardType[] = ['coding', 'design', 'docs'];
@@ -59,77 +37,6 @@ export const CARD_TYPE_META: Record<CardType, CardTypeMeta> = {
   design: { label: 'design', icon: PenTool, accentVar: 'var(--warn)' },
   docs: { label: 'docs', icon: FileText, accentVar: 'var(--ok)' },
 };
-
-/** Lane semantics of the board's state machine (design.md §3.1). */
-export class Lane {
-  /** Union of all lanes in display order — the columns of the All swimlane. */
-  static readonly ALL: readonly Stage[] = [
-    'new',
-    'coding',
-    'design',
-    'docs',
-    'validation',
-    'review',
-    'security',
-    'approval',
-    'done',
-  ];
-
-  /** Lanes owned by an agent (automation toggles sit on these headers). */
-  static readonly AGENT_OWNED: ReadonlySet<Stage> = new Set<Stage>([
-    'coding',
-    'design',
-    'docs',
-    'validation',
-    'review',
-    'security',
-  ]);
-
-  /** Lanes per type, left to right. Security is code-only. */
-  private static readonly BY_TYPE: Record<CardType, readonly Stage[]> = {
-    coding: ['new', 'coding', 'validation', 'review', 'security', 'approval', 'done'],
-    design: ['new', 'design', 'validation', 'review', 'approval', 'done'],
-    docs: ['new', 'docs', 'validation', 'review', 'approval', 'done'],
-  };
-
-  private static readonly LABELS: Record<Stage, string> = {
-    new: 'new',
-    coding: 'coding',
-    design: 'design',
-    docs: 'docs',
-    validation: 'validation',
-    review: 'review',
-    security: 'security',
-    approval: 'approval',
-    done: 'done',
-  };
-
-  private constructor() {}
-
-  static label(stage: Stage): string {
-    return Lane.LABELS[stage];
-  }
-
-  static forType(type: CardType): readonly Stage[] {
-    return Lane.BY_TYPE[type];
-  }
-
-  static isValidFor(type: CardType, stage: Stage): boolean {
-    return Lane.BY_TYPE[type].includes(stage);
-  }
-
-  static isAgentOwned(stage: Stage): boolean {
-    return Lane.AGENT_OWNED.has(stage);
-  }
-
-  /**
-   * The lane a card returns to when its work is rejected (design.md §3.4).
-   * Implement lanes are named after their type, so this is the type itself.
-   */
-  static implementFor(type: CardType): Stage {
-    return type;
-  }
-}
 
 /** Who currently works a card: an agent, or the human user. */
 export class Assignee {
@@ -167,75 +74,42 @@ export interface FileStats {
 export interface CardData {
   /** Short, human-meaningful id, e.g. T-148. */
   readonly id: string;
-  /** Drives lanes, sub-state and accent. Changed in the panel, never by drag. */
+  /** Drives the accent. Changed in the panel, never by drag. */
   readonly type: CardType;
   readonly title: string;
   readonly description: string;
   readonly tags: readonly string[];
-  /** Must always be in Lane.forType(type). */
-  readonly stage: Stage;
+  /** The one pipeline the card is assigned to (it appears on that pipeline's tab). */
+  readonly pipelineId: string;
+  /** The card's current stage of its assigned pipeline (may be a hidden stage). */
+  readonly stageId: string;
   readonly blockedBy: readonly string[];
   readonly assignee?: Assignee;
   readonly sessionId?: string;
   readonly branch?: string;
   readonly fileStats?: FileStats;
-  readonly subState: SubState;
-  readonly retries: Readonly<Record<string, number>>;
+  /** Per-step execution state, keyed by the assigned pipeline's step ids. */
+  readonly stepStates: Readonly<Record<string, StepStateStatus>>;
   readonly createdAt: string;
   readonly updatedAt: string;
-  /** Latest comment recorded by an approval → implement-lane rejection drag. */
+  /** Latest comment recorded by a drag out of the terminal stage. */
   readonly rejectionComment?: string;
 }
 
-/** One row of the per-type pipeline checklist in the card panel. */
-export interface ChecklistEntry {
-  readonly stage: SubStateStage;
-  readonly label: string;
-  readonly status: SubStateStatus;
-  readonly retries: number;
-}
-
 export class Card {
-  /** Per-type pipeline checklist stages (design.md §3.3). */
-  private static readonly SUBSTATE: Record<CardType, readonly SubStateStage[]> = {
-    coding: [
-      'retrieveContext',
-      'implement',
-      'writeTests',
-      'runValidation',
-      'reviewChanges',
-      'securityReview',
-      'humanReview',
-    ],
-    design: ['draft', 'implement', 'runValidation', 'reviewChanges', 'humanReview'],
-    docs: ['draft', 'implement', 'runValidation', 'reviewChanges', 'humanReview'],
-  };
-
-  private static readonly SUBSTATE_LABELS: Record<SubStateStage, string> = {
-    retrieveContext: 'retrieve context',
-    implement: 'implement',
-    writeTests: 'write tests',
-    runValidation: 'run validation',
-    reviewChanges: 'review changes',
-    securityReview: 'security review',
-    humanReview: 'human review',
-    draft: 'draft',
-    peerReview: 'peer review',
-  };
-
   readonly id: string;
   readonly type: CardType;
   readonly title: string;
   readonly description: string;
   readonly tags: readonly string[];
-  readonly stage: Stage;
+  readonly pipelineId: string;
+  readonly stageId: string;
   readonly blockedBy: readonly string[];
   readonly assignee?: Assignee;
   readonly sessionId?: string;
   readonly branch?: string;
   readonly fileStats?: FileStats;
-  readonly subState: SubState;
-  readonly retries: Readonly<Record<string, number>>;
+  readonly stepStates: Readonly<Record<string, StepStateStatus>>;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly rejectionComment?: string;
@@ -246,14 +120,14 @@ export class Card {
     this.title = data.title;
     this.description = data.description;
     this.tags = data.tags;
-    this.stage = data.stage;
+    this.pipelineId = data.pipelineId;
+    this.stageId = data.stageId;
     this.blockedBy = data.blockedBy;
     this.assignee = data.assignee;
     this.sessionId = data.sessionId;
     this.branch = data.branch;
     this.fileStats = data.fileStats;
-    this.subState = data.subState;
-    this.retries = data.retries;
+    this.stepStates = data.stepStates;
     this.createdAt = data.createdAt;
     this.updatedAt = data.updatedAt;
     this.rejectionComment = data.rejectionComment;
@@ -263,31 +137,13 @@ export class Card {
     return CARD_TYPE_META[this.type];
   }
 
-  /** Lanes this card may occupy, in board order. */
-  get lanes(): readonly Stage[] {
-    return Lane.forType(this.type);
-  }
-
-  isLaneValid(lane: Stage): boolean {
-    return Lane.isValidFor(this.type, lane);
-  }
-
-  /** The lane this card returns to when its work is rejected. */
-  implementLane(): Stage {
-    return Lane.implementFor(this.type);
-  }
-
-  /** An agent is actively working the card (assigned and in an agent-owned lane). */
-  isWorking(): boolean {
-    return this.assignee !== undefined && Lane.isAgentOwned(this.stage);
-  }
-
   /**
-   * A drag from Approval back to the type's implement lane is a rejection
-   * (design.md §3.4) — it may carry an optional comment.
+   * A drag out of the pipeline's terminal stage is a rejection-style move
+   * (design.md §3.4) — it may carry an optional comment. The terminal stage
+   * id comes from the card's assigned pipeline.
    */
-  isRejectionMove(toLane: Stage): boolean {
-    return this.stage === 'approval' && toLane === this.implementLane();
+  isRejectionMove(toStageId: string, terminalStageId: string | undefined): boolean {
+    return terminalStageId !== undefined && this.stageId === terminalStageId && toStageId !== terminalStageId;
   }
 
   /** Blockers that exist, in blockedBy order. */
@@ -302,161 +158,48 @@ export class Card {
     return cards.filter((c) => c.blockedBy.includes(this.id));
   }
 
-  /** Blocked while any blocker is not done. */
-  isBlockedIn(cardsById: ReadonlyMap<string, Card>): boolean {
-    return this.blockers(cardsById).some((blocker) => blocker.stage !== 'done');
-  }
-
-  /** The type's pipeline stages, in order. */
-  checklistStages(): readonly SubStateStage[] {
-    return Card.SUBSTATE[this.type];
-  }
-
-  /** Per-type pipeline checklist; stages without state read as pending. */
-  checklist(): ChecklistEntry[] {
-    return this.checklistStages().map((stage) => ({
-      stage,
-      label: Card.SUBSTATE_LABELS[stage],
-      status: this.subState[stage] ?? 'pending',
-      retries: this.retries[stage] ?? 0,
-    }));
+  /**
+   * Blocked while any blocker exists and has not reached its own pipeline's
+   * terminal stage. `isDoneOf` resolves that from the pipelines' state.
+   */
+  isBlockedIn(cardsById: ReadonlyMap<string, Card>, isDoneOf: (card: Card) => boolean): boolean {
+    return this.blockers(cardsById).some((blocker) => !isDoneOf(blocker));
   }
 
   /** Copy with changes applied (the store is immutable). */
   with(changes: Partial<CardData>): Card {
     return new Card({ ...this, ...changes });
   }
-
-  /** Fresh sub-state checklist for a type (all stages pending). */
-  static initialSubState(type: CardType): SubState {
-    return Object.fromEntries(Card.SUBSTATE[type].map((s) => [s, 'pending']));
-  }
-
-  /** Cards in one lane of one type's board, in board display order. */
-  static inLane(cards: readonly Card[], type: CardType, lane: Stage): readonly Card[] {
-    return cards.filter((c) => c.type === type && c.stage === lane);
-  }
 }
 
 /**
- * The board's columns: the stage machine projected for viewing, labeled by
- * the worker who owns each state. The type-named implement stages
- * (coding/design/docs) collapse into the coder column — type is a card
- * attribute and a filter, not a board structure. The underlying Stage per
- * card is unchanged (routing, sub-state, wire).
- */
-export type DisplayColumn =
-  | 'backlog'
-  | 'coder'
-  | 'tester'
-  | 'reviewer'
-  | 'security'
-  | 'approval'
-  | 'done';
-
-export class Column {
-  /** Display columns in board order. */
-  static readonly ALL: readonly DisplayColumn[] = [
-    'backlog',
-    'coder',
-    'tester',
-    'reviewer',
-    'security',
-    'approval',
-    'done',
-  ];
-
-  private static readonly LABELS: Record<DisplayColumn, string> = {
-    backlog: 'backlog',
-    coder: 'coder',
-    tester: 'tester',
-    reviewer: 'reviewer',
-    security: 'security',
-    approval: 'approval',
-    done: 'done',
-  };
-
-  /** The stages that fold into each display column. */
-  static readonly STAGES_OF: Record<DisplayColumn, readonly Stage[]> = {
-    backlog: ['new'],
-    coder: ['coding', 'design', 'docs'],
-    tester: ['validation'],
-    reviewer: ['review'],
-    security: ['security'],
-    approval: ['approval'],
-    done: ['done'],
-  };
-
-  static label(column: DisplayColumn): string {
-    return Column.LABELS[column];
-  }
-
-  /** The concrete Stage a drag into this column lands on (per card type). */
-  static dropStage(column: DisplayColumn, type: CardType): Stage {
-    if (column === 'coder') return Lane.implementFor(type);
-    switch (column) {
-      case 'backlog':
-        return 'new';
-      case 'tester':
-        return 'validation';
-      case 'reviewer':
-        return 'review';
-      case 'security':
-        return 'security';
-      case 'approval':
-        return 'approval';
-      case 'done':
-        return 'done';
-    }
-  }
-
-  /** Columns an agent works (automation toggles sit on their headers). */
-  static isAgentOwned(column: DisplayColumn): boolean {
-    return (
-      column === 'coder' ||
-      column === 'tester' ||
-      column === 'reviewer' ||
-      column === 'security'
-    );
-  }
-
-  static inColumn(cards: readonly Card[], column: DisplayColumn): readonly Card[] {
-    const stages = Column.STAGES_OF[column];
-    return cards.filter((c) => stages.includes(c.stage));
-  }
-}
-
-/** One row of the All swimlane: a card type and its lane cells. */
-/**
- * Automation toggles per agent-owned lane (design.md §3.1). Immutable; the
- * board service swaps instances on toggle. Toggles gate agent pickup only —
- * human drags are never blocked by them (MVP has no agents to gate).
+ * Automation toggles per pipeline stage, keyed `<pipelineId>/<stageId>`.
+ * Immutable; the board service swaps instances on toggle. Toggles are
+ * persisted per stage; they gate nothing on their own (human drags are
+ * never blocked by them).
  */
 export class AutomationState {
-  private constructor(private readonly states: ReadonlyMap<Stage, boolean>) {}
+  private constructor(private readonly states: ReadonlyMap<string, boolean>) {}
 
-  /** All agent-owned lanes start on. */
   static initial(): AutomationState {
-    return new AutomationState(new Map([...Lane.AGENT_OWNED].map((lane) => [lane, true])));
+    return new AutomationState(new Map());
   }
 
-  isOn(lane: Stage): boolean {
-    return this.states.get(lane) ?? false;
+  private static key(pipelineId: string, stageId: string): string {
+    return `${pipelineId}/${stageId}`;
   }
 
-  toggle(lane: Stage): AutomationState {
-    return this.set(lane, !this.isOn(lane));
+  isOn(pipelineId: string, stageId: string): boolean {
+    return this.states.get(AutomationState.key(pipelineId, stageId)) ?? false;
   }
 
-  set(lane: Stage, on: boolean): AutomationState {
-    if (!Lane.isAgentOwned(lane)) return this;
+  toggle(pipelineId: string, stageId: string): AutomationState {
+    return this.set(pipelineId, stageId, !this.isOn(pipelineId, stageId));
+  }
+
+  set(pipelineId: string, stageId: string, on: boolean): AutomationState {
     const next = new Map(this.states);
-    next.set(lane, on);
+    next.set(AutomationState.key(pipelineId, stageId), on);
     return new AutomationState(next);
-  }
-
-  /** Drives the status-strip agent count (mvp.md acceptance 13). */
-  get onCount(): number {
-    return [...this.states.values()].filter(Boolean).length;
   }
 }

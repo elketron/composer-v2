@@ -1,19 +1,17 @@
 <div class="columns" cdkDropListGroup>
-  @for (column of columns; track column) {
-    <section class="board-column">
+  @for (column of columns(); track column.id) {
+    <section class="board-column" [class.done]="column.terminal">
       <header class="col-head">
-        <span class="col-label label">{{ columnLabel(column) }}</span>
+        <span class="col-label label">{{ column.label }}</span>
         <span class="count">{{ cardsIn(column).length }}</span>
-        @if (agentOwned(column)) {
-          <button
-            class="auto"
-            [class.on]="automationOn(column)"
-            title="agent automation for this column"
-            (click)="toggleAutomation(column)"
-          >
-            {{ automationOn(column) ? 'auto · on' : 'auto · off' }}
-          </button>
-        }
+        <button
+          class="auto"
+          [class.on]="automationOn(column)"
+          title="agent automation for this stage"
+          (click)="toggleAutomation(column)"
+        >
+          {{ automationOn(column) ? 'auto · on' : 'auto · off' }}
+        </button>
       </header>
 
       <div

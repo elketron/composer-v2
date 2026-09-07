@@ -14,7 +14,8 @@
         "tags": [
           "ui"
         ],
-        "stage": "coding",
+        "pipelineId": "PL-1",
+        "stageId": "sg-2",
         "blockedBy": [],
         "assignee": {
           "role": "coder",
@@ -27,12 +28,9 @@
           "removed": 12,
           "files": 3
         },
-        "subState": {
-          "retrieveContext": "ok",
-          "implement": "running"
-        },
-        "retries": {
-          "review": 1
+        "stepStates": {
+          "st-1": "ok",
+          "st-2": "running"
         },
         "rejectionComment": "needs tests",
         "createdAt": "2026-09-04T12:00:00.123456Z",
@@ -44,16 +42,28 @@
     "id": "e-02",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
-    "eventType": "cardMoved",
+    "eventType": "cardStageMoved",
     "body": {
       "cardId": "T-1",
-      "from": "new",
-      "to": "coding",
+      "pipelineId": "PL-1",
+      "fromStageId": "sg-2",
+      "toStageId": "sg-3",
       "comment": "needs tests"
     }
   },
   {
     "id": "e-03",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "cardPipelineAssigned",
+    "body": {
+      "cardId": "T-1",
+      "pipelineId": "PL-1",
+      "stageId": "sg-1"
+    }
+  },
+  {
+    "id": "e-04",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "cardTypeChanged",
@@ -64,7 +74,7 @@
     }
   },
   {
-    "id": "e-04",
+    "id": "e-05",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "cardAssigned",
@@ -76,7 +86,7 @@
     }
   },
   {
-    "id": "e-05",
+    "id": "e-06",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "cardArchived",
@@ -85,18 +95,18 @@
     }
   },
   {
-    "id": "e-06",
+    "id": "e-07",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
-    "eventType": "subStateUpdated",
+    "eventType": "cardStepStateUpdated",
     "body": {
       "cardId": "T-1",
-      "stage": "implement",
+      "stepId": "st-2",
       "status": "running"
     }
   },
   {
-    "id": "e-07",
+    "id": "e-08",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "dependencyStateChanged",
@@ -109,17 +119,18 @@
     }
   },
   {
-    "id": "e-08",
+    "id": "e-09",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "automationToggled",
     "body": {
-      "lane": "coding",
+      "pipelineId": "PL-1",
+      "stageId": "sg-2",
       "on": true
     }
   },
   {
-    "id": "e-09",
+    "id": "e-10",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "planningSessionCreated",
@@ -135,7 +146,7 @@
     }
   },
   {
-    "id": "e-10",
+    "id": "e-11",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "userMessageReceived",
@@ -150,7 +161,7 @@
     }
   },
   {
-    "id": "e-11",
+    "id": "e-12",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentMessageDelta",
@@ -161,7 +172,7 @@
     }
   },
   {
-    "id": "e-12",
+    "id": "e-13",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentMessageComplete",
@@ -176,7 +187,7 @@
     }
   },
   {
-    "id": "e-13",
+    "id": "e-14",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "planDocumentUpdated",
@@ -186,7 +197,7 @@
     }
   },
   {
-    "id": "e-14",
+    "id": "e-15",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "planningSessionCompleted",
@@ -195,7 +206,7 @@
     }
   },
   {
-    "id": "e-15",
+    "id": "e-16",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "cardsCommitted",
@@ -208,16 +219,10 @@
           "title": "Write the onboarding doc",
           "description": "",
           "tags": [],
-          "stage": "new",
+          "pipelineId": "PL-1",
+          "stageId": "sg-1",
           "blockedBy": [],
-          "subState": {
-            "draft": "pending",
-            "implement": "pending",
-            "runValidation": "pending",
-            "reviewChanges": "pending",
-            "humanReview": "pending"
-          },
-          "retries": {},
+          "stepStates": {},
           "createdAt": "2026-09-04T12:00:00.123456Z",
           "updatedAt": "2026-09-04T12:00:00.123456Z"
         }
@@ -225,7 +230,7 @@
     }
   },
   {
-    "id": "e-16",
+    "id": "e-17",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "projectCreated",
@@ -239,7 +244,7 @@
     }
   },
   {
-    "id": "e-17",
+    "id": "e-18",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "projectDirectoryChanged",
@@ -249,7 +254,7 @@
     }
   },
   {
-    "id": "e-18",
+    "id": "e-19",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "projectActivated",
@@ -258,7 +263,7 @@
     }
   },
   {
-    "id": "e-19",
+    "id": "e-20",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "projectArchived",
@@ -268,7 +273,7 @@
     }
   },
   {
-    "id": "e-20",
+    "id": "e-21",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "projectRestored",
@@ -278,7 +283,7 @@
     }
   },
   {
-    "id": "e-21",
+    "id": "e-22",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentSessionStarted",
@@ -290,7 +295,7 @@
     }
   },
   {
-    "id": "e-22",
+    "id": "e-23",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentSessionEnded",
@@ -302,7 +307,7 @@
     }
   },
   {
-    "id": "e-23",
+    "id": "e-24",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentToolCall",
@@ -317,7 +322,7 @@
     }
   },
   {
-    "id": "e-24",
+    "id": "e-25",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentToolResult",
@@ -329,7 +334,7 @@
     }
   },
   {
-    "id": "e-25",
+    "id": "e-26",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineSaved",
@@ -338,24 +343,79 @@
         "id": "PL-1",
         "projectId": "P-1",
         "name": "Standard coding card",
+        "revision": 2,
         "updatedAt": "2026-09-04T12:00:00.123456Z",
+        "stages": [
+          {
+            "id": "sg-1",
+            "label": "New",
+            "kanbanVisible": true
+          },
+          {
+            "id": "sg-2",
+            "label": "Implementation",
+            "kanbanVisible": true
+          },
+          {
+            "id": "sg-3",
+            "label": "Validation",
+            "kanbanVisible": true,
+            "errorReturnToStageId": "sg-2"
+          },
+          {
+            "id": "sg-4",
+            "label": "Review",
+            "kanbanVisible": true,
+            "outcomes": [
+              {
+                "outcome": "approved"
+              },
+              {
+                "outcome": "changes_requested",
+                "toStageId": "sg-2"
+              }
+            ],
+            "requiresOutcome": true
+          },
+          {
+            "id": "sg-5",
+            "label": "Approval",
+            "kanbanVisible": true,
+            "errorReturnToStageId": "sg-2"
+          },
+          {
+            "id": "sg-6",
+            "label": "Done",
+            "kanbanVisible": true,
+            "terminal": true
+          }
+        ],
         "steps": [
           {
             "id": "st-1",
             "kind": "agent",
+            "stageId": "sg-2",
             "agentKind": "coder",
             "instructions": "Implement the card per its description."
           },
           {
             "id": "st-2",
             "kind": "command",
+            "stageId": "sg-3",
             "command": "npm test",
-            "description": "Run tests",
-            "retries": 1
+            "description": "Run tests"
           },
           {
             "id": "st-3",
+            "kind": "agent",
+            "stageId": "sg-4",
+            "agentKind": "reviewer",
+            "instructions": "Review the implemented card."
+          },
+          {
+            "id": "st-4",
             "kind": "human",
+            "stageId": "sg-5",
             "description": "Approval"
           }
         ]
@@ -363,7 +423,7 @@
     }
   },
   {
-    "id": "e-26",
+    "id": "e-27",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineDeleted",
@@ -372,33 +432,38 @@
     }
   },
   {
-    "id": "e-27",
+    "id": "e-28",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineRunStarted",
     "body": {
-      "cardId": "T-1",
-      "pipelineId": "PL-1"
-    }
-  },
-  {
-    "id": "e-28",
-    "projectId": "P-1",
-    "occurredAt": "2026-09-04T12:00:00.123456Z",
-    "eventType": "pipelineStepStarted",
-    "body": {
+      "runId": "R-1",
       "cardId": "T-1",
       "pipelineId": "PL-1",
-      "stepId": "st-1",
-      "kind": "agent"
+      "revision": 2
     }
   },
   {
     "id": "e-29",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineStepStarted",
+    "body": {
+      "runId": "R-1",
+      "cardId": "T-1",
+      "pipelineId": "PL-1",
+      "stepId": "st-1",
+      "kind": "agent",
+      "stageId": "sg-2"
+    }
+  },
+  {
+    "id": "e-30",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineStepFinished",
     "body": {
+      "runId": "R-1",
       "cardId": "T-1",
       "pipelineId": "PL-1",
       "stepId": "st-1",
@@ -406,33 +471,52 @@
     }
   },
   {
-    "id": "e-30",
+    "id": "e-31",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineRunEnded",
     "body": {
+      "runId": "R-1",
       "cardId": "T-1",
       "pipelineId": "PL-1",
-      "status": "completed"
-    }
-  },
-  {
-    "id": "e-31",
-    "projectId": "P-1",
-    "occurredAt": "2026-09-04T12:00:00.123456Z",
-    "eventType": "pipelineGateResponded",
-    "body": {
-      "cardId": "T-1",
-      "approved": true,
-      "comment": "ship it"
+      "revision": 2,
+      "status": "returned",
+      "error": "changes requested: needs tests"
     }
   },
   {
     "id": "e-32",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineGateResponded",
+    "body": {
+      "runId": "R-1",
+      "cardId": "T-1",
+      "approved": true,
+      "comment": "ship it"
+    }
+  },
+  {
+    "id": "e-33",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "pipelineOutcomeReported",
+    "body": {
+      "runId": "R-1",
+      "cardId": "T-1",
+      "pipelineId": "PL-1",
+      "stepId": "st-3",
+      "outcome": "changes_requested",
+      "note": "the error path is untested"
+    }
+  },
+  {
+    "id": "e-34",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "commandOutput",
     "body": {
+      "runId": "R-1",
       "cardId": "T-1",
       "pipelineId": "PL-1",
       "stepId": "st-2",
@@ -440,7 +524,7 @@
     }
   },
   {
-    "id": "e-33",
+    "id": "e-35",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadCreated",
     "body": {
@@ -457,7 +541,7 @@
     }
   },
   {
-    "id": "e-34",
+    "id": "e-36",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadArchived",
     "body": {
@@ -466,7 +550,7 @@
     }
   },
   {
-    "id": "e-35",
+    "id": "e-37",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadRestored",
     "body": {
@@ -475,7 +559,7 @@
     }
   },
   {
-    "id": "e-36",
+    "id": "e-38",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadScopeChanged",
     "body": {
@@ -486,7 +570,7 @@
     }
   },
   {
-    "id": "e-37",
+    "id": "e-39",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantUserMessage",
     "body": {
@@ -501,7 +585,7 @@
     }
   },
   {
-    "id": "e-38",
+    "id": "e-40",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantMessageDelta",
     "body": {
@@ -511,7 +595,7 @@
     }
   },
   {
-    "id": "e-39",
+    "id": "e-41",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantMessageComplete",
     "body": {
@@ -527,7 +611,7 @@
     }
   },
   {
-    "id": "e-40",
+    "id": "e-42",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadStopped",
     "body": {
@@ -535,7 +619,7 @@
     }
   },
   {
-    "id": "e-41",
+    "id": "e-43",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantRetryRequested",
     "body": {
@@ -543,7 +627,7 @@
     }
   },
   {
-    "id": "e-42",
+    "id": "e-44",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadStatusChanged",
     "body": {
@@ -552,7 +636,7 @@
     }
   },
   {
-    "id": "e-43",
+    "id": "e-45",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadRenamed",
     "body": {
@@ -561,7 +645,7 @@
     }
   },
   {
-    "id": "e-44",
+    "id": "e-46",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantResent",
     "body": {
@@ -576,7 +660,7 @@
     }
   },
   {
-    "id": "e-45",
+    "id": "e-47",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantToolCall",
     "body": {
@@ -588,7 +672,7 @@
     }
   },
   {
-    "id": "e-46",
+    "id": "e-48",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantToolResult",
     "body": {
@@ -599,7 +683,7 @@
     }
   },
   {
-    "id": "e-47",
+    "id": "e-49",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "proposalDrafted",
     "body": {
@@ -624,7 +708,7 @@
     }
   },
   {
-    "id": "e-48",
+    "id": "e-50",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "proposalConfirmed",
     "body": {
@@ -654,7 +738,7 @@
     }
   },
   {
-    "id": "e-49",
+    "id": "e-51",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "proposalDiscarded",
     "body": {
@@ -662,7 +746,7 @@
     }
   },
   {
-    "id": "e-50",
+    "id": "e-52",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "docSaved",
@@ -676,7 +760,7 @@
     }
   },
   {
-    "id": "e-51",
+    "id": "e-53",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "docDeleted",
@@ -685,7 +769,7 @@
     }
   },
   {
-    "id": "e-52",
+    "id": "e-54",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "knowledgeSaved",
     "body": {
@@ -702,7 +786,7 @@
     }
   },
   {
-    "id": "e-53",
+    "id": "e-55",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "knowledgeDeleted",
     "body": {
@@ -710,7 +794,7 @@
     }
   },
   {
-    "id": "e-54",
+    "id": "e-56",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "workflowSaved",
@@ -737,7 +821,7 @@
     }
   },
   {
-    "id": "e-55",
+    "id": "e-57",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "workflowDeleted",

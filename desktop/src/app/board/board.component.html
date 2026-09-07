@@ -1,5 +1,16 @@
 <div class="board">
   <header class="board-header">
+    <nav class="pipeline-tabs" aria-label="pipeline boards">
+      @for (pipeline of pipelineTabs(); track pipeline.id) {
+        <button
+          class="pipeline-tab"
+          [class.active]="isTabSelected(pipeline)"
+          (click)="selectTab(pipeline.id)"
+        >
+          {{ pipeline.name }}
+        </button>
+      }
+    </nav>
     <app-type-selector [(selected)]="filter" />
     <button class="new-card" (click)="creating.set(!creating())">
       + new card
@@ -12,7 +23,11 @@
         <app-card-creator (closed)="creating.set(false)" />
       }
 
-      <app-board-columns [cards]="visibleCards()" [blockedIds]="blockedIds()" />
+      @if (selectedPipeline(); as pipeline) {
+        <app-board-columns [pipeline]="pipeline" [cards]="visibleCards()" [blockedIds]="blockedIds()" />
+      } @else {
+        <div class="state-empty"><span class="state-label">no pipelines</span>author one in the pipelines view</div>
+      }
     </div>
 
     @if (selectedCard(); as card) {

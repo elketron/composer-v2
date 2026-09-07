@@ -5,10 +5,9 @@ import { Router } from '@angular/router';
 import { LucideAngularModule, ArrowLeft, Bot, Square, Wrench } from 'lucide-angular';
 import { interval } from 'rxjs';
 
-import { RunProgress } from '../core/models/pipeline.models';
+import { RunProgress, RunOutcome } from '../core/models/pipeline.models';
 import { Card } from '../core/models/board.models';
-import { RunTranscriptEntry } from '../pipelines/pipeline.service';
-import { PipelineService, RunOutcome } from '../pipelines/pipeline.service';
+import { RunTranscriptEntry, PipelineService } from '../pipelines/pipeline.service';
 import { BoardService } from '../board/board.service';
 import { ShellService } from '../shell/shell.service';
 
@@ -77,6 +76,24 @@ export class RunViewComponent {
 
   protected readonly buildOutput = computed(() => this.pipelines.commandOutputFor(this.cardId()));
 
+  /** The card's assigned pipeline (its steps are the todo list). */
+  protected readonly runPipelineOf = computed(() => {
+    const cardState = this.card();
+    if (cardState === undefined) return undefined;
+    return this.pipelines.pipelineById(cardState.pipelineId);
+  });
+
+  /** The assigned pipeline's steps with the card's per-step state. */
+  protected readonly steps = computed(() => {
+    const cardState = this.card();
+    const pipeline = this.runPipelineOf();
+    if (cardState === undefined || pipeline === undefined) return [];
+    return pipeline.steps.map((step) => ({
+      step,
+      status: cardState.stepStates[step.id] ?? 'pending',
+    }));
+  });
+
   protected readonly toolCount = computed(
     () => this.transcript().filter((entry) => entry.kind === 'tool').length,
   );
@@ -143,8 +160,14 @@ export class RunViewComponent {
   }
 
   protected outcomeLabel(outcome: RunOutcome): string {
-    return outcome.status === 'failed'
-      ? `the run failed${outcome.error ? ' — ' + outcome.error : ''}`
-      : 'the run completed';
+    switch (outcome.status) {
+      case 'failed':
+      case 'returned':
+        return `the run ${outcome.status}${outcome.error ? ' — ' + outcome.error : ''}`;
+      case 'cancelled':
+        return 'the run was cancelled';
+      default:
+        return 'the run completed';
+    }
   }
 }

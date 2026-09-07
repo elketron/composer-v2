@@ -1,6 +1,8 @@
 // Commands — client-originated requests to change state, validated against
 // current state; on success the canonical events are emitted, on failure a
-// typed rejection (and nothing else). Ported from v1 with the v2 trims.
+// typed rejection (and nothing else). Ported from v1 with the v2 trims;
+// Phase 10 replaces lane moves with pipeline-local stage moves and gives
+// runs first-class identities.
 
 import type {
   Assignee,
@@ -8,7 +10,6 @@ import type {
   CardType,
   Pipeline,
   ProposalItem,
-  Stage,
   SubStateStatus,
   WorkflowStep,
 } from './models.js';
@@ -20,12 +21,14 @@ export type Command =
   | { type: 'requestProjectRestore'; projectId: string }
   | { type: 'requestCardCreate'; card: Card }
   | { type: 'requestCardsCreate'; cards: Card[] }
-  | { type: 'requestCardMove'; cardId: string; toLane: Stage; override: boolean; comment?: string }
+  | { type: 'requestCardStageMove'; cardId: string; toStageId: string; override: boolean; comment?: string }
+  | { type: 'requestCardPipelineAssign'; cardId: string; pipelineId: string }
+  | { type: 'requestCardReopen'; cardId: string }
   | { type: 'requestCardTypeChange'; cardId: string; toType: CardType }
   | { type: 'requestCardAssign'; cardId: string; assignee?: Assignee }
   | { type: 'requestCardArchive'; cardId: string }
-  | { type: 'requestSubStateUpdate'; cardId: string; stage: string; status: SubStateStatus }
-  | { type: 'requestAutomationToggle'; lane: Stage; on: boolean }
+  | { type: 'requestStepStateUpdate'; cardId: string; stepId: string; status: SubStateStatus }
+  | { type: 'requestAutomationToggle'; pipelineId: string; stageId: string; on: boolean }
   | { type: 'requestPlanningSessionCreate'; projectId: string }
   | { type: 'requestUserMessage'; sessionId: string; text: string }
   // No HTTP action: issued by the planner agent's MCP tools.
@@ -33,9 +36,15 @@ export type Command =
   | { type: 'requestTicketsCreate'; sessionId: string; tickets: TicketEmission[] }
   | { type: 'requestPipelineSave'; pipeline: Pipeline }
   | { type: 'requestPipelineDelete'; pipelineId: string }
-  | { type: 'requestPipelineRun'; pipelineId: string; cardId: string }
+  // The run resolves the pipeline from the card's assignment (one pipeline
+  // per card) and executes from the card's current stage onward.
+  | { type: 'requestPipelineRun'; cardId: string }
   | { type: 'requestPipelineStop'; cardId: string }
   | { type: 'requestPipelineGateRespond'; cardId: string; approved: boolean; comment?: string }
+  // The outcome tool's command (S36): MCP-only — a worker agent signals
+  // its stage outcome; the processor validates it against the run's
+  // pinned revision and publishes the decision record.
+  | { type: 'requestPipelineOutcomeReport'; sessionId: string; outcome: string; note?: string }
   // Global assistant commands (Phase 6) — issued without a project scope.
   | { type: 'requestAssistantThreadCreate'; name?: string }
   | { type: 'requestAssistantThreadArchive'; threadId: string }
@@ -101,14 +110,14 @@ export type RejectionCode =
   | 'unknownProject'
   | 'unknownCard'
   | 'unknownSession'
-  | 'invalidLane'
+  | 'unknownPipeline'
+  | 'unknownStage'
   | 'blocked'
   | 'invalidType'
   | 'invalidCommand'
-  | 'unknownPipeline'
-  | 'unknownAgentKind'
-  | 'pipelineAlreadyRunning'
+  | 'runActive'
   | 'pipelineNotRunning'
+  | 'unknownAgentKind'
   | 'unknownThread'
   | 'unknownProposal';
 
@@ -120,5 +129,8 @@ export interface Rejection {
 export type CommandOutcome =
   // `savedPath` rides knowledge saves: the agent's tool result names the
   // file the note landed in (slug + uniqueness happen server-side).
-  | { ok: true; savedPath?: string }
+  // `runId` rides run starts: the MCP/tool callers can name the attempt.
+  // `transition` rides outcome reports: the tool result tells the model
+  // what its verdict will do.
+  | { ok: true; savedPath?: string; runId?: string; transition?: string }
   | { ok: false; rejection: Rejection };

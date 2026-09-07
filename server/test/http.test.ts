@@ -9,7 +9,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { boot } from '../src/index.js';
 import { PROTOCOL_VERSION } from '../src/wire/events.js';
-import { subStateFor } from '../src/wire/models.js';
 
 let dir: string;
 let server: Awaited<ReturnType<typeof boot>>;
@@ -251,34 +250,34 @@ describe('the boot contract', () => {
     });
     expect(bulk).toEqual({ status: 200, json: { ok: true } });
 
-    // update:card (stage) — the drag.
+    // update:card (stageId) — the drag.
     const moved = await action({
       type: 'update',
       on: 'card',
       projectId: 'P-1',
-      body: { id: 'T-1', stage: 'validation' },
+      body: { id: 'T-1', stageId: 'sg-3' },
     });
     expect(moved.json).toEqual({ ok: true });
 
-    // update:card (subState) — the checklist.
-    const subState = await action({
+    // update:card (stepState) — the checklist.
+    const stepState = await action({
       type: 'update',
       on: 'card',
       projectId: 'P-1',
-      body: { id: 'T-1', subState: { stage: 'runValidation', status: 'ok' } },
+      body: { id: 'T-1', stepState: { stepId: 'st-2', status: 'ok' } },
     });
-    expect(subState.json).toEqual({ ok: true });
+    expect(stepState.json).toEqual({ ok: true });
 
-    // update:automation — the lane toggle.
+    // update:automation — the stage toggle.
     const automation = await action({
       type: 'update',
       on: 'automation',
       projectId: 'P-1',
-      body: { lane: 'validation', on: false },
+      body: { pipelineId: 'PL-1', stageId: 'sg-3', on: false },
     });
     expect(automation.json).toEqual({ ok: true });
 
-    // update:card (type) — resets sub-state; validation is not a design lane.
+    // update:card (type) — resets the step states.
     const typeChange = await action({
       type: 'update',
       on: 'card',
@@ -301,7 +300,7 @@ describe('the boot contract', () => {
       type: 'update',
       on: 'card',
       projectId: 'P-1',
-      body: { id: 'T-1', stage: 'review', type: 'docs' },
+      body: { id: 'T-1', stageId: 'sg-2', type: 'docs' },
     });
     expect(ambiguous.status).toBe(400);
 
@@ -313,15 +312,15 @@ describe('the boot contract', () => {
       'cardCreated',
       'cardCreated',
       'dependencyStateChanged',
-      'cardMoved',
-      'subStateUpdated',
+      'cardStageMoved',
+      'cardStepStateUpdated',
       'automationToggled',
       'cardTypeChanged',
       'cardArchived',
     ]);
-    const dependent = frames[4]?.body as { card: { id: string; blockedBy: string[]; subState: Record<string, string> } };
-    expect(dependent.card).toMatchObject({ id: 'T-2', blockedBy: ['T-1'] });
-    expect(dependent.card.subState).toEqual(subStateFor('coding'));
+    const dependent = frames[4]?.body as { card: { id: string; blockedBy: string[]; pipelineId: string; stageId: string; stepStates: Record<string, string> } };
+    expect(dependent.card).toMatchObject({ id: 'T-2', blockedBy: ['T-1'], pipelineId: 'PL-1', stageId: 'sg-1' });
+    expect(dependent.card.stepStates).toEqual({});
   }, 15_000);
 
   it('a_created_project_replays_in_the_snapshot_and_streams_live', async () => {

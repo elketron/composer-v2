@@ -11,7 +11,7 @@ import {
   wireEvent,
 } from './core/events/events-client.fake';
 import { EVENTS_TRANSPORT, EventsTransport } from './core/events/events-client';
-import { WireCardType, WireStage } from './core/events/wire';
+import { WireCardType } from './core/events/wire';
 import { PlanService } from './plan/plan.service';
 import { ShellService } from './shell/shell.service';
 
@@ -105,7 +105,7 @@ describe('restart snapshot folding', () => {
             id: 'T-1',
             projectId: 'P-1',
             type: WireCardType.CARD_TYPE_DESIGN,
-            stage: WireStage.STAGE_REVIEW,
+            stageId: 'sg-3',
           }),
         },
         'P-1',
@@ -121,7 +121,7 @@ describe('restart snapshot folding', () => {
     events.emit(
       wireEvent(
         'automationToggled',
-        { lane: WireStage.STAGE_SECURITY, on: false },
+        { pipelineId: 'PL-1', stageId: 'sg-2', on: false },
         'P-1',
       ),
     );
@@ -133,7 +133,7 @@ describe('restart snapshot folding', () => {
       'T-2:coding',
     ]);
     expect(board.blockedIds().has('T-2')).toBe(true);
-    expect(board.automation().isOn('security')).toBe(false);
+    expect(board.automation().isOn('PL-1', 'sg-2')).toBe(false);
     expect(plan.messages().map((message) => `${message.role}:${message.index}`)).toEqual([
       'user:1',
       'agent:2',
@@ -142,9 +142,13 @@ describe('restart snapshot folding', () => {
     expect(plan.planDocument()).toContain('a board');
 
     events.emit(
-      wireEvent('cardMoved', { cardId: 'T-1', to: WireStage.STAGE_APPROVAL }, 'P-1'),
+      wireEvent(
+        'cardStageMoved',
+        { cardId: 'T-1', pipelineId: 'PL-1', toStageId: 'sg-4' },
+        'P-1',
+      ),
     );
     TestBed.tick();
-    expect(board.cardsById().get('T-1')?.stage).toBe('approval');
+    expect(board.cardsById().get('T-1')?.stageId).toBe('sg-4');
   });
 });

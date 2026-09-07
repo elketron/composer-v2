@@ -36,10 +36,18 @@ describe('PipelineEditorComponent', () => {
           id,
           projectId: 'P-1',
           name,
+          revision: 2,
+          stages: [
+            { id: 'sg-1', label: 'New', kanbanVisible: true },
+            { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
+            { id: 'sg-3', label: 'Validation', kanbanVisible: true, errorReturnToStageId: 'sg-2' },
+            { id: 'sg-4', label: 'Approval', kanbanVisible: true },
+            { id: 'sg-5', label: 'Done', kanbanVisible: true, terminal: true },
+          ],
           steps: [
-            { id: 'st-1', kind: 'agent', agentKind: 'coder', instructions: 'Implement the card.' },
-            { id: 'st-2', kind: 'command', command: 'npm test', description: 'Run tests', retries: 1 },
-            { id: 'st-3', kind: 'human', description: 'Approval' },
+            { id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'coder', instructions: 'Implement the card.' },
+            { id: 'st-2', kind: 'command', stageId: 'sg-3', command: 'npm test', description: 'Run tests' },
+            { id: 'st-3', kind: 'human', stageId: 'sg-4', description: 'Approval' },
           ],
           updatedAt: new Date().toISOString(),
         },
@@ -91,10 +99,13 @@ describe('PipelineEditorComponent', () => {
         pipeline: {
           id: '',
           name: 'Quick fix',
-          steps: [{ id: 'st-1', kind: 'agent', agentKind: 'coder', instructions: 'Implement it' }],
+          revision: 0,
+          steps: [{ id: 'st-1', kind: 'agent', stageId: 'sg-1', agentKind: 'coder', instructions: 'Implement it' }],
         },
       },
     });
+    // The starter draft carries a staged path (a terminal Done stage last).
+    expect(published?.requestPipelineSave?.pipeline.stages.at(-1)).toMatchObject({ terminal: true });
     // The form closes; the pipeline lands via its echo.
     expect(el.querySelector('.form')).toBeNull();
   });
@@ -164,6 +175,64 @@ describe('PipelineEditorComponent', () => {
     expect(published).toMatchObject({
       requestPipelineSave: { pipeline: { id: 'PL-1' } },
     });
+  });
+
+  it('authors stage outcomes and publishes them with the save', async () => {
+    seedPipeline('PL-1', 'Standard coding card');
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    await fixture.whenStable();
+
+    // A forward outcome on the first stage (no earlier stage to return to).
+    const firstStage = el.querySelectorAll('.stage')[0]!;
+    firstStage.querySelector<HTMLButtonElement>('.stage-row .mini')!.click();
+    await fixture.whenStable();
+    const forward = el.querySelector<HTMLInputElement>('.outcome-rule input')!;
+    forward.value = 'approved';
+    forward.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    const requires = firstStage.querySelector<HTMLInputElement>('.stage-row input[type="checkbox"]')!;
+    requires.click();
+    await fixture.whenStable();
+
+    // A backward outcome on the second stage: returns to the first.
+    const secondStage = el.querySelectorAll('.stage')[1]!;
+    secondStage.querySelector<HTMLButtonElement>('.stage-row .mini')!.click();
+    await fixture.whenStable();
+    const backward = secondStage.querySelector<HTMLInputElement>('.outcome-rule input')!;
+    backward.value = 'rework';
+    backward.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    const target = secondStage.querySelector<HTMLSelectElement>('.outcome-rule select')!;
+    target.value = 'sg-1';
+    target.dispatchEvent(new Event('change'));
+    await fixture.whenStable();
+
+    el.querySelector<HTMLButtonElement>('.save')!.click();
+    await fixture.whenStable();
+
+    const stages = events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.stages ?? [];
+    expect(stages[0]).toMatchObject({ id: 'sg-1', outcomes: [{ outcome: 'approved' }], requiresOutcome: true });
+    expect(stages[1]).toMatchObject({ id: 'sg-2', outcomes: [{ outcome: 'rework', toStageId: 'sg-1' }] });
+    // The outcome-free stages stay clean.
+    expect(stages[2]?.outcomes).toBeUndefined();
+  });
+
+  it('blocks saving an outcome without a name', async () => {
+    seedPipeline('PL-1', 'Standard coding card');
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    await fixture.whenStable();
+
+    el.querySelectorAll('.stage')[0]!.querySelector<HTMLButtonElement>('.stage-row .mini')!.click();
+    await fixture.whenStable();
+    el.querySelector<HTMLButtonElement>('.save')!.click();
+    await fixture.whenStable();
+
+    expect(el.querySelector('.state-error')?.textContent).toContain('Stage 1: outcome 1 needs a name');
+    expect(events.lastCommand('requestPipelineSave')).toBeUndefined();
   });
 
   it('deletes a pipeline after confirming', async () => {

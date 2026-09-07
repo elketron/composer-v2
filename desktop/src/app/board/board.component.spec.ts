@@ -6,7 +6,6 @@ import {
   seedCard,
   seedProject,
 } from '../core/events/events-client.fake';
-import { WireStage } from '../core/events/wire';
 import { BoardComponent } from './board.component';
 import { BoardService } from './board.service';
 
@@ -22,7 +21,38 @@ describe('BoardComponent', () => {
     // Instantiate before seeding: folds only see events after subscription.
     TestBed.inject(BoardService);
     seedProject(events, 'P-1');
+    seedPipeline('PL-1', 'Standard coding card');
   });
+
+  /** The staged default pipeline the board tabs project. */
+  function seedPipeline(id: string, name: string, projectId = 'P-1') {
+    events.emit(
+      {
+        id: `e-${id}`,
+        projectId,
+        occurredAt: new Date().toISOString(),
+        pipelineSaved: {
+          pipeline: {
+            id,
+            projectId,
+            name,
+            revision: 1,
+            updatedAt: new Date().toISOString(),
+            stages: [
+              { id: 'sg-1', label: 'New', kanbanVisible: true },
+              { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
+              { id: 'sg-3', label: 'Validation', kanbanVisible: true },
+              { id: 'sg-4', label: 'Approval', kanbanVisible: true },
+              { id: 'sg-5', label: 'Done', kanbanVisible: true, terminal: true },
+            ],
+            steps: [
+              { id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'coder', instructions: 'Implement.' },
+            ],
+          },
+        },
+      } as never,
+    );
+  }
 
   async function render() {
     const fixture = TestBed.createComponent(BoardComponent);
@@ -43,39 +73,57 @@ describe('BoardComponent', () => {
     await fixture.whenStable();
   }
 
+  function pipelineTabs(el: HTMLElement): string[] {
+    return [...el.querySelectorAll('.pipeline-tab')].map((b) => b.textContent!.trim());
+  }
+
   it('renders the type selector: all · coding · design · docs', async () => {
     const fixture = await render();
     expect(typeTabs(fixture.nativeElement)).toEqual(['all', 'coding', 'design', 'docs']);
   });
 
-  it('renders the agent-work columns: backlog · coder · tester · reviewer · security · approval · done', async () => {
+  it('renders one tab per pipeline, the first selected by default', async () => {
+    seedPipeline('PL-2', 'Docs pass');
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
 
-    const labels = [...el.querySelectorAll('.col-head .col-label')].map((h) => h.textContent!.trim());
-    expect(labels).toEqual([
-      'backlog',
-      'coder',
-      'tester',
-      'reviewer',
-      'security',
-      'approval',
-      'done',
-    ]);
+    expect(pipelineTabs(el)).toEqual(['Standard coding card', 'Docs pass']);
+    const active = [...el.querySelectorAll('.pipeline-tab')].find((b) =>
+      b.classList.contains('active'),
+    );
+    expect(active?.textContent?.trim()).toBe('Standard coding card');
   });
 
-  it('the type selector filters the columns instead of switching boards', async () => {
-    seedCard(events, { id: 'T-1', title: 'Diff overlay', stage: WireStage.STAGE_CODING });
+  it('the tab selects the cards: only the assigned pipeline\'s cards render', async () => {
+    seedPipeline('PL-2', 'Docs pass');
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', stageId: 'sg-2' });
+    seedCard(events, { id: 'T-2', title: 'Docs card', pipelineId: 'PL-2', stageId: 'sg-1' });
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+
+    expect(el.textContent).toContain('T-1');
+    expect(el.textContent).not.toContain('T-2');
+
+    const tabs = [...el.querySelectorAll<HTMLButtonElement>('.pipeline-tab')];
+    tabs.find((b) => b.textContent!.trim() === 'Docs pass')!.click();
+    await fixture.whenStable();
+
+    expect(el.textContent).toContain('T-2');
+    expect(el.textContent).not.toContain('T-1');
+  });
+
+  it('the type selector filters the tab\'s cards instead of switching boards', async () => {
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', stageId: 'sg-2' });
     seedCard(events, { id: 'T-2', title: 'Spec doc', type: 'docs' });
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
 
-    expect(el.querySelectorAll('.board-column').length).toBe(7);
+    expect(el.querySelectorAll('.board-column').length).toBe(5);
     expect(el.textContent).toContain('T-1');
     expect(el.textContent).toContain('T-2');
 
     await selectType(fixture, 'coding');
-    expect(el.querySelectorAll('.board-column').length).toBe(7); // same board…
+    expect(el.querySelectorAll('.board-column').length).toBe(5); // same board…
     expect(el.textContent).toContain('T-1');
     expect(el.textContent).not.toContain('T-2'); // …filtered to coding cards
 
@@ -83,24 +131,23 @@ describe('BoardComponent', () => {
     expect(el.textContent).toContain('T-2');
   });
 
-  it('renders seeded cards in their work columns', async () => {
-    seedCard(events, { id: 'T-1', title: 'Diff overlay', stage: WireStage.STAGE_CODING });
+  it('renders seeded cards in their stage columns (hidden stages project back)', async () => {
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', stageId: 'sg-2' });
     seedCard(events, { id: 'T-2', title: 'Grammar cache' });
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
     const columns = [...el.querySelectorAll('.board-column')];
 
-    const backlog = columns[0];
-    expect(backlog.textContent).toContain('T-2');
-    const coder = columns[1];
-    expect(coder.textContent).toContain('T-1');
-    expect(coder.textContent).toContain('Diff overlay');
+    expect(columns[0].textContent).toContain('T-2');
+    expect(columns[1].textContent).toContain('T-1');
+    expect(columns[1].textContent).toContain('Diff overlay');
+    const labels = [...el.querySelectorAll('.col-head .col-label')].map((h) => h.textContent!.trim());
+    expect(labels).toEqual(['New', 'Implementation', 'Validation', 'Approval', 'Done']);
   });
 
   it('opens the card detail panel on card click and returns on back', async () => {
     seedCard(events, { id: 'T-2', title: 'Grammar cache' });
     const fixture = await render();
-    await selectType(fixture, 'coding');
     const el = fixture.nativeElement as HTMLElement;
 
     const card = el.querySelector<HTMLElement>('app-board-card')!;
@@ -111,7 +158,7 @@ describe('BoardComponent', () => {
     expect(el.querySelector('app-card-panel')).toBeTruthy();
     // The panel sits beside the board; the columns stay visible.
     expect(el.querySelector('.columns')).toBeTruthy();
-    expect(el.textContent).toContain('T-2'); // first card of the new column
+    expect(el.textContent).toContain('T-2');
     // Focus moved into the panel (the back button).
     expect(document.activeElement).toBe(el.querySelector('.panel-header .back'));
 
@@ -124,12 +171,12 @@ describe('BoardComponent', () => {
     expect(document.activeElement).toBe(card);
   });
 
-  it('shows the rejection comment bar after an approval -> implement-lane drag', async () => {
-    seedCard(events, { id: 'T-1', stage: WireStage.STAGE_APPROVAL });
+  it('shows the rejection comment bar after a drag out of the terminal stage', async () => {
+    seedCard(events, { id: 'T-1', stageId: 'sg-5' });
     const service = TestBed.inject(BoardService);
     const fixture = await render();
 
-    await service.requestMove('T-1', 'coding');
+    await service.requestMove('T-1', 'sg-2');
     await fixture.whenStable();
 
     const el = fixture.nativeElement as HTMLElement;
@@ -174,10 +221,10 @@ describe('BoardComponent', () => {
           title: 'Wire the debugger',
           description: '',
           tags: [],
-          stage: 'new',
+          pipelineId: 'PL-1',
+          stageId: 'sg-1',
           blockedBy: [],
-          subState: {},
-          retries: {},
+          stepStates: {},
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },

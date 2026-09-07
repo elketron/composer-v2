@@ -905,7 +905,7 @@ describe('work proposals', () => {
     const beta = await createProject('beta');
     await processor.execute(alpha, {
       type: 'requestCardCreate',
-      card: { id: '', projectId: alpha, type: 'coding', title: 'Existing', description: '', tags: [], stage: 'new', blockedBy: [], subState: {}, retries: {}, createdAt: '', updatedAt: '' },
+      card: { id: '', projectId: alpha, type: 'coding', title: 'Existing', description: '', tags: [], pipelineId: '', stageId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
     });
     const id = await scopedThread([alpha]); // beta is OUT of scope
 
@@ -975,7 +975,7 @@ describe('work proposals', () => {
     const beta = await createProject('beta');
     await processor.execute(beta, {
       type: 'requestCardCreate',
-      card: { id: '', projectId: beta, type: 'coding', title: 'Dep', description: '', tags: [], stage: 'new', blockedBy: [], subState: {}, retries: {}, createdAt: '', updatedAt: '' },
+      card: { id: '', projectId: beta, type: 'coding', title: 'Dep', description: '', tags: [], pipelineId: '', stageId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
     });
     const id = await scopedThread([alpha, beta]);
     await propose(id, [

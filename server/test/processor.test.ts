@@ -1,6 +1,7 @@
-// The project domain: validation order, rejection messages, and the
-// emitted events match v1's processor (create_project, set_directory,
-// activate). The fold and the snapshot round-trip into equal state.
+// The project and card domains: validation order, rejection messages, and
+// the emitted events. Phase 10: cards carry a pipeline assignment and a
+// pipeline-local stage; moves are stage moves; runs lock the card. The fold
+// and the snapshot round-trip into equal state.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,8 +11,8 @@ import { Bus } from '../src/bus.js';
 import { Processor } from '../src/processor.js';
 import { apply } from '../src/fold.js';
 import { snapshotEvents } from '../src/snapshot.js';
-import { newState, type CardState, type State } from '../src/fold.js';
-import { subStateFor, type Card, type CardType, type Stage } from '../src/wire/models.js';
+import { newState, type State } from '../src/fold.js';
+import { type Card, type CardType, type Pipeline } from '../src/wire/models.js';
 import type { EventFrame } from '../src/wire/envelope.js';
 
 let dir: string;
@@ -38,7 +39,7 @@ afterEach(async () => {
 
 const ProjectCreated = 'projectCreated' as const;
 
-/** A blank card the way the action mapper builds one (id/timestamps unset). */
+/** A blank card the way the action mapper builds one (ids unset; the processor assigns). */
 function blankCard(projectId: string, type: CardType, title: string, blockedBy: string[] = []): Card {
   return {
     id: '',
@@ -47,13 +48,26 @@ function blankCard(projectId: string, type: CardType, title: string, blockedBy: 
     title,
     description: '',
     tags: [],
-    stage: 'new',
+    pipelineId: '',
+    stageId: '',
     blockedBy,
-    subState: {},
-    retries: {},
+    stepStates: {},
     createdAt: '',
     updatedAt: '',
   };
+}
+
+/**
+ * The seeded default pipeline's stages:
+ * New → Implementation → Validation → Review → Approval → Done.
+ */
+const STAGES = ['sg-1', 'sg-2', 'sg-3', 'sg-4', 'sg-5', 'sg-6'] as const;
+const DONE = 'sg-6';
+
+function pipelineOf(projectId: string, pipelineId = 'PL-1'): Pipeline {
+  const pipeline = bus.state.byProject.get(projectId)?.pipelines.get(pipelineId);
+  if (!pipeline) throw new Error(`pipeline ${pipelineId} not in state`);
+  return pipeline;
 }
 
 describe('project commands', () => {
@@ -83,7 +97,7 @@ describe('project commands', () => {
     });
   });
 
-  it('create_project_emits_created_then_activated', async () => {
+  it('create_project_emits_created_then_activated_then_the_staged_default_pipeline', async () => {
     await processor.execute(undefined, { type: 'requestProjectCreate', name: 'alpha' });
     expect(recorded.map((frame) => frame.eventType)).toEqual([
       ProjectCreated,
@@ -92,6 +106,20 @@ describe('project commands', () => {
     ]);
     const project = (recorded[0]?.body as { project: { id: string } }).project;
     expect(project.id).toBe('P-1');
+    const pipeline = (recorded[2]?.body as { pipeline: Pipeline }).pipeline;
+    expect(pipeline.id).toBe('PL-1');
+    expect(pipeline.revision).toBe(1);
+    expect(pipeline.stages.map((stage) => stage.id)).toEqual([...STAGES]);
+    expect(pipeline.stages[0]?.kanbanVisible).toBe(true);
+    expect(pipeline.stages.at(-1)?.terminal).toBe(true);
+    // The Review stage carries the shipped outcome rules (S36).
+    expect(pipeline.stages[3]?.outcomes).toEqual([
+      { outcome: 'approved' },
+      { outcome: 'changes_requested', toStageId: 'sg-2' },
+    ]);
+    expect(pipeline.stages[3]?.requiresOutcome).toBe(true);
+    expect(pipeline.steps.map((step) => step.stageId)).toEqual(['sg-2', 'sg-3', 'sg-3', 'sg-4', 'sg-5']);
+    expect(pipeline.steps[3]?.agentKind).toBe('reviewer');
   });
 
   it('create_project_validates_and_links_the_directory', async () => {
@@ -206,7 +234,12 @@ describe('project commands', () => {
 
   it('refuses_to_archive_a_project_with_an_active_pipeline_run', async () => {
     await processor.execute(undefined, { type: 'requestProjectCreate', name: 'alpha' });
-    await bus.publish('P-1', 'pipelineRunStarted', { cardId: 'T-1', pipelineId: 'PL-1' });
+    await bus.publish('P-1', 'pipelineRunStarted', {
+      runId: 'R-1',
+      cardId: 'T-1',
+      pipelineId: 'PL-1',
+      revision: 1,
+    });
 
     const result = await processor.execute('P-1', {
       type: 'requestProjectArchive',
@@ -266,31 +299,33 @@ describe('card commands', () => {
     return (events[events.length - 1]!.body as { card: { id: string } }).card.id;
   }
 
-  function card(id: string): CardState {
+  function card(id: string): Card {
     const card = bus.state.byProject.get(projectId)?.cards.get(id);
     if (!card) throw new Error(`card ${id} not in state`);
     return card;
   }
 
-  function move(cardId: string, toLane: Stage, override = false, comment?: string) {
+  function move(cardId: string, toStageId: string, override = false, comment?: string) {
     return processor.execute(projectId, {
-      type: 'requestCardMove',
+      type: 'requestCardStageMove',
       cardId,
-      toLane,
+      toStageId,
       override,
       ...(comment !== undefined ? { comment } : {}),
     });
   }
 
-  it('card_create_assigns_sequential_ids_and_initial_sub_state', async () => {
+  it('card_create_assigns_sequential_ids_the_default_pipeline_and_the_first_stage', async () => {
     const first = await createCard('one', 'coding');
     const second = await createCard('two', 'coding');
     expect(first).toBe('T-1');
     expect(second).toBe('T-2');
-    expect(card(first).subState).toEqual(subStateFor('coding'));
+    expect(card(first).pipelineId).toBe('PL-1');
+    expect(card(first).stageId).toBe('sg-1');
+    expect(card(first).stepStates).toEqual({});
   });
 
-  it('card_create_rejects_unknown_scope_and_unknown_blockers', async () => {
+  it('card_create_rejects_unknown_scope_unknown_blockers_and_unknown_pipelines', async () => {
     const noScope = await processor.execute(undefined, {
       type: 'requestCardCreate',
       card: blankCard('nope', 'coding', 'x'),
@@ -308,6 +343,15 @@ describe('card commands', () => {
       ok: false,
       rejection: { code: 'invalidCommand', message: "blockedBy of 'x' references unknown cards" },
     });
+
+    const badPipeline = await processor.execute(projectId, {
+      type: 'requestCardCreate',
+      card: { ...blankCard(projectId, 'coding', 'x'), pipelineId: 'PL-99' },
+    });
+    expect(badPipeline).toEqual({
+      ok: false,
+      rejection: { code: 'unknownPipeline', message: 'Unknown pipeline PL-99' },
+    });
   });
 
   it('blocked_card_emits_dependency_state_changed', async () => {
@@ -317,70 +361,78 @@ describe('card commands', () => {
     expect(dep?.body).toEqual({ cardId: 'T-2', blocked: true, blockedBy: [blocker] });
   });
 
-  it('move_card_validates_lane_type_and_blockers', async () => {
-    const design = await createCard('design card', 'design');
-    const invalid = await move(design, 'security');
-    expect(invalid).toEqual({
-      ok: false,
-      rejection: { code: 'invalidLane', message: 'Lane Security is not valid for Design cards' },
-    });
-
+  it('stage_move_validates_the_stage_and_blockers', async () => {
     const blocker = await createCard('blocker', 'coding');
     const blocked = await createCard('blocked', 'coding', [blocker]);
-    const rejectedMove = await move(blocked, 'coding', false);
+    const rejectedMove = await move(blocked, 'sg-2', false);
     expect(rejectedMove).toEqual({
       ok: false,
       rejection: { code: 'blocked', message: `Card ${blocked} has unsatisfied blockers` },
     });
 
-    const forced = await move(blocked, 'coding', true);
+    const forced = await move(blocked, 'sg-2', true);
     expect(forced).toEqual({ ok: true });
+    expect(card(blocked).stageId).toBe('sg-2');
+
+    const unknownStage = await move(blocked, 'sg-99');
+    expect(unknownStage).toEqual({
+      ok: false,
+      rejection: { code: 'unknownStage', message: "Stage 'sg-99' is not a stage of pipeline PL-1" },
+    });
   });
 
-  it('move_card_rejects_unknown_card_and_no_ops_on_same_lane', async () => {
-    const unknown = await move('T-99', 'coding');
+  it('stage_move_rejects_unknown_cards_and_no_ops_on_the_same_stage', async () => {
+    const unknown = await move('T-99', 'sg-2');
     expect(unknown).toEqual({
       ok: false,
       rejection: { code: 'unknownCard', message: 'Unknown card T-99' },
     });
 
-    const id = await createCard('still in new', 'coding');
+    const id = await createCard('still new', 'coding');
     const before = recorded.length;
-    const noOp = await move(id, 'new');
+    const noOp = await move(id, 'sg-1');
     expect(noOp).toEqual({ ok: true });
     expect(recorded.length).toBe(before);
   });
 
-  it('drag_to_new_unassigns', async () => {
-    const id = await createCard('assigned', 'coding');
-    const assigned = { ...card(id), assignee: { role: 'coder', model: 'm', effort: 'e' } };
-    await bus.publish(projectId, 'cardCreated', { card: assigned });
-
-    expect((await move(id, 'coding')).ok).toBe(true);
-    expect(card(id).assignee).toEqual({ role: 'coder', model: 'm', effort: 'e' });
-
-    const result = await move(id, 'new');
-    expect(result.ok).toBe(true);
-    expect(card(id).assignee).toBeUndefined();
+  it('stage_move_rejects_while_a_run_is_active', async () => {
+    const id = await createCard('busy', 'coding');
+    await bus.publish(projectId, 'pipelineRunStarted', {
+      runId: 'R-1',
+      cardId: id,
+      pipelineId: 'PL-1',
+      revision: 1,
+    });
+    const locked = await move(id, 'sg-2');
+    expect(locked).toEqual({
+      ok: false,
+      rejection: { code: 'runActive', message: `Card ${id} has an active pipeline run` },
+    });
+    await bus.publish(projectId, 'pipelineRunEnded', {
+      runId: 'R-1',
+      cardId: id,
+      pipelineId: 'PL-1',
+      revision: 1,
+      status: 'cancelled',
+    });
+    expect((await move(id, 'sg-2')).ok).toBe(true);
   });
 
   it('the_move_comment_records_the_rejection_comment', async () => {
     const id = await createCard('rejected', 'coding');
-    await move(id, 'coding');
-    await move(id, 'approval');
-    await move(id, 'coding', false, 'needs tests');
+    await move(id, 'sg-2');
+    await move(id, 'sg-4');
+    await move(id, 'sg-2', false, 'needs tests');
     expect(card(id).rejectionComment).toBe('needs tests');
   });
 
-  it('blocker_reaching_done_unblocks_dependents', async () => {
+  it('blocker_reaching_the_terminal_stage_unblocks_dependents', async () => {
     const blocker = await createCard('blocker', 'coding');
     const blocked = await createCard('blocked', 'coding', [blocker]);
-    expect(
-      card(blocked).blockedBy.some((id) => card(id)?.stage !== 'done'),
-    ).toBe(true);
+    expect(card(blocked).blockedBy.some((id) => card(id).stageId !== DONE)).toBe(true);
 
-    await move(blocker, 'coding');
-    await move(blocker, 'done');
+    await move(blocker, 'sg-2');
+    await move(blocker, DONE);
     const deps = recorded
       .filter((frame) => frame.eventType === 'dependencyStateChanged')
       .map((frame) => frame.body as { cardId: string; blocked: boolean })
@@ -388,9 +440,76 @@ describe('card commands', () => {
     expect(deps.at(-1)?.blocked).toBe(false);
   });
 
-  it('type_change_resets_sub_state_and_falls_back_to_new', async () => {
-    const id = await createCard('in security', 'coding');
-    await move(id, 'security');
+  it('pipeline_assign_places_the_card_in_the_first_stage', async () => {
+    const id = await createCard('traveller', 'coding');
+    await move(id, 'sg-3');
+
+    const unknown = await processor.execute(projectId, {
+      type: 'requestCardPipelineAssign',
+      cardId: id,
+      pipelineId: 'PL-99',
+    });
+    expect(unknown).toEqual({
+      ok: false,
+      rejection: { code: 'unknownPipeline', message: 'Unknown pipeline PL-99' },
+    });
+
+    // Save a second pipeline to reassign to.
+    const saved = await processor.execute(projectId, {
+      type: 'requestPipelineSave',
+      pipeline: {
+        id: '',
+        projectId,
+        name: 'Docs pass',
+        revision: 0,
+        stages: [
+          { id: 'd-1', label: 'Draft', kanbanVisible: true },
+          { id: 'd-2', label: 'Done', kanbanVisible: true, terminal: true },
+        ],
+        steps: [{ id: 'ds-1', kind: 'agent', stageId: 'd-1', agentKind: 'coder', instructions: 'Write.' }],
+        updatedAt: '',
+      },
+    });
+    expect(saved.ok).toBe(true);
+
+    const assigned = await processor.execute(projectId, {
+      type: 'requestCardPipelineAssign',
+      cardId: id,
+      pipelineId: 'PL-2',
+    });
+    expect(assigned.ok).toBe(true);
+    expect(recorded.at(-1)?.eventType).toBe('cardPipelineAssigned');
+    expect(card(id).pipelineId).toBe('PL-2');
+    expect(card(id).stageId).toBe('d-1');
+  });
+
+  it('reopen_returns_a_completed_card_to_the_first_stage', async () => {
+    const id = await createCard('finished', 'coding');
+    await move(id, DONE);
+
+    const notCompleted = await processor.execute(projectId, {
+      type: 'requestCardReopen',
+      cardId: (await createCard('running', 'coding')),
+    });
+    expect(notCompleted).toEqual({
+      ok: false,
+      rejection: { code: 'invalidCommand', message: 'Card T-2 is not completed' },
+    });
+
+    const result = await processor.execute(projectId, { type: 'requestCardReopen', cardId: id });
+    expect(result.ok).toBe(true);
+    expect(card(id).stageId).toBe('sg-1');
+  });
+
+  it('type_change_resets_step_states_and_keeps_the_stage', async () => {
+    const id = await createCard('switching', 'coding');
+    await move(id, 'sg-3');
+    await processor.execute(projectId, {
+      type: 'requestStepStateUpdate',
+      cardId: id,
+      stepId: 'st-1',
+      status: 'ok',
+    });
 
     const result = await processor.execute(projectId, {
       type: 'requestCardTypeChange',
@@ -402,8 +521,8 @@ describe('card commands', () => {
     expect(changed?.body).toMatchObject({ cardId: id, from: 'coding' });
 
     expect(card(id).type).toBe('design');
-    expect(card(id).stage).toBe('new'); // security is not a design lane
-    expect(card(id).subState).toEqual(subStateFor('design'));
+    expect(card(id).stageId).toBe('sg-3');
+    expect(card(id).stepStates).toEqual({});
   });
 
   it('archive_card_removes_the_card_from_state', async () => {
@@ -448,34 +567,73 @@ describe('card commands', () => {
     expect(result.rejection.code).toBe('unknownCard');
   });
 
-  it('sub_state_update_lands_on_the_card', async () => {
+  it('step_state_update_lands_on_the_card_and_rejects_while_running', async () => {
     const id = await createCard('progress', 'coding');
     const result = await processor.execute(projectId, {
-      type: 'requestSubStateUpdate',
+      type: 'requestStepStateUpdate',
       cardId: id,
-      stage: 'implement',
+      stepId: 'st-1',
       status: 'ok',
     });
     expect(result.ok).toBe(true);
-    expect(card(id).subState['implement']).toBe('ok');
+    expect(card(id).stepStates['st-1']).toBe('ok');
+
+    const unknownStep = await processor.execute(projectId, {
+      type: 'requestStepStateUpdate',
+      cardId: id,
+      stepId: 'st-99',
+      status: 'ok',
+    });
+    expect(unknownStep.ok).toBe(false);
+    expect(unknownStep.rejection.code).toBe('unknownStage');
+
+    await bus.publish(projectId, 'pipelineRunStarted', {
+      runId: 'R-1',
+      cardId: id,
+      pipelineId: 'PL-1',
+      revision: 1,
+    });
+    const locked = await processor.execute(projectId, {
+      type: 'requestStepStateUpdate',
+      cardId: id,
+      stepId: 'st-1',
+      status: 'pending',
+    });
+    expect(locked).toEqual({
+      ok: false,
+      rejection: { code: 'runActive', message: `Card ${id} has an active pipeline run` },
+    });
   });
 
-  it('automation_toggle_emits_and_persists_per_project', async () => {
+  it('automation_toggle_emits_and_persists_per_pipeline_stage', async () => {
     const result = await processor.execute(projectId, {
       type: 'requestAutomationToggle',
-      lane: 'security',
+      pipelineId: 'PL-1',
+      stageId: 'sg-2',
       on: false,
     });
     expect(result.ok).toBe(true);
-    expect(bus.state.byProject.get(projectId)?.automation.get('security')).toBe(false);
-    expect(bus.state.byProject.get(projectId)?.automation.get('coding')).toBeUndefined();
+    expect(bus.state.byProject.get(projectId)?.automation.get('PL-1')?.get('sg-2')).toBe(false);
+    expect(bus.state.byProject.get(projectId)?.automation.get('PL-1')?.get('sg-1')).toBeUndefined();
 
-    const unknown = await processor.execute(undefined, {
+    const unknownStage = await processor.execute(projectId, {
       type: 'requestAutomationToggle',
-      lane: 'coding',
+      pipelineId: 'PL-1',
+      stageId: 'sg-99',
       on: false,
     });
-    expect(unknown).toEqual({
+    expect(unknownStage).toEqual({
+      ok: false,
+      rejection: { code: 'unknownStage', message: "Stage 'sg-99' is not a stage of pipeline PL-1" },
+    });
+
+    const noScope = await processor.execute(undefined, {
+      type: 'requestAutomationToggle',
+      pipelineId: 'PL-1',
+      stageId: 'sg-2',
+      on: false,
+    });
+    expect(noScope).toEqual({
       ok: false,
       rejection: { code: 'unknownProject', message: 'Unknown project ' },
     });
@@ -484,19 +642,34 @@ describe('card commands', () => {
   it('the_card_snapshot_replays_into_equal_state', async () => {
     const blocker = await createCard('blocker', 'coding');
     const blocked = await createCard('blocked', 'coding', [blocker]);
-    await move(blocker, 'done');
+    await move(blocker, DONE);
     const design = await createCard('design', 'design');
-    await move(design, 'design');
+    await move(design, 'sg-2');
     await processor.execute(projectId, {
-      type: 'requestSubStateUpdate',
+      type: 'requestStepStateUpdate',
       cardId: design,
-      stage: 'draft',
+      stepId: 'st-1',
       status: 'running',
     });
     await processor.execute(projectId, {
       type: 'requestAutomationToggle',
-      lane: 'review',
+      pipelineId: 'PL-1',
+      stageId: 'sg-3',
       on: false,
+    });
+    await bus.publish(projectId, 'pipelineRunStarted', {
+      runId: 'R-1',
+      cardId: blocked,
+      pipelineId: 'PL-1',
+      revision: 1,
+    });
+    await bus.publish(projectId, 'pipelineStepStarted', {
+      runId: 'R-1',
+      cardId: blocked,
+      pipelineId: 'PL-1',
+      stepId: 'st-1',
+      kind: 'agent',
+      stageId: 'sg-2',
     });
 
     const snapshot = snapshotEvents(bus.state);
@@ -517,7 +690,13 @@ describe('card commands', () => {
     return [...state.byProject.values()].map((project) => ({
       projectId: project.projectId,
       cards: [...project.cards.entries()].sort(([a], [b]) => a.localeCompare(b)),
-      automation: [...project.automation.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      automation: [...project.automation.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([pipelineId, stages]) => ({
+          pipelineId,
+          stages: [...stages.entries()].sort(([a], [b]) => a.localeCompare(b)),
+        })),
+      runs: [...project.runs.entries()].sort(([a], [b]) => a.localeCompare(b)),
     }));
   }
 });

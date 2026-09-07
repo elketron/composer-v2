@@ -16,11 +16,14 @@ import { invalidWorkflowPath, parseWorkflow, serializeWorkflow } from '../src/wo
 let dir: string;
 let projectDir: string;
 let server: Awaited<ReturnType<typeof boot>>;
+/** Resolves the parked engine turn (the outcome e2e releases its reviewer). */
+let releaseTurn: (() => void) | null = null;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'composer-workflows-'));
   projectDir = join(dir, 'project');
   mkdirSync(projectDir, { recursive: true });
+  releaseTurn = null;
   server = await boot({
     addr: '127.0.0.1:0',
     dataDir: dir,
@@ -30,6 +33,7 @@ beforeEach(async () => {
       const engine = new FakeEngine(processor);
       engine.enqueue(({ spec }) => new Promise<string>((resolve) => {
         spec.signal?.addEventListener('abort', () => resolve('aborted'), { once: true });
+        releaseTurn = () => resolve('done');
       }));
       return engine;
     },
@@ -44,16 +48,6 @@ beforeEach(async () => {
     status: 200,
     json: { ok: true },
   });
-  expect(
-    await action({
-      type: 'create',
-      on: 'pipeline',
-      body: {
-        name: 'coding card',
-        steps: [{ id: 'st-1', kind: 'agent', agentKind: 'coder', instructions: 'Do the work.' }],
-      },
-    }),
-  ).toEqual({ status: 200, json: { ok: true } });
 });
 
 afterEach(async () => {
@@ -89,10 +83,10 @@ async function worker(
   return { status: response.status, json: (await response.json()) as Record<string, unknown> };
 }
 
-/** Runs the pipeline and waits until its agent session accepts recordings. */
+/** Runs the card's pipeline and waits until its agent session accepts recordings. */
 async function startRun(): Promise<void> {
   expect(
-    await action({ type: 'start', on: 'pipeline', body: { pipelineId: 'PL-2', cardId: 'T-1' } }),
+    await action({ type: 'start', on: 'pipeline', body: { cardId: 'T-1' } }),
   ).toEqual({ status: 200, json: { ok: true } });
   for (let i = 0; i < 400; i++) {
     const started = await worker('workflow_start_recording', {
@@ -216,6 +210,67 @@ describe('the workflow domain', () => {
     await action({ type: 'create', on: 'project', body: { name: 'bare' } });
     const list = await get('/projects/P-2/workflows');
     expect(list.json).toMatchObject({ error: expect.stringContaining('no directory') });
+  });
+});
+
+describe('the outcome tool end to end', () => {
+  it('reports_through_the_worker_route_and_returns_the_card', async () => {
+    const stream = await openEventStream();
+    await stream.next(); // attach proven: the first snapshot frame
+    // A pipeline whose only agent step reviews at an outcome stage — the
+    // boot's parked turn is the reviewer's, and its verdict routes the card.
+    expect(
+      await action({
+        type: 'create',
+        on: 'pipeline',
+        body: {
+          name: 'review only',
+          stages: [
+            { id: 'sg-1', label: 'New', kanbanVisible: true },
+            {
+              id: 'sg-2',
+              label: 'Review',
+              kanbanVisible: true,
+              outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStageId: 'sg-1' }],
+              requiresOutcome: true,
+            },
+            { id: 'sg-3', label: 'Done', kanbanVisible: true, terminal: true },
+          ],
+          steps: [{ id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'reviewer', instructions: 'Review the card.' }],
+        },
+      }),
+    ).toEqual({ status: 200, json: { ok: true } });
+    expect(
+      await action({ type: 'update', on: 'card', body: { id: 'T-1', pipelineId: 'PL-2' } }),
+    ).toEqual({ status: 200, json: { ok: true } });
+    expect(await action({ type: 'start', on: 'pipeline', body: { cardId: 'T-1' } })).toEqual({
+      status: 200,
+      json: { ok: true },
+    });
+
+    // The reviewer reports through the real route (poll until its session
+    // accepts tool calls, like startRun).
+    let reported: Record<string, unknown> | undefined;
+    for (let i = 0; i < 400; i++) {
+      const attempt = await worker('report_outcome', { outcome: 'changes_requested', note: 'tests missing' });
+      if (attempt.json.ok === true) {
+        reported = attempt.json;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(reported).toMatchObject({
+      ok: true,
+      transition: 'the card returns to New when the step finishes',
+    });
+
+    // The turn finishes; the runner applies the outcome (move, then end).
+    releaseTurn?.();
+    const moved = await stream.until((frame) => frame['eventType'] === 'cardStageMoved');
+    expect((moved?.['body'] as { toStageId: string }).toStageId).toBe('sg-1');
+    const ended = await stream.until((frame) => frame['eventType'] === 'pipelineRunEnded');
+    expect((ended?.['body'] as { status: string }).status).toBe('returned');
+    expect((ended?.['body'] as { error?: string }).error).toBe('changes_requested: tests missing');
   });
 });
 

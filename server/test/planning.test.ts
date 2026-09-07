@@ -189,7 +189,7 @@ describe('planning commands', () => {
     // An existing card so the ids allocate after it (T-2..).
     const existing = await processor.execute(projectId, {
       type: 'requestCardCreate',
-      card: { id: '', projectId, type: 'coding', title: 'existing', description: '', tags: [], stage: 'new', blockedBy: [], subState: {}, retries: {}, createdAt: '', updatedAt: '' },
+      card: { id: '', projectId, type: 'coding', title: 'existing', description: '', tags: [], pipelineId: '', stageId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
     });
     expect(existing.ok).toBe(true);
 
@@ -214,18 +214,21 @@ describe('planning commands', () => {
 
     const committed = recorded
       .filter((frame) => frame.eventType === 'cardsCommitted')
-      .at(-1)?.body as { cards: { id: string; type: string; stage: string; blockedBy: string[]; sessionId?: string }[] };
+      .at(-1)?.body as { cards: { id: string; type: string; pipelineId: string; stageId: string; blockedBy: string[]; sessionId?: string }[] };
     expect(committed.cards).toHaveLength(3);
     const [alpha, beta, gamma] = committed.cards;
-    expect(alpha).toMatchObject({ id: 'T-2', type: 'coding', stage: 'new' });
+    expect(alpha).toMatchObject({ id: 'T-2', type: 'coding', pipelineId: 'PL-1', stageId: 'sg-1' });
     expect(beta).toMatchObject({ id: 'T-3', type: 'design', blockedBy: ['T-2', 'T-1'] });
     expect(gamma).toMatchObject({ id: 'T-4', type: 'docs', blockedBy: ['T-3'] });
     expect(beta.sessionId).toBe(sessionId);
 
-    // The cards live in state with their initial checklists; the session is done.
+    // The cards live in state assigned to the default pipeline's first
+    // stage with empty step states; the session is done.
     expect(session(projectId, sessionId).status).toBe('done');
     const card = bus.state.byProject.get(projectId)?.cards.get('T-3');
-    expect(card?.subState).toEqual({ draft: 'pending', implement: 'pending', runValidation: 'pending', reviewChanges: 'pending', humanReview: 'pending' });
+    expect(card?.pipelineId).toBe('PL-1');
+    expect(card?.stageId).toBe('sg-1');
+    expect(card?.stepStates).toEqual({});
   });
 
   it('create_tickets_rejects_invalid_input', async () => {

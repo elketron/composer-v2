@@ -589,3 +589,20 @@
     background: color-mix(in srgb, var(--ok) 16%, transparent);
   }
 }
+
+
+.reopen-button {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--text-dim);
+  }
+}

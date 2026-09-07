@@ -19,6 +19,36 @@
   flex: none;
 }
 
+.pipeline-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 10px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.pipeline-tab {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--text);
+  }
+
+  &.active {
+    color: var(--text);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+}
+
 .new-card {
   margin-left: auto;
   border: 1px solid var(--border);
