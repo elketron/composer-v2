@@ -277,7 +277,6 @@ describe('EventsClient (gateway)', () => {
 
   function rig(state: RigState): EventsClient {
     const gateway: ProjectsBridge = {
-      pickDirectory: async () => null,
       discover: async () => state.entry,
     };
     const factory = (base: string) => {

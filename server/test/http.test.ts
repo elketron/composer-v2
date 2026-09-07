@@ -3,7 +3,7 @@
 // /events delivers the snapshot then live frames — the same flow the
 // desktop rides.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -62,6 +62,31 @@ describe('the boot contract', () => {
     expect(body['status']).toBe('SERVING');
     expect(body['protocol']).toBe(PROTOCOL_VERSION);
     expect(Number.isInteger(body['pid'])).toBe(true);
+  });
+
+  it('directories_browses_the_server_filesystem', async () => {
+    const root = join(dir, 'projects');
+    mkdirSync(join(root, 'zeta'), { recursive: true });
+    mkdirSync(join(root, 'alpha'));
+    writeFileSync(join(root, 'notes.txt'), 'not a directory');
+
+    const response = await fetch(`${server.url}/directories?path=${encodeURIComponent(root)}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      directory: root,
+      name: 'projects',
+      parent: dir,
+      directories: [
+        { name: 'alpha', path: join(root, 'alpha') },
+        { name: 'zeta', path: join(root, 'zeta') },
+      ],
+    });
+
+    const unavailable = await fetch(
+      `${server.url}/directories?path=${encodeURIComponent(join(root, 'notes.txt'))}`,
+    );
+    expect(unavailable.status).toBe(400);
+    expect(await unavailable.json()).toMatchObject({ error: 'directory is unavailable' });
   });
 
   it('assistant_actions_drive_a_thread_end_to_end', async () => {

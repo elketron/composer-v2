@@ -54,6 +54,7 @@ export class DocEditorComponent {
     afterNextRender(() => {
       const parent = document.createElement('div');
       parent.className = 'cm-host';
+      parent.style.height = '100%';
       this.host.nativeElement.appendChild(parent);
       this.view = new EditorView({
         state: EditorState.create({ doc: this.content(), extensions: this.extensions() }),

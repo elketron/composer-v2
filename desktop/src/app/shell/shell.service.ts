@@ -1,5 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
+import { DirectoryPickerService } from '../core/directory-picker/directory-picker.service';
 import { EventsClient } from '../core/events/events-client';
 import { DomainEventJson, domainEventKind } from '../core/events/wire';
 
@@ -20,6 +21,7 @@ export interface ProjectTab {
 export class ShellService {
   private static readonly LAST_VIEWS_KEY = 'composer.last-project-views';
   private readonly events = inject(EventsClient);
+  private readonly directoryPicker = inject(DirectoryPickerService);
 
   private readonly projects = signal<readonly ProjectTab[]>([]);
   private pendingActivation: string | null = null;
@@ -48,11 +50,11 @@ export class ShellService {
   }
 
   /**
-   * Top-bar "+": pick a directory (optional) and publish
+   * Top-bar "+": pick a server-side directory and publish
    * `requestProjectCreate` — the tab lands via the projectCreated echo.
    */
   async addTab(): Promise<void> {
-    const selection = await window.composer?.projects?.pickDirectory();
+    const selection = await this.directoryPicker.pick();
     if (!selection || !selection.name.trim()) return;
     await this.events.publish({
       projectId: '',
@@ -64,8 +66,9 @@ export class ShellService {
   }
 
   async linkDirectory(id: string): Promise<void> {
-    if (!this.projects().some((project) => project.id === id)) return;
-    const selection = await window.composer?.projects?.pickDirectory();
+    const project = this.projects().find((candidate) => candidate.id === id);
+    if (project === undefined) return;
+    const selection = await this.directoryPicker.pick(project.directory);
     if (!selection?.directory.trim()) return;
     await this.events.publish({
       projectId: id,

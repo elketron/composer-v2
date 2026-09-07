@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { AssistantService } from './assistant/assistant.service';
 import { BoardService } from './board/board.service';
 import { ConfirmDialogComponent } from './core/confirm/confirm-dialog.component';
+import { DirectoryPickerComponent } from './core/directory-picker/directory-picker.component';
 import { EventsClient } from './core/events/events-client';
 import { PaletteComponent } from './core/palette/palette.component';
 import { PlanService } from './plan/plan.service';
@@ -13,7 +14,7 @@ import { ShellService } from './shell/shell.service';
 @Component({
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ShellComponent, ConfirmDialogComponent, PaletteComponent],
+  imports: [ShellComponent, ConfirmDialogComponent, DirectoryPickerComponent, PaletteComponent],
   templateUrl: './app.html',
 })
 export class App {

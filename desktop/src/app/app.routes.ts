@@ -9,7 +9,6 @@ import { DashboardComponent } from './dashboard/dashboard.component';
 import type { DocsComponent } from './docs/docs.component';
 import { PlanComponent } from './plan/plan.component';
 import { CodingViewComponent } from './pipelines/coding-view.component';
-import { PipelineEditorComponent } from './pipelines/pipeline-editor.component';
 import { RunViewComponent } from './run/run-view.component';
 import { SettingsComponent } from './settings/settings.component';
 import { ProjectWorkspaceComponent } from './shell/project-workspace.component';
@@ -41,7 +40,11 @@ export const routes: Routes = [
       { path: '', pathMatch: 'full', redirectTo: 'board' },
       { path: 'board', component: BoardComponent },
       { path: 'plan', component: PlanComponent },
-      { path: 'pipelines', component: PipelineEditorComponent },
+      {
+        path: 'pipelines',
+        loadComponent: () =>
+          import('./pipelines/pipeline-editor.component').then((module) => module.PipelineEditorComponent),
+      },
       { path: 'coding', component: CodingViewComponent },
       {
         path: 'docs',

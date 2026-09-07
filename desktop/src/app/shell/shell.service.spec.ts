@@ -1,6 +1,9 @@
 import { TestBed } from '@angular/core/testing';
 
-import type { ProjectDirectorySelection } from '../core/events/events-client';
+import {
+  DirectoryPickerService,
+  type ProjectDirectorySelection,
+} from '../core/directory-picker/directory-picker.service';
 import {
   FakeEventsClient,
   provideFakeEventsClient,
@@ -20,18 +23,30 @@ describe('ShellService', () => {
   let service: ShellService;
   let events: FakeEventsClient;
   let selection: ProjectDirectorySelection | null;
+  let pickerInitialDirectory: string | null | undefined;
 
   beforeEach(() => {
     events = new FakeEventsClient();
     selection = null;
+    pickerInitialDirectory = undefined;
     window.composer = {
       projects: {
-        pickDirectory: async () => selection,
         discover: async () => null,
       },
     };
     TestBed.configureTestingModule({
-      providers: [provideFakeEventsClient(events)],
+      providers: [
+        provideFakeEventsClient(events),
+        {
+          provide: DirectoryPickerService,
+          useValue: {
+            pick: async (initialDirectory?: string | null) => {
+              pickerInitialDirectory = initialDirectory;
+              return selection;
+            },
+          },
+        },
+      ],
     });
     service = TestBed.inject(ShellService);
   });
@@ -83,10 +98,32 @@ describe('ShellService', () => {
       projectId: 'P-1',
       directory: '/work/alpha',
     });
+    expect(pickerInitialDirectory).toBeNull();
     events.emit(
       wireEvent('projectDirectoryChanged', { projectId: 'P-1', directory: '/work/alpha' }, 'P-1'),
     );
     expect(service.activeTab()?.directory).toBe('/work/alpha');
+  });
+
+  it('starts relinking from the project directory on the server', async () => {
+    events.emit(
+      wireEvent(
+        'projectCreated',
+        {
+          project: {
+            id: 'P-1',
+            name: 'alpha',
+            directory: '/srv/work/alpha',
+            createdAt: new Date().toISOString(),
+          },
+        },
+        'P-1',
+      ),
+    );
+
+    await service.linkDirectory('P-1');
+
+    expect(pickerInitialDirectory).toBe('/srv/work/alpha');
   });
 
   it('does not publish when directory selection is cancelled', async () => {

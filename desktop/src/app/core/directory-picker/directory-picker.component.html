@@ -1,0 +1,66 @@
+@if (picker.current() !== null) {
+  <div class="backdrop" (click)="cancel()">
+    <section class="picker" role="dialog" aria-modal="true" aria-label="choose a project directory" (click)="$event.stopPropagation()">
+      <header>
+        <div>
+          <h2>choose project directory</h2>
+          <p>Browsing the filesystem available to the Composer server.</p>
+        </div>
+        <button type="button" class="icon" aria-label="cancel" title="cancel" (click)="picker.cancel()">
+          <lucide-icon [img]="icons.close" [size]="14" />
+        </button>
+      </header>
+
+      <form class="path" (submit)="$event.preventDefault(); picker.browse()">
+        <button
+          type="button"
+          class="icon"
+          aria-label="parent directory"
+          title="parent directory"
+          [disabled]="picker.listing()?.parent === null || picker.loading()"
+          (click)="picker.browse(picker.listing()?.parent ?? '')"
+        >
+          <lucide-icon [img]="icons.up" [size]="14" />
+        </button>
+        <input
+          #pathInput
+          type="text"
+          aria-label="directory path"
+          autocomplete="off"
+          spellcheck="false"
+          [ngModel]="picker.path()"
+          (ngModelChange)="picker.path.set($event)"
+          name="path"
+        />
+        <button type="submit" class="go" [disabled]="picker.loading()">go</button>
+      </form>
+
+      <div class="directories" role="listbox" aria-label="directories">
+        @if (picker.loading()) {
+          <p class="state">reading directories...</p>
+        } @else if (picker.error(); as error) {
+          <p class="error" role="alert">{{ error }}</p>
+        } @else if (picker.filteredDirectories().length === 0) {
+          <p class="state">no matching folders</p>
+        } @else {
+          @for (directory of picker.filteredDirectories(); track directory.path) {
+            <button type="button" class="directory" role="option" (click)="picker.browse(directory.path)">
+              <lucide-icon [img]="icons.folder" [size]="14" />
+              <span>{{ directory.name }}</span>
+            </button>
+          }
+        }
+      </div>
+
+      <footer>
+        <span class="selected" [title]="picker.listing()?.directory ?? ''">
+          {{ picker.listing()?.directory ?? 'no directory selected' }}
+        </span>
+        <button type="button" class="cancel" (click)="picker.cancel()">cancel</button>
+        <button type="button" class="select" [disabled]="picker.listing() === null || picker.loading()" (click)="picker.select()">
+          select this folder
+        </button>
+      </footer>
+    </section>
+  </div>
+}

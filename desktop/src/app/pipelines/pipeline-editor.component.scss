@@ -1,42 +1,46 @@
-.editor {
+:host {
+  display: block;
   height: 100%;
-  overflow-y: auto;
-  padding: 20px 24px;
+  min-height: 0;
+}
+
+.editor {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px 40px;
+}
+
+.head,
+.section-head,
+.step-head,
+.stage-fields,
+.outcome-rule,
+.form-actions,
+.row,
+.row-main,
+.row-actions {
+  display: flex;
+  align-items: center;
 }
 
 .head {
-  display: flex;
-  align-items: center;
   gap: 8px;
   color: var(--text-faint);
 
   h1 {
     margin: 0;
+    color: var(--text);
     font-size: 14px;
     font-weight: 600;
     letter-spacing: 0.4px;
-    color: var(--text);
   }
 
   .new {
     margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    border: 1px solid var(--ok);
-    color: var(--ok);
-    background: transparent;
-    border-radius: 4px;
-    padding: 4px 10px;
-    font-size: 12px;
-    cursor: pointer;
-
-    &:hover {
-      background: color-mix(in srgb, var(--ok) 14%, transparent);
-    }
   }
 }
 
@@ -45,19 +49,20 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 720px;
+  width: min(100%, 1040px);
 }
 
 .label {
   color: var(--text-faint);
-  font-size: 12px;
-  letter-spacing: 0.5px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .hint {
-  margin: 0;
+  margin: 2px 0 0;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .name-row {
@@ -67,83 +72,207 @@
 
   input {
     flex: 1;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 12px;
-    padding: 5px 8px;
   }
+}
+
+input[type='text'],
+select {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 7px;
+
+  &:focus {
+    border-color: var(--accent-soft);
+    outline: none;
+  }
+}
+
+.section-head {
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.stage-path {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 2px 0 5px;
+}
+
+.stage-card {
+  display: flex;
+  width: 174px;
+  flex: 0 0 174px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+
+  &.selected {
+    border-color: var(--accent-soft);
+  }
+
+  &.hidden-stage {
+    border-style: dashed;
+  }
+
+  &.terminal {
+    border-color: color-mix(in srgb, var(--ok) 60%, transparent);
+  }
+}
+
+.stage-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+  }
+}
+
+.stage-index,
+.stage-kind {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.stage-kind {
+  color: var(--accent-soft);
+}
+
+.terminal .stage-kind {
+  color: var(--ok);
+}
+
+.stage-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-actions {
+  display: flex;
+  gap: 3px;
+  padding: 0 7px 7px;
+}
+
+.stage-arrow {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.stage-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--panel) 75%, transparent);
+  padding: 9px 10px;
+}
+
+.stage-settings-head {
+  display: flex;
+}
+
+.stage-fields,
+.outcome-rule {
+  flex-wrap: wrap;
+  gap: 7px;
+
+  input[type='text'] {
+    flex: 1 1 220px;
+  }
+}
+
+.outcome-rule {
+  color: var(--text-faint);
+  font-size: 12px;
+
+  input[type='text'] {
+    flex: 0 1 220px;
+  }
+}
+
+.flag,
+.error-return,
+.stage-assignment {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.steps-head {
+  margin-top: 8px;
 }
 
 .steps {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .step {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
+  gap: 7px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  padding: 9px 10px;
 
   &.invalid {
-    border-color: color-mix(in srgb, var(--err) 50%, transparent);
+    border-color: color-mix(in srgb, var(--err) 45%, var(--border));
   }
 }
 
 .step-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  gap: 7px;
+}
 
-  .index {
-    color: var(--text-faint);
-    font-size: 12px;
-    width: 16px;
-    text-align: right;
-  }
+.step-index {
+  width: 20px;
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-align: right;
+}
 
-  select {
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 12px;
-    padding: 2px 4px;
-  }
-
-  .step-id {
-    width: 90px;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 12px;
-    padding: 2px 6px;
-  }
+.stage-assignment select {
+  max-width: 220px;
 }
 
 .step-fields {
   display: flex;
-  gap: 6px;
+  gap: 7px;
+  padding-left: 27px;
 
   input {
     flex: 1;
-    min-width: 0;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 12px;
-    padding: 3px 6px;
+  }
 
-    &.narrow {
-      flex: 0 0 70px;
-    }
+  .agent-kind {
+    flex: 0 1 180px;
   }
 }
 
@@ -151,234 +280,116 @@
   flex: 1;
 }
 
-.mini {
+.mini,
+.add,
+.new,
+.save,
+.cancel {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   border: 1px solid var(--border);
-  color: var(--text-faint);
-  background: transparent;
   border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 12px;
+  background: transparent;
+  color: var(--text-faint);
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 11px;
   cursor: pointer;
 
-  &:disabled {
-    opacity: 0.35;
-    cursor: default;
+  &:hover:not(:disabled) {
+    border-color: var(--text-faint);
+    color: var(--text);
   }
 
-  &:hover:not(:disabled) {
-    color: var(--text);
+  &:disabled {
+    opacity: 0.3;
+    cursor: default;
   }
 
   &.danger {
     color: var(--err);
-    border-color: color-mix(in srgb, var(--err) 50%, transparent);
-
-    &:hover {
-      background: color-mix(in srgb, var(--err) 12%, transparent);
-    }
   }
-}
-
-.add-row {
-  display: flex;
 }
 
 .add {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px dashed var(--border);
-  color: var(--text-faint);
-  background: transparent;
-  border-radius: 4px;
-  padding: 4px 10px;
-  font-size: 12px;
-  cursor: pointer;
+  border-style: dashed;
+}
 
-  &:hover {
-    color: var(--text);
-  }
+.new,
+.save {
+  border-color: var(--ok);
+  color: var(--ok);
 }
 
 .form-actions {
-  display: flex;
   gap: 8px;
-
-  .save,
-  .cancel {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    border-radius: 4px;
-    padding: 4px 12px;
-    font-size: 12px;
-    cursor: pointer;
-    background: transparent;
-  }
-
-  .save {
-    border: 1px solid var(--ok);
-    color: var(--ok);
-
-    &:hover {
-      background: color-mix(in srgb, var(--ok) 14%, transparent);
-    }
-  }
-
-  .cancel {
-    border: 1px solid var(--border);
-    color: var(--text-faint);
-
-    &:hover {
-      color: var(--text);
-    }
-  }
+  padding-top: 2px;
 }
 
 .row {
-  display: flex;
-  align-items: center;
   gap: 10px;
-  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  padding: 10px 12px;
 }
 
 .row-main {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
   min-width: 0;
+  gap: 8px;
 }
 
 .row-name {
-  font-weight: 600;
   font-size: 12px;
+  font-weight: 600;
 }
 
-.row-id {
+.row-id,
+.row-steps {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .row-stages {
   color: var(--text-dim);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 11px;
 }
 
+.row-stages,
 .row-steps {
-  color: var(--text-faint);
-  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .row-actions {
+  flex: none;
+  gap: 6px;
   margin-left: auto;
-  display: flex;
-  gap: 6px;
 }
 
+@media (max-width: 720px) {
+  .editor {
+    padding: 14px 12px 32px;
+  }
 
-.stages {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
+  .step-head,
+  .step-fields {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
 
-.stage {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
+  .stage-assignment {
+    flex: 1 1 220px;
+  }
 
-.stage-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-
-  input[type='text'] {
+  .stage-assignment select {
     flex: 1;
-    min-width: 0;
-  }
-}
-
-.stage-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.stage-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-
-  input[type='text'] {
-    flex: 1;
-    min-width: 0;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 12px;
-    padding: 2px 6px;
+    max-width: none;
   }
 
-  select {
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 12px;
-    padding: 2px 4px;
-  }
-}
-
-.outcome-rule {
-  .rule-label {
-    color: var(--text-faint);
-    font-size: 12px;
-  }
-
-  input[type='text'] {
-    flex: 0 1 180px;
-  }
-}
-
-.flag {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 12px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.error-return {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--text-dim);
-
-  select {
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 12px;
-    padding: 2px 4px;
+  .step-fields input,
+  .step-fields .agent-kind {
+    flex: 1 1 100%;
   }
 }

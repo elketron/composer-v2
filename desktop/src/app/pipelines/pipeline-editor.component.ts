@@ -14,24 +14,16 @@ import {
 } from '../core/models/pipeline.models';
 import { PipelineService } from './pipeline.service';
 
-/** One row of the editor's stage builder (a mutable working copy). */
 interface StageDraft {
   id: string;
   label: string;
   kanbanVisible: boolean;
   terminal: boolean;
   errorReturnToStageId: string;
-  outcomes: OutcomeDraft[];
+  outcomes: { outcome: string; toStageId: string }[];
   requiresOutcome: boolean;
 }
 
-/** One outcome rule of a stage draft: the agent-reported name and where it routes (empty = proceeds). */
-interface OutcomeDraft {
-  outcome: string;
-  toStageId: string;
-}
-
-/** One row of the editor's step builder (a mutable working copy). */
 interface StepDraft {
   id: string;
   kind: PipelineStepKind;
@@ -42,14 +34,23 @@ interface StepDraft {
   description: string;
 }
 
+/** The pipeline editor's working copy (a mutable draft of one pipeline). */
+interface EditorDraft {
+  id: string;
+  name: string;
+  stages: StageDraft[];
+  steps: StepDraft[];
+  rejection: string | null;
+}
+
 /**
- * The pipeline editor (S4, staged in Phase 10). Pipelines are user-authored
- * (the ownership rule): the view lists the project's pipelines and authors
- * them from scratch — a name, an ordered stage path (the board's columns
- * come from the Kanban-visible ones), and an ordered step list where every
- * step references one of the pipeline's stages. Save publishes
- * requestPipelineSave (the server allocates fresh ids and revisions,
- * upserts known ones, and re-validates); deletions tombstone the default.
+ * The pipeline editor (S4, staged in Phase 10; the linear visual editor in
+ * S37). Pipelines are user-authored (the ownership rule): the view lists
+ * the project's pipelines and authors them from scratch — a name, the
+ * compact stage path and a flat ordered step list with explicit stage
+ * assignment. Save publishes requestPipelineSave (the server allocates fresh ids
+ * and revisions, upserts known ones, and re-validates); deletions
+ * tombstone the default.
  */
 @Component({
   selector: 'app-pipeline-editor',
@@ -73,13 +74,24 @@ export class PipelineEditorComponent {
   protected readonly kinds: readonly PipelineStepKind[] = ['agent', 'command', 'human'];
 
   /** The working copy being authored; null shows the list. */
-  protected readonly editing = signal<{
-    id: string;
-    name: string;
-    stages: StageDraft[];
-    steps: StepDraft[];
-    rejection: string | null;
-  } | null>(null);
+  protected readonly editing = signal<EditorDraft | null>(null);
+
+  /** The stage whose less-common routing settings are open. */
+  protected readonly selectedStageId = signal<string | null>(null);
+
+  protected readonly selectedStageIndex = computed(() => {
+    const current = this.selectedStageId();
+    const draft = this.editing();
+    if (current === null || draft === null) return null;
+    const index = draft.stages.findIndex((stage) => stage.id === current);
+    return index < 0 ? null : index;
+  });
+
+  protected readonly selectedStageDraft = computed<StageDraft | null>(() => {
+    const current = this.editing();
+    const index = this.selectedStageIndex();
+    return current !== null && index !== null ? (current.stages[index] ?? null) : null;
+  });
 
   /** Client-side validation runs live, but only surfaces after a save attempt. */
   private readonly attemptedSave = signal(false);
@@ -118,6 +130,7 @@ export class PipelineEditorComponent {
 
   protected newPipeline(): void {
     if (!this.canEdit()) return;
+    this.attemptedSave.set(false);
     const stages: StageDraft[] = [
       { id: 'sg-1', label: 'In progress', kanbanVisible: true, terminal: false, errorReturnToStageId: '', outcomes: [], requiresOutcome: false },
       { id: 'sg-2', label: 'Done', kanbanVisible: true, terminal: true, errorReturnToStageId: '', outcomes: [], requiresOutcome: false },
@@ -129,10 +142,12 @@ export class PipelineEditorComponent {
       steps: [{ id: 'st-1', kind: 'agent', stageId: 'sg-1', agentKind: 'coder', instructions: '', command: '', description: '' }],
       rejection: null,
     });
+    this.selectedStageId.set(stages[0]!.id);
   }
 
   protected edit(pipeline: Pipeline): void {
     if (!this.canEdit()) return;
+    this.attemptedSave.set(false);
     this.editing.set({
       id: pipeline.id,
       name: pipeline.name,
@@ -140,17 +155,24 @@ export class PipelineEditorComponent {
       steps: pipeline.steps.map((step) => this.draftOf(step)),
       rejection: null,
     });
+    this.selectedStageId.set(pipeline.stages[0]?.id ?? null);
   }
 
   protected cancel(): void {
+    this.attemptedSave.set(false);
     this.editing.set(null);
+    this.selectedStageId.set(null);
   }
 
   protected updateName(name: string): void {
     this.patchDraft({ name, rejection: null });
   }
 
-  // ---- Stage rows ----
+  protected selectStage(index: number): void {
+    this.selectedStageId.set(this.editing()?.stages[index]?.id ?? null);
+  }
+
+  // ---- Stage mutations ----
 
   protected addStage(): void {
     const current = this.editing();
@@ -158,14 +180,11 @@ export class PipelineEditorComponent {
     const next = this.nextStageId(current.stages);
     const terminal = current.stages.at(-1);
     const fresh: StageDraft = { id: next, label: '', kanbanVisible: true, terminal: false, errorReturnToStageId: '', outcomes: [], requiresOutcome: false };
-    this.editing.set({
-      ...current,
-      // A new stage joins before the terminal one; it is visible by default.
-      stages: terminal !== undefined && terminal.terminal
-        ? [...current.stages.slice(0, -1), fresh, terminal]
-        : [...current.stages, fresh],
-      rejection: null,
-    });
+    const stages = terminal !== undefined && terminal.terminal
+      ? [...current.stages.slice(0, -1), fresh, terminal]
+      : [...current.stages, fresh];
+    this.editing.set({ ...current, stages, rejection: null });
+    this.selectedStageId.set(next);
   }
 
   protected removeStage(index: number): void {
@@ -173,21 +192,32 @@ export class PipelineEditorComponent {
     if (current === null) return;
     const removed = current.stages[index];
     if (removed === undefined) return;
-    const stages = current.stages
-      .filter((_, i) => i !== index)
-      .map((stage) => ({
-        ...stage,
-        // Outcome rules and error returns targeting the removed stage drop
-        // with it (proceeds / stays are the neutral defaults).
-        outcomes: stage.outcomes.filter((rule) => rule.toStageId !== removed.id),
-        errorReturnToStageId: stage.errorReturnToStageId === removed.id ? '' : stage.errorReturnToStageId,
-      }));
-    const steps = current.steps
-      .filter((step) => step.stageId !== removed.id)
-      .map((step) => (step.stageId === '' ? step : step));
-    this.editing.set({ ...current, stages, steps, rejection: null });
+    const linkedSteps = current.steps.filter((step) => step.stageId === removed.id).length;
+    if (linkedSteps > 0) {
+      this.editing.set({
+        ...current,
+        rejection: `Move the ${linkedSteps} step${linkedSteps === 1 ? '' : 's'} assigned to ${removed.label || removed.id} before removing this stage`,
+      });
+      return;
+    }
+    const referenced = current.stages.some(
+      (stage) =>
+        stage.errorReturnToStageId === removed.id ||
+        stage.outcomes.some((outcome) => outcome.toStageId === removed.id),
+    );
+    if (referenced) {
+      this.editing.set({ ...current, rejection: `Clear routes returning to ${removed.label || removed.id} before removing this stage` });
+      return;
+    }
+    const stages = current.stages.filter((_, i) => i !== index);
+    this.editing.set({ ...current, stages, rejection: null });
+    this.selectedStageId.set(stages[Math.min(index, stages.length - 1)]?.id ?? null);
   }
 
+  /**
+   * Stage movement also regroups the flat step list, preserving order within
+   * each stage so a simple stage move cannot create a backward execution path.
+   */
   protected moveStage(index: number, delta: -1 | 1): void {
     const current = this.editing();
     if (current === null) return;
@@ -195,7 +225,31 @@ export class PipelineEditorComponent {
     if (target < 0 || target >= current.stages.length) return;
     const stages = [...current.stages];
     [stages[index], stages[target]] = [stages[target]!, stages[index]!];
-    this.editing.set({ ...current, stages, rejection: null });
+    const structuralError = this.stageOrderError(stages);
+    if (structuralError !== null) {
+      this.editing.set({ ...current, rejection: structuralError });
+      return;
+    }
+    const order = new Map(stages.map((stage, stageIndex) => [stage.id, stageIndex]));
+    const steps = current.steps
+      .map((step, stepIndex) => ({ step, stepIndex }))
+      .sort((left, right) =>
+        (order.get(left.step.stageId) ?? Number.MAX_SAFE_INTEGER) -
+          (order.get(right.step.stageId) ?? Number.MAX_SAFE_INTEGER) ||
+        left.stepIndex - right.stepIndex,
+      )
+      .map(({ step }) => step);
+    this.editing.set({ ...current, stages, steps, rejection: null });
+  }
+
+  protected canMoveStage(index: number, delta: -1 | 1): boolean {
+    const current = this.editing();
+    if (current === null) return false;
+    const target = index + delta;
+    if (target < 0 || target >= current.stages.length) return false;
+    const stages = [...current.stages];
+    [stages[index], stages[target]] = [stages[target]!, stages[index]!];
+    return this.stageOrderError(stages) === null;
   }
 
   protected updateStage(index: number, patch: Partial<StageDraft>): void {
@@ -232,7 +286,7 @@ export class PipelineEditorComponent {
     });
   }
 
-  protected updateOutcome(stageIndex: number, ruleIndex: number, patch: Partial<OutcomeDraft>): void {
+  protected updateOutcome(stageIndex: number, ruleIndex: number, patch: Partial<{ outcome: string; toStageId: string }>): void {
     const current = this.editing();
     if (current === null) return;
     const outcomes = current.stages[stageIndex]!.outcomes.map((rule, i) =>
@@ -241,17 +295,25 @@ export class PipelineEditorComponent {
     this.updateStage(stageIndex, { outcomes });
   }
 
-  // ---- Step rows ----
+  // ---- Step mutations ----
 
   protected addStep(): void {
     const current = this.editing();
     if (current === null) return;
-    const stageId = current.stages[0]?.id ?? '';
-    this.editing.set({
-      ...current,
-      steps: [...current.steps, { id: this.nextStepId(current.steps), kind: 'command', stageId, agentKind: 'coder', instructions: '', command: '', description: '' }],
-      rejection: null,
-    });
+    const stage = current.stages.find((candidate) => !candidate.terminal) ?? current.stages[0];
+    if (stage === undefined) return;
+    const step: StepDraft = {
+      id: this.nextStepId(current.steps),
+      kind: 'command',
+      stageId: stage.id,
+      agentKind: 'coder',
+      instructions: '',
+      command: '',
+      description: '',
+    };
+    const steps = [...current.steps];
+    steps.splice(this.insertPositionFor(current, stage.id), 0, step);
+    this.editing.set({ ...current, steps, rejection: null });
   }
 
   protected removeStep(index: number): void {
@@ -264,10 +326,39 @@ export class PipelineEditorComponent {
     const current = this.editing();
     if (current === null) return;
     const target = index + delta;
-    if (target < 0 || target >= current.steps.length) return;
+    if (!this.canMoveStep(index, delta)) return;
     const steps = [...current.steps];
     [steps[index], steps[target]] = [steps[target]!, steps[index]!];
     this.editing.set({ ...current, steps, rejection: null });
+  }
+
+  protected canMoveStep(index: number, delta: -1 | 1): boolean {
+    const steps = this.editing()?.steps;
+    if (steps === undefined) return false;
+    const target = index + delta;
+    return target >= 0 && target < steps.length && steps[index]?.stageId === steps[target]?.stageId;
+  }
+
+  /** Changing stage also moves the step into that stage's contiguous run region. */
+  protected assignStepToStage(index: number, stageId: string): void {
+    const current = this.editing();
+    const step = current?.steps[index];
+    if (current === null || current === undefined || step === undefined || step.stageId === stageId) return;
+    const without = current.steps.filter((_, stepIndex) => stepIndex !== index);
+    const moved = { ...step, stageId };
+    const next = { stages: current.stages, steps: without };
+    without.splice(this.insertPositionFor(next, stageId), 0, moved);
+    this.editing.set({ ...current, steps: without, rejection: null });
+  }
+
+  protected updateStepKind(index: number, kind: PipelineStepKind): void {
+    this.updateStep(index, {
+      kind,
+      agentKind: kind === 'agent' ? 'coder' : '',
+      instructions: '',
+      command: '',
+      description: '',
+    });
   }
 
   protected updateStep(index: number, patch: Partial<StepDraft>): void {
@@ -280,7 +371,7 @@ export class PipelineEditorComponent {
     });
   }
 
-  /** The stages an error return may target: strictly earlier ones. */
+  /** The stages an error return or outcome rule may target: strictly earlier ones. */
   protected errorTargets(index: number): StageDraft[] {
     const current = this.editing();
     if (current === null) return [];
@@ -407,6 +498,7 @@ export class PipelineEditorComponent {
     }
     this.attemptedSave.set(false);
     this.editing.set(null);
+    this.selectedStageId.set(null);
   }
 
   protected async remove(pipelineId: string): Promise<void> {
@@ -422,10 +514,31 @@ export class PipelineEditorComponent {
     await this.pipelines.remove(projectId, pipelineId);
   }
 
-  private patchDraft(patch: Partial<{ id: string; name: string; stages: StageDraft[]; steps: StepDraft[]; rejection: string | null }>): void {
+  private patchDraft(patch: Partial<EditorDraft>): void {
     const current = this.editing();
     if (current === null) return;
     this.editing.set({ ...current, ...patch });
+  }
+
+  private stageOrderError(stages: StageDraft[]): string | null {
+    if (stages.filter((stage) => stage.terminal).length !== 1 || stages.at(-1)?.terminal !== true) {
+      return 'The Done stage must stay last';
+    }
+    if (stages[0]?.kanbanVisible !== true) return 'The first stage must remain a visible column';
+    for (const [index, stage] of stages.entries()) {
+      const targets = [
+        stage.errorReturnToStageId,
+        ...stage.outcomes.map((outcome) => outcome.toStageId),
+      ].filter(Boolean);
+      if (
+        targets.some(
+          (target) => stages.findIndex((candidate) => candidate.id === target) >= index,
+        )
+      ) {
+        return `Move or clear the backward routes on ${stage.label || stage.id} first`;
+      }
+    }
+    return null;
   }
 
   private nextStageId(stages: StageDraft[]): string {
@@ -444,6 +557,26 @@ export class PipelineEditorComponent {
       if (match?.[1] !== undefined) max = Math.max(max, Number(match[1]));
     }
     return `st-${max + 1}`;
+  }
+
+  /**
+   * Where a new step for `stageId` joins the flat list: after the stage's
+   * last step, or before the first step of a later stage — so the step
+   * lands in the stage's run region (the forward path stays non-decreasing).
+   */
+  private insertPositionFor(current: { stages: StageDraft[]; steps: StepDraft[] }, stageId: string): number {
+    const steps = current.steps;
+    let last = -1;
+    for (let i = 0; i < steps.length; i++) {
+      if (steps[i]!.stageId === stageId) last = i;
+    }
+    if (last >= 0) return last + 1;
+    const order = current.stages.findIndex((stage) => stage.id === stageId);
+    for (let i = 0; i < steps.length; i++) {
+      const stepOrder = current.stages.findIndex((stage) => stage.id === steps[i]!.stageId);
+      if (stepOrder > order) return i;
+    }
+    return steps.length;
   }
 
   private stageDraftOf(stage: PipelineStage): StageDraft {

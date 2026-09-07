@@ -1,4 +1,4 @@
-import { TestBed } from '@angular/core/testing';
+import { TestBed, type ComponentFixture } from '@angular/core/testing';
 
 import {
   FakeEventsClient,
@@ -23,13 +23,33 @@ describe('PipelineEditorComponent', () => {
     seedProject(events, 'P-1');
   });
 
-  async function render() {
+  async function render(): Promise<ComponentFixture<PipelineEditorComponent>> {
     const fixture = TestBed.createComponent(PipelineEditorComponent);
     await fixture.whenStable();
     return fixture;
   }
 
-  function seedPipeline(id: string, name: string): void {
+  async function type(
+    fixture: ComponentFixture<PipelineEditorComponent>,
+    input: HTMLInputElement,
+    value: string,
+  ): Promise<void> {
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+  }
+
+  async function select(
+    fixture: ComponentFixture<PipelineEditorComponent>,
+    input: HTMLSelectElement,
+    value: string,
+  ): Promise<void> {
+    input.value = value;
+    input.dispatchEvent(new Event('change'));
+    await fixture.whenStable();
+  }
+
+  function seedPipeline(id = 'PL-1', name = 'Standard coding card'): void {
     events.emit(
       wireEvent('pipelineSaved', {
         pipeline: {
@@ -40,13 +60,13 @@ describe('PipelineEditorComponent', () => {
           stages: [
             { id: 'sg-1', label: 'New', kanbanVisible: true },
             { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
-            { id: 'sg-3', label: 'Validation', kanbanVisible: true, errorReturnToStageId: 'sg-2' },
+            { id: 'sg-3', label: 'Validation', kanbanVisible: false, errorReturnToStageId: 'sg-2' },
             { id: 'sg-4', label: 'Approval', kanbanVisible: true },
             { id: 'sg-5', label: 'Done', kanbanVisible: true, terminal: true },
           ],
           steps: [
             { id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'coder', instructions: 'Implement the card.' },
-            { id: 'st-2', kind: 'command', stageId: 'sg-3', command: 'npm test', description: 'Run tests' },
+            { id: 'st-2', kind: 'command', stageId: 'sg-3', command: 'npm test' },
             { id: 'st-3', kind: 'human', stageId: 'sg-4', description: 'Approval' },
           ],
           updatedAt: new Date().toISOString(),
@@ -55,198 +75,191 @@ describe('PipelineEditorComponent', () => {
     );
   }
 
-  it('lists the project’s pipelines with a step summary', async () => {
-    seedPipeline('PL-1', 'Standard coding card');
+  it('lists pipelines with stage and step summaries', async () => {
+    seedPipeline();
     const fixture = await render();
-    const rows = [...fixture.nativeElement.querySelectorAll('.row')];
+    const row = (fixture.nativeElement as HTMLElement).querySelector('.row')!;
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.textContent).toContain('Standard coding card');
-    expect(rows[0]?.textContent).toContain('PL-1');
-    expect(rows[0]?.textContent).toContain('agent → command → gate');
+    expect(row.textContent).toContain('Standard coding card');
+    expect(row.textContent).toContain('PL-1');
+    expect(row.textContent).toContain('agent → command → gate');
   });
 
-  it('authors a pipeline from scratch and publishes requestPipelineSave', async () => {
+  it('shows a compact stage path and a separate flat ordered step list', async () => {
+    seedPipeline();
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    await fixture.whenStable();
+
+    expect([...el.querySelectorAll('.stage-name')].map((node) => node.textContent?.trim())).toEqual([
+      'New',
+      'Implementation',
+      'Validation',
+      'Approval',
+      'Done',
+    ]);
+    expect(el.querySelectorAll('.steps > .step')).toHaveLength(3);
+    expect(el.querySelector('.stage-card .step')).toBeNull();
+    expect(el.querySelector('.stage-card.hidden-stage')).toBeTruthy();
+    expect(el.querySelector('.stage-card.terminal')).toBeTruthy();
+    expect(el.querySelectorAll('.step .stage-assignment select')).toHaveLength(3);
+    expect(el.querySelector('.step-id')).toBeNull();
+  });
+
+  it('authors and saves a new pipeline from the flat step row', async () => {
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
     el.querySelector<HTMLButtonElement>('.new')!.click();
     await fixture.whenStable();
 
-    // One default (agent) step; fill the name, the step id and the fields.
-    const nameInput = el.querySelector<HTMLInputElement>('.name-row input')!;
-    nameInput.value = 'Quick fix';
-    nameInput.dispatchEvent(new Event('input'));
-    const stepId = el.querySelector<HTMLInputElement>('.step-id')!;
-    stepId.value = 'st-1';
-    stepId.dispatchEvent(new Event('input'));
-    await fixture.whenStable();
-    const agentFields = el.querySelectorAll<HTMLInputElement>('.step-fields input')!;
-    agentFields[0]!.value = 'coder';
-    agentFields[0]!.dispatchEvent(new Event('input'));
-    await fixture.whenStable();
-    const instructions = el.querySelectorAll<HTMLInputElement>('.step-fields input')![1]!;
-    instructions.value = 'Implement it';
-    instructions.dispatchEvent(new Event('input'));
-    await fixture.whenStable();
-
+    await type(fixture, el.querySelector<HTMLInputElement>('.name-row input')!, 'Quick fix');
+    const fields = el.querySelectorAll<HTMLInputElement>('.step-fields input');
+    await type(fixture, fields[0]!, 'coder');
+    await type(fixture, fields[1]!, 'Implement it');
     el.querySelector<HTMLButtonElement>('.save')!.click();
     await fixture.whenStable();
 
-    const published = events.lastCommand('requestPipelineSave');
-    expect(published).toMatchObject({
+    expect(events.lastCommand('requestPipelineSave')).toMatchObject({
       projectId: 'P-1',
       requestPipelineSave: {
         pipeline: {
-          id: '',
           name: 'Quick fix',
-          revision: 0,
-          steps: [{ id: 'st-1', kind: 'agent', stageId: 'sg-1', agentKind: 'coder', instructions: 'Implement it' }],
+          steps: [
+            {
+              id: 'st-1',
+              kind: 'agent',
+              stageId: 'sg-1',
+              agentKind: 'coder',
+              instructions: 'Implement it',
+            },
+          ],
         },
       },
     });
-    // The starter draft carries a staged path (a terminal Done stage last).
-    expect(published?.requestPipelineSave?.pipeline.stages.at(-1)).toMatchObject({ terminal: true });
-    // The form closes; the pipeline lands via its echo.
-    expect(el.querySelector('.form')).toBeNull();
   });
 
-  it('blocks saving an incomplete step and shows the validation message', async () => {
-    const fixture = await render();
-    const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.new')!.click();
-    await fixture.whenStable();
-
-    // A pristine draft shows no error styling and no message.
-    expect(el.querySelector('.step.invalid')).toBeNull();
-    expect(el.querySelector('.state-error')).toBeNull();
-
-    // The name is missing: the first validation error wins.
-    el.querySelector<HTMLButtonElement>('.save')!.click();
-    await fixture.whenStable();
-
-    expect(el.querySelector('.state-error')?.textContent).toContain('Pipeline name is required');
-    expect(el.querySelector('.step.invalid')).not.toBeNull();
-
-    // Fill the name and the step id; the missing instructions surface next.
-    const nameInput = el.querySelector<HTMLInputElement>('.name-row input')!;
-    nameInput.value = 'Quick fix';
-    nameInput.dispatchEvent(new Event('input'));
-    const stepId = el.querySelector<HTMLInputElement>('.step-id')!;
-    stepId.value = 'st-1';
-    stepId.dispatchEvent(new Event('input'));
-    await fixture.whenStable();
-    el.querySelector<HTMLButtonElement>('.save')!.click();
-    await fixture.whenStable();
-
-    expect(el.querySelector('.state-error')?.textContent).toContain('an agent step needs instructions');
-    expect(events.lastCommand('requestPipelineSave')).toBeUndefined();
-  });
-
-  it('offers the known agent kinds in the step picker (type-to-filter)', async () => {
-    const fixture = await render();
-    const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.new')!.click();
-    await fixture.whenStable();
-
-    const datalist = el.querySelector('datalist#composer-agent-kinds');
-    expect(datalist).toBeTruthy();
-    const options = [...datalist!.querySelectorAll('option')].map((o) => o.getAttribute('value'));
-    expect(options).toContain('planner');
-    expect(options).toContain('coder');
-    // The agent step's kind field is wired to the list.
-    expect(el.querySelector('input[list="composer-agent-kinds"]')).toBeTruthy();
-  });
-
-  it('edits an existing pipeline and keeps its id (the upsert path)', async () => {
-    seedPipeline('PL-1', 'Standard coding card');
+  it('reassigns a step and moves it into the selected stage run region', async () => {
+    seedPipeline();
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
     el.querySelector<HTMLButtonElement>('.row .mini')!.click();
     await fixture.whenStable();
 
-    const nameInput = el.querySelector<HTMLInputElement>('.name-row input')!;
-    expect(nameInput.value).toBe('Standard coding card');
-    expect(el.querySelectorAll('.step').length).toBe(3);
+    await select(fixture, el.querySelector<HTMLSelectElement>('.step .stage-assignment select')!, 'sg-3');
+    const rows = [...el.querySelectorAll<HTMLElement>('.step')];
+    expect(rows.map((row) => row.querySelector<HTMLSelectElement>('.stage-assignment select')?.value)).toEqual([
+      'sg-3',
+      'sg-3',
+      'sg-4',
+    ]);
+    expect(rows[0]?.querySelector('input')?.value).toBe('npm test');
+    expect(rows[1]?.querySelectorAll('input')[1]?.value).toBe('Implement the card.');
 
     el.querySelector<HTMLButtonElement>('.save')!.click();
     await fixture.whenStable();
+    expect(
+      events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.steps.map((step) => step.id),
+    ).toEqual(['st-2', 'st-1', 'st-3']);
+  });
 
-    const published = events.lastCommand('requestPipelineSave');
-    expect(published).toMatchObject({
-      requestPipelineSave: { pipeline: { id: 'PL-1' } },
+  it('moves populated stages and preserves valid step grouping', async () => {
+    seedPipeline();
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    await fixture.whenStable();
+
+    // Move Implementation before New. Its step group follows it automatically.
+    el.querySelectorAll<HTMLButtonElement>('.stage-actions')[1]!
+      .querySelector<HTMLButtonElement>('.mini')!.click();
+    await fixture.whenStable();
+    expect([...el.querySelectorAll('.stage-name')].map((node) => node.textContent?.trim())).toEqual([
+      'Implementation',
+      'New',
+      'Validation',
+      'Approval',
+      'Done',
+    ]);
+    el.querySelector<HTMLButtonElement>('.save')!.click();
+    await fixture.whenStable();
+    expect(
+      events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.steps.map((step) => step.stageId),
+    ).toEqual(['sg-2', 'sg-3', 'sg-4']);
+  });
+
+  it('only reorders steps within the same stage', async () => {
+    seedPipeline();
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    await fixture.whenStable();
+
+    const firstDown = el.querySelectorAll<HTMLButtonElement>('.step')[0]!.querySelectorAll<HTMLButtonElement>('.mini')[1]!;
+    expect(firstDown.disabled).toBe(true);
+  });
+
+  it('refuses to remove a stage while steps are assigned to it', async () => {
+    seedPipeline();
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    await fixture.whenStable();
+
+    el.querySelectorAll<HTMLElement>('.stage-card')[1]!.querySelector<HTMLButtonElement>('.danger')!.click();
+    await fixture.whenStable();
+    expect(el.querySelector('.state-error')?.textContent).toContain('Move the 1 step assigned to Implementation');
+    expect(el.querySelectorAll('.stage-card')).toHaveLength(5);
+  });
+
+  it('authors outcomes in the selected stage settings', async () => {
+    seedPipeline();
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    await fixture.whenStable();
+
+    el.querySelectorAll<HTMLButtonElement>('.stage-select')[1]!.click();
+    await fixture.whenStable();
+    el.querySelector<HTMLButtonElement>('.stage-settings .mini')!.click();
+    await fixture.whenStable();
+    await type(fixture, el.querySelector<HTMLInputElement>('.outcome-rule input')!, 'rework');
+    await select(fixture, el.querySelector<HTMLSelectElement>('.outcome-rule select')!, 'sg-1');
+    el.querySelector<HTMLButtonElement>('.save')!.click();
+    await fixture.whenStable();
+
+    expect(events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.stages[1]).toMatchObject({
+      outcomes: [{ outcome: 'rework', toStageId: 'sg-1' }],
     });
   });
 
-  it('authors stage outcomes and publishes them with the save', async () => {
-    seedPipeline('PL-1', 'Standard coding card');
+  it('shows validation only after save and resets it for the next draft', async () => {
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    el.querySelector<HTMLButtonElement>('.new')!.click();
     await fixture.whenStable();
-
-    // A forward outcome on the first stage (no earlier stage to return to).
-    const firstStage = el.querySelectorAll('.stage')[0]!;
-    firstStage.querySelector<HTMLButtonElement>('.stage-row .mini')!.click();
-    await fixture.whenStable();
-    const forward = el.querySelector<HTMLInputElement>('.outcome-rule input')!;
-    forward.value = 'approved';
-    forward.dispatchEvent(new Event('input'));
-    await fixture.whenStable();
-    const requires = firstStage.querySelector<HTMLInputElement>('.stage-row input[type="checkbox"]')!;
-    requires.click();
-    await fixture.whenStable();
-
-    // A backward outcome on the second stage: returns to the first.
-    const secondStage = el.querySelectorAll('.stage')[1]!;
-    secondStage.querySelector<HTMLButtonElement>('.stage-row .mini')!.click();
-    await fixture.whenStable();
-    const backward = secondStage.querySelector<HTMLInputElement>('.outcome-rule input')!;
-    backward.value = 'rework';
-    backward.dispatchEvent(new Event('input'));
-    await fixture.whenStable();
-    const target = secondStage.querySelector<HTMLSelectElement>('.outcome-rule select')!;
-    target.value = 'sg-1';
-    target.dispatchEvent(new Event('change'));
-    await fixture.whenStable();
+    expect(el.querySelector('.state-error')).toBeNull();
 
     el.querySelector<HTMLButtonElement>('.save')!.click();
     await fixture.whenStable();
-
-    const stages = events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.stages ?? [];
-    expect(stages[0]).toMatchObject({ id: 'sg-1', outcomes: [{ outcome: 'approved' }], requiresOutcome: true });
-    expect(stages[1]).toMatchObject({ id: 'sg-2', outcomes: [{ outcome: 'rework', toStageId: 'sg-1' }] });
-    // The outcome-free stages stay clean.
-    expect(stages[2]?.outcomes).toBeUndefined();
-  });
-
-  it('blocks saving an outcome without a name', async () => {
-    seedPipeline('PL-1', 'Standard coding card');
-    const fixture = await render();
-    const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    expect(el.querySelector('.state-error')?.textContent).toContain('Pipeline name is required');
+    el.querySelector<HTMLButtonElement>('.cancel')!.click();
     await fixture.whenStable();
-
-    el.querySelectorAll('.stage')[0]!.querySelector<HTMLButtonElement>('.stage-row .mini')!.click();
+    el.querySelector<HTMLButtonElement>('.new')!.click();
     await fixture.whenStable();
-    el.querySelector<HTMLButtonElement>('.save')!.click();
-    await fixture.whenStable();
-
-    expect(el.querySelector('.state-error')?.textContent).toContain('Stage 1: outcome 1 needs a name');
-    expect(events.lastCommand('requestPipelineSave')).toBeUndefined();
+    expect(el.querySelector('.state-error')).toBeNull();
   });
 
   it('deletes a pipeline after confirming', async () => {
-    seedPipeline('PL-1', 'Standard coding card');
+    seedPipeline();
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
     el.querySelector<HTMLButtonElement>('.row .row-actions .danger')!.click();
     await fixture.whenStable();
-
-    // Deletion waits on the confirmation dialog.
     expect(events.lastCommand('requestPipelineDelete')).toBeUndefined();
+
     TestBed.inject(ConfirmService).resolve(true);
     await fixture.whenStable();
-
     expect(events.lastCommand('requestPipelineDelete')).toMatchObject({
       requestPipelineDelete: { pipelineId: 'PL-1' },
     });

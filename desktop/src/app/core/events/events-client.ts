@@ -42,12 +42,6 @@ export const PROJECTS_GATEWAY = new InjectionToken<ProjectsBridge>(
   'composer.projects.gateway',
 );
 
-/** The renderer's door to the Electron main process. */
-export interface ProjectDirectorySelection {
-  readonly name: string;
-  readonly directory: string;
-}
-
 /** One server entry (v2: there is exactly one server). */
 export interface RegistryEntry {
   readonly id: string;
@@ -57,7 +51,6 @@ export interface RegistryEntry {
 }
 
 export interface ProjectsBridge {
-  pickDirectory(): Promise<ProjectDirectorySelection | null>;
   /** Probes the server URI, spawns it on refusal, waits for health. */
   discover(): Promise<RegistryEntry | null>;
 }
