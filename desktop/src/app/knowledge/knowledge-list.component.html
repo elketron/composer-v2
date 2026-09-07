@@ -1,0 +1,42 @@
+<button type="button" class="search-box" (click)="$event.stopPropagation()">
+  <input
+    type="search"
+    class="search-input"
+    autocomplete="off"
+    spellcheck="false"
+    [placeholder]="placeholder()"
+    aria-label="search knowledge notes"
+    [value]="query()"
+    (input)="onSearchInput(searchInput.value)"
+    #searchInput
+  />
+</button>
+
+<button type="button" class="new-note" (click)="create()">+ new note</button>
+
+@if (error(); as message) {
+  <p class="state-error">{{ message }}</p>
+} @else if (loading()) {
+  <p class="state-empty inline">loading…</p>
+} @else {
+  @for (entry of visible().length > 0 ? visible() : entries(); track entry.path) {
+    <button
+      type="button"
+      class="note-row"
+      [class.active]="entry.path === selected()"
+      [class.editing]="entry.path === selected() && dirty()"
+      (click)="select(entry.path)"
+    >
+      <span class="note-title">{{ entry.title }}</span>
+      <span class="note-path">{{ entry.path }}</span>
+    </button>
+  } @empty {
+    <p class="state-empty inline">
+      @if (query().trim() !== '') {
+        no notes match
+      } @else {
+        nothing saved yet — ask the assistant to remember things
+      }
+    </p>
+  }
+}

@@ -6,7 +6,7 @@
         <p>{{ detail }}</p>
       }
       <div class="actions">
-        <button type="button" (click)="decide(false)">cancel</button>
+        <button #cancelButton type="button" (click)="decide(false)">cancel</button>
         <button
           #accept
           type="button"

@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import {
+  BookOpen,
   Bot,
   CircleUser,
   LayoutDashboard,
@@ -48,6 +49,7 @@ export class LeftRailComponent {
         route: `${base}/pipelines`,
       },
       { id: 'agent', label: 'coding', icon: Bot, route: `${base}/coding` },
+      { id: 'docs', label: 'docs', icon: BookOpen, route: `${base}/docs` },
       { id: 'canvas', label: 'canvas', icon: PenTool },
     ];
   });

@@ -28,21 +28,26 @@ import {
   type Project,
   type Stage,
   type SubStateStatus,
+  type WorkflowStep,
 } from './wire/models.js';
 import type { PipelineRunProgress } from './fold.js';
 import { defaultPipeline } from './pipelines.js';
+import { PIPELINE_AGENT_KINDS } from './agents.js';
+import { deleteDoc as deleteDocFile, renameDoc as renameDocFile, saveDoc as saveDocFile } from './docs.js';
+import { deleteWorkflow as deleteWorkflowFile, saveWorkflow, MAX_WORKFLOW_STEPS } from './workflows.js';
+import type { KnowledgeStore } from './knowledge.js';
 
 /** Ceiling on steps one pipeline may carry (v1 M3). */
 const MAX_PIPELINE_STEPS = 64;
 
-/** The agent kinds the runner implements (v1 M3: the coder). */
-const IMPLEMENTED_AGENT_KINDS = ['coder'];
-
 export class Processor {
   private bus: Bus;
+  /** The knowledge library (Phase 9); absent only in narrow unit tests. */
+  private readonly knowledge?: KnowledgeStore;
 
-  constructor(bus: Bus) {
+  constructor(bus: Bus, knowledge?: KnowledgeStore) {
     this.bus = bus;
+    this.knowledge = knowledge;
   }
 
   /**
@@ -129,6 +134,24 @@ export class Processor {
         return this.confirmProposal(command.proposalId, command.items);
       case 'requestProposalDiscard':
         return this.discardProposal(command.proposalId);
+      case 'requestDocSave':
+        return this.saveDoc(projectId, command.path, command.content);
+      case 'requestDocRename':
+        return this.renameDoc(projectId, command.path, command.to);
+      case 'requestDocDelete':
+        return this.deleteDoc(projectId, command.path);
+      case 'requestKnowledgeSave':
+        return this.saveKnowledge(command);
+      case 'requestKnowledgeDelete':
+        return this.deleteKnowledge(command.path);
+      case 'requestWorkflowRecordStart':
+        return this.startWorkflowRecording(projectId, command.sessionId, command.title, command.description, command.tags);
+      case 'requestWorkflowRecordStep':
+        return this.addWorkflowRecordingStep(projectId, command.sessionId, command.step);
+      case 'requestWorkflowRecordStop':
+        return this.stopWorkflowRecording(projectId, command.sessionId, command.links);
+      case 'requestWorkflowDelete':
+        return this.deleteWorkflow(projectId, command.path);
       default: {
         const unknown = command as { type: string };
         return rejected('invalidCommand', `${unknown.type} is not implemented yet`);
@@ -732,7 +755,7 @@ export class Processor {
     }
     const pipeline = this.pipelinesOf(scope).get(pipelineId)!;
     const kind = pipeline.steps.find((step) => step.kind === 'agent')?.agentKind;
-    if (kind !== undefined && !IMPLEMENTED_AGENT_KINDS.includes(kind)) {
+    if (kind !== undefined && !PIPELINE_AGENT_KINDS.includes(kind)) {
       return rejected('unknownAgentKind', `Agent kind '${kind}' has no implementation yet`);
     }
 
@@ -1098,6 +1121,219 @@ export class Processor {
       return rejected('invalidCommand', `Proposal ${proposalId} was already ${proposal.status}`);
     }
     await this.bus.publish(undefined, 'proposalDiscarded', { proposalId });
+    return ok();
+  }
+
+  // ---- Docs (Phase 9): validated writes over the project's docs/ files ----
+
+  /** Creates or overwrites one doc; the event carries metadata only. */
+  private async saveDoc(
+    scope: string | undefined,
+    path: string,
+    content: string,
+  ): Promise<CommandOutcome> {
+    const directory = this.directoryOf(scope);
+    if (typeof directory !== 'string') return directory;
+    const result = saveDocFile(directory, path, content);
+    if (!result.ok) return rejected('invalidCommand', result.error);
+    await this.bus.publish(scope!, 'docSaved', { doc: result.value });
+    return ok();
+  }
+
+  /** Deletes one doc; the tombstone is project-scoped, by path. */
+  private async deleteDoc(scope: string | undefined, path: string): Promise<CommandOutcome> {
+    const directory = this.directoryOf(scope);
+    if (typeof directory !== 'string') return directory;
+    const result = deleteDocFile(directory, path);
+    if (!result.ok) return rejected('invalidCommand', result.error);
+    await this.bus.publish(scope!, 'docDeleted', { path });
+    return ok();
+  }
+
+  /**
+   * Renames one doc (a single on-disk rename): the new metadata lands as
+   * docSaved before the old path's docDeleted, so folds see an upsert
+   * then the tombstone in either order. Same path is a no-op.
+   */
+  private async renameDoc(scope: string | undefined, path: string, to: string): Promise<CommandOutcome> {
+    const directory = this.directoryOf(scope);
+    if (typeof directory !== 'string') return directory;
+    if (path === to) return ok();
+    const result = renameDocFile(directory, path, to);
+    if (!result.ok) return rejected('invalidCommand', result.error);
+    await this.bus.publish(scope!, 'docSaved', { doc: result.value });
+    await this.bus.publish(scope!, 'docDeleted', { path });
+    return ok();
+  }
+
+  /** The linked directory of a file-backed command's scope, or the rejection. */
+  private directoryOf(scope: string | undefined): string | CommandOutcome {
+    if (scope === undefined || !this.bus.state.projects.has(scope)) {
+      return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
+    }
+    const directory = this.bus.state.projects.get(scope)!.directory;
+    if (directory === undefined) {
+      return rejected('invalidCommand', `Project ${scope} has no directory set`);
+    }
+    return directory;
+  }
+
+  // ---- Knowledge (Phase 9): global writes over the data-dir library ----
+
+  /**
+   * Saves a note: with a path the content is the exact file (the
+   * desktop's edit flow), without one title/tags frontmatter it and a
+   * unique slug filename (the agent's save tool).
+   */
+  private async saveKnowledge(command: {
+    path?: string;
+    title?: string;
+    tags?: string[];
+    content: string;
+  }): Promise<CommandOutcome> {
+    if (this.knowledge === undefined) {
+      return rejected('invalidCommand', 'knowledge storage is unavailable');
+    }
+    const result =
+      command.path !== undefined && command.path.trim() !== ''
+        ? this.knowledge.saveToFile(command.path, command.content)
+        : this.knowledge.createEntry({
+            title: command.title ?? '',
+            tags: command.tags,
+            content: command.content,
+          });
+    if (!result.ok) return rejected('invalidCommand', result.error);
+    await this.bus.publish(undefined, 'knowledgeSaved', { entry: result.value });
+    return { ok: true, savedPath: result.value.path };
+  }
+
+  /** Deletes one note; the tombstone is global, by path. */
+  private async deleteKnowledge(path: string): Promise<CommandOutcome> {
+    if (this.knowledge === undefined) {
+      return rejected('invalidCommand', 'knowledge storage is unavailable');
+    }
+    const result = this.knowledge.delete(path);
+    if (!result.ok) return rejected('invalidCommand', result.error);
+    await this.bus.publish(undefined, 'knowledgeDeleted', { path });
+    return ok();
+  }
+
+  // ---- Agent workflows (S34): worker agents record procedures ----
+
+  /**
+   * One open recording: the processor's in-memory state between the
+   * agent's start and stop tool calls. A restart (or a crashed run) drops
+   * it — only a stopped recording is durable. Keyed by
+   * `<projectId>/<sessionId>`.
+   */
+  private readonly workflowRecordings = new Map<
+    string,
+    { title: string; description: string; tags: string[]; source?: string; agent?: string; steps: WorkflowStep[]; startedAt: string }
+  >();
+
+  private workflowRecordingKey(projectId: string | undefined, sessionId: string): string | null {
+    if (projectId === undefined || projectId === '') return null;
+    return `${projectId}/${sessionId}`;
+  }
+
+  private async startWorkflowRecording(
+    projectId: string | undefined,
+    sessionId: string,
+    title: string,
+    description?: string,
+    tags?: string[],
+  ): Promise<CommandOutcome> {
+    const directory = this.directoryOf(projectId);
+    if (typeof directory !== 'string') return directory;
+    const key = this.workflowRecordingKey(projectId, sessionId);
+    if (key === null) return rejected('invalidCommand', 'a workflow recording needs a session');
+    const session = this.bus.state.byProject.get(projectId!)?.agentSessions.get(sessionId);
+    if (session === undefined) {
+      return rejected('unknownSession', `Unknown agent session ${sessionId}`);
+    }
+    if (session.status !== 'running') {
+      return rejected('invalidCommand', `Agent session ${sessionId} is not running`);
+    }
+    if (this.workflowRecordings.has(key)) {
+      return rejected('invalidCommand', `Session ${sessionId} already has an open workflow recording`);
+    }
+    const trimmed = title.trim();
+    if (trimmed === '') return rejected('invalidCommand', 'a workflow needs a title');
+    this.workflowRecordings.set(key, {
+      title: trimmed,
+      description: description?.trim() ?? '',
+      tags: (tags ?? []).map((tag) => tag.trim()).filter((tag) => tag !== ''),
+      // The card and the worker the session belongs to (a pipeline agent
+      // session's bound card and step kind).
+      ...(session.cardId !== '' ? { source: session.cardId } : {}),
+      ...(session.agentKind !== undefined ? { agent: session.agentKind } : {}),
+      steps: [],
+      startedAt: nowIso(),
+    });
+    return ok();
+  }
+
+  private async addWorkflowRecordingStep(
+    projectId: string | undefined,
+    sessionId: string,
+    step: WorkflowStep,
+  ): Promise<CommandOutcome> {
+    const key = this.workflowRecordingKey(projectId, sessionId);
+    const recording = key !== null ? this.workflowRecordings.get(key) : undefined;
+    if (key === null || recording === undefined) {
+      return rejected('invalidCommand', `Session ${sessionId} has no open workflow recording`);
+    }
+    const title = step.title.trim();
+    if (title === '') return rejected('invalidCommand', 'a workflow step needs a title');
+    if (recording.steps.length >= MAX_WORKFLOW_STEPS) {
+      return rejected('invalidCommand', `a workflow may not exceed ${MAX_WORKFLOW_STEPS} steps`);
+    }
+    recording.steps.push({
+      title,
+      ...(step.detail?.trim() ? { detail: step.detail.trim() } : {}),
+      ...(step.command?.trim() ? { command: step.command.trim() } : {}),
+    });
+    return ok();
+  }
+
+  private async stopWorkflowRecording(
+    projectId: string | undefined,
+    sessionId: string,
+    links?: string[],
+  ): Promise<CommandOutcome> {
+    const directory = this.directoryOf(projectId);
+    if (typeof directory !== 'string') return directory;
+    const key = this.workflowRecordingKey(projectId, sessionId);
+    const recording = key !== null ? this.workflowRecordings.get(key) : undefined;
+    if (key === null || recording === undefined) {
+      return rejected('invalidCommand', `Session ${sessionId} has no open workflow recording`);
+    }
+    if (recording.steps.length === 0) {
+      return rejected('invalidCommand', 'a workflow needs at least one step — add steps or keep recording');
+    }
+    const result = saveWorkflow(directory, {
+      title: recording.title,
+      ...(recording.description !== '' ? { description: recording.description } : {}),
+      tags: recording.tags,
+      ...(recording.source !== undefined ? { source: recording.source } : {}),
+      ...(recording.agent !== undefined ? { agent: recording.agent } : {}),
+      steps: recording.steps,
+      links,
+      recordedAt: recording.startedAt,
+    });
+    if (!result.ok) return rejected('invalidCommand', result.error);
+    this.workflowRecordings.delete(key);
+    await this.bus.publish(projectId!, 'workflowSaved', { workflow: result.value });
+    return { ok: true, savedPath: result.value.path };
+  }
+
+  /** Deletes one recorded workflow; the tombstone is project-scoped, by path. */
+  private async deleteWorkflow(projectId: string | undefined, path: string): Promise<CommandOutcome> {
+    const directory = this.directoryOf(projectId);
+    if (typeof directory !== 'string') return directory;
+    const result = deleteWorkflowFile(directory, path);
+    if (!result.ok) return rejected('invalidCommand', result.error);
+    await this.bus.publish(projectId!, 'workflowDeleted', { path });
     return ok();
   }
 

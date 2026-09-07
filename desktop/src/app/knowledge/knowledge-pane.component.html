@@ -1,0 +1,79 @@
+@if (mode() === 'view') {
+  @if (readError(); as error) {
+    <p class="state-error">{{ error }}</p>
+  } @else if (selectedPath() === null) {
+    <div class="state-empty">
+      <span class="state-label">knowledge</span>
+      <span>select a note, or save one from a conversation — notes are markdown in the composer data dir</span>
+    </div>
+  } @else if (content() === null) {
+    <p class="state-empty inline">loading…</p>
+  } @else {
+    <div class="note-bar">
+      <span class="note-path" [title]="selectedPath()!">{{ selectedPath() }}</span>
+      <span class="note-actions">
+        <button type="button" class="action" (click)="beginEdit()">edit</button>
+        <button type="button" class="action danger" (click)="deleteSelected()">delete</button>
+      </span>
+    </div>
+    <article
+      class="note-body markdown"
+      [innerHTML]="content()!"
+      [appMermaid]="rendered()!"
+    ></article>
+  }
+} @else {
+  <div class="editor-pane">
+    <div class="note-bar">
+      <span class="note-mode">{{ mode() === 'edit' ? 'editing' : 'new note' }}</span>
+      <input
+        type="text"
+        class="field title-field"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="title"
+        aria-label="note title"
+        [value]="title()"
+        (input)="title.set(titleInput.value)"
+        #titleInput
+      />
+      <input
+        type="text"
+        class="field tags-field"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="tags, comma separated"
+        aria-label="note tags"
+        [value]="tags()"
+        (input)="tags.set(tagsInput.value)"
+        #tagsInput
+      />
+      <span class="note-actions">
+        @if (dirty()) {
+          <span class="dirty-mark">unsaved</span>
+        }
+        <button
+          type="button"
+          class="action primary"
+          [disabled]="saveDisabled()"
+          (click)="save()"
+        >
+          save
+        </button>
+        <button type="button" class="action" (click)="cancel()">cancel</button>
+      </span>
+    </div>
+    @if (saveError(); as error) {
+      <p class="state-error">{{ error }}</p>
+    }
+    @defer (when mode() !== 'view') {
+      <app-doc-editor
+        class="editor"
+        [content]="mode() === 'edit' ? editBodyBaseline : ''"
+        (contentChange)="draft.set($event)"
+      />
+    } @placeholder {
+      <p class="state-empty inline">loading editor…</p>
+    }
+  </div>
+}

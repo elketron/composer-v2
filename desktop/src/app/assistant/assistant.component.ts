@@ -2,8 +2,12 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, v
 import { FormsModule } from '@angular/forms';
 
 import { renderMarkdown } from '../core/markdown';
+import { MermaidDirective } from '../core/mermaid/mermaid.directive';
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
+import { KnowledgeListComponent } from '../knowledge/knowledge-list.component';
+import { KnowledgePaneComponent } from '../knowledge/knowledge-pane.component';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import {
   AssistantMessage,
   AssistantToolEntry,
@@ -15,12 +19,14 @@ import { AssistantService } from './assistant.service';
 /**
  * The global assistant (Phase 6): a thread sidebar, the transcript with its
  * live composer, and the project scope picker beside the conversation.
- * Scope changes publish wholesale; archive asks for confirmation.
+ * Scope changes publish wholesale; archive asks for confirmation. The
+ * sidebar's second tab is the knowledge library (Phase 9 S30) with its
+ * pane; agent messages offer a one-click "remember".
  */
 @Component({
   selector: 'app-assistant',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, MermaidDirective, KnowledgeListComponent, KnowledgePaneComponent],
   templateUrl: './assistant.component.html',
   styleUrl: './assistant.component.scss',
 })
@@ -28,6 +34,7 @@ export class AssistantComponent {
   private readonly assistant = inject(AssistantService);
   private readonly shell = inject(ShellService);
   private readonly confirm = inject(ConfirmService);
+  private readonly knowledge = inject(KnowledgeService);
 
   protected readonly threads = this.assistant.activeThreads;
   protected readonly archived = this.assistant.archivedThreads;
@@ -76,6 +83,36 @@ export class AssistantComponent {
 
   /** Tool-activity boxes the user opened manually (past turns). */
   private readonly openedBoxes = signal<ReadonlySet<string>>(new Set());
+
+  /** The sidebar's pane: conversation threads or the knowledge library. */
+  protected readonly pane = signal<'threads' | 'knowledge'>('threads');
+  /** Agent messages already saved to knowledge (the button's feedback). */
+  protected readonly remembered = signal<ReadonlySet<string>>(new Set());
+
+  protected async switchPane(target: 'threads' | 'knowledge'): Promise<void> {
+    if (target === this.pane()) return;
+    // Leaving the knowledge pane with unsaved edits confirms first.
+    if (this.pane() === 'knowledge' && !(await this.knowledge.confirmDiscard())) return;
+    this.pane.set(target);
+  }
+
+  /**
+   * Saves an agent reply into the knowledge library: the title is its
+   * first line, the body the full markdown text. The button reports the
+   * save per message.
+   */
+  protected async remember(message: AssistantMessage): Promise<void> {
+    if (this.remembered().has(message.id)) return;
+    const title = firstLine(message.text);
+    const result = await this.knowledge.create(title, [], message.text);
+    if (result.ok) {
+      this.remembered.update((saved) => new Set(saved).add(message.id));
+    }
+  }
+
+  protected isRemembered(message: AssistantMessage): boolean {
+    return message.id !== '' && this.remembered().has(message.id);
+  }
 
   /** A retry is possible when the thread has a user message and is not running. */
   protected readonly canRetry = computed(() => {
@@ -398,4 +435,13 @@ function argDigest(args: unknown): string {
 
 function truncate(value: string, cap: number): string {
   return value.length <= cap ? value : `${value.slice(0, cap)}…`;
+}
+
+/** A reply's first markdown line, stripped, as the note's title. */
+function firstLine(text: string): string {
+  const line = text
+    .split('\n')
+    .map((candidate) => candidate.replace(/^#+\s*/, '').replace(/[*_`>]/g, '').trim())
+    .find((candidate) => candidate !== '');
+  return truncate(line ?? 'saved reply', 60);
 }

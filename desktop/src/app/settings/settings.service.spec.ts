@@ -98,8 +98,8 @@ describe('SettingsService', () => {
       model: null,
       models: { planner: 'planner-model', reviewer: 'review-model' },
     });
-    // The picker now offers the custom kind.
-    expect(service.agentKinds()).toEqual(['planner', 'coder', 'reviewer']);
+    // The picker now offers the custom kind (the shipped ones stay first).
+    expect(service.agentKinds()).toEqual(['planner', 'coder', 'tester', 'reviewer', 'security']);
   });
 
   it('clearing an agent model drops the key on save', async () => {
@@ -127,7 +127,7 @@ describe('SettingsService', () => {
     await service.load();
 
     expect(service.models()).toEqual({ planner: 'p-m', reviewer: 'r-m' });
-    expect(service.agentKinds()).toEqual(['planner', 'coder', 'reviewer']);
+    expect(service.agentKinds()).toEqual(['planner', 'coder', 'tester', 'reviewer', 'security']);
     expect(shell.model()).toBe('default-m');
   });
 });

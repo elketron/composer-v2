@@ -48,6 +48,14 @@
                   "maximumError": "12kB"
                 }
               ],
+              // The critical-CSS swap uses an inline onload handler, which
+              // the renderer CSP (index.html) blocks — styles would never
+              // apply. Opt out to stay CSP-clean.
+              "optimization": {
+                "styles": {
+                  "inlineCritical": false
+                }
+              },
               "outputHashing": "all"
             },
             "development": {

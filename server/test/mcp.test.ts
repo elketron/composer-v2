@@ -4,6 +4,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { handleMessage, httpCaller } from '../src/mcp.js';
 import { handleMessage as assistantHandleMessage } from '../src/assistant-mcp.js';
+import { handleMessage as workerHandleMessage } from '../src/worker-mcp.js';
 import type { Command, CommandOutcome } from '../src/wire/commands.js';
 
 const context = { projectId: 'P-1', sessionId: 'S-1' };
@@ -197,13 +198,14 @@ describe('the assistant mcp surface', () => {
   };
   const context = { threadId: 'TH-1' };
 
-  it('tools_list_exposes_the_nine_reads_plus_the_proposal_draft', async () => {
+  it('tools_list_exposes_the_reads_plus_the_two_routed_writes', async () => {
     const response = await assistantHandleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, caller, context);
     const tools = (response!['result'] as { tools: { name: string }[] }).tools;
     expect(tools.map((tool) => tool.name)).toEqual([
       'composer_overview',
       'composer_card',
       'composer_plan',
+      'knowledge_search',
       'list_files',
       'read_file',
       'git_status',
@@ -211,6 +213,7 @@ describe('the assistant mcp surface', () => {
       'git_diff',
       'web_fetch',
       'propose_cards',
+      'knowledge_save',
     ]);
   });
 
@@ -241,6 +244,65 @@ describe('the assistant mcp surface', () => {
       caller,
       context,
     );
+    expect(response).toMatchObject({ error: { code: -32601 } });
+  });
+});
+
+// ---- The workers' workflow MCP surface (S34) ----
+
+describe('the worker mcp surface', () => {
+  const recorded: { projectId: string; sessionId: string; tool: string; args: Record<string, unknown> }[] = [];
+  const caller: import('../src/worker-mcp.js').WorkerCaller = {
+    async call(projectId, sessionId, tool, args) {
+      recorded.push({ projectId, sessionId, tool, args });
+      return { ok: true, savedPath: 'procedure.md' };
+    },
+  };
+  const context = { projectId: 'P-1', sessionId: 'A-1' };
+
+  it('tools_list_exposes_the_recording_and_retrieval_tools', async () => {
+    const response = await workerHandleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, caller, context);
+    const tools = (response!['result'] as { tools: { name: string }[] }).tools;
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'workflow_start_recording',
+      'workflow_add_step',
+      'workflow_stop_recording',
+      'workflow_search',
+      'workflow_read',
+    ]);
+  });
+
+  it('tools_call_reaches_the_worker_caller_with_the_session_context', async () => {
+    const response = await workerHandleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'workflow_add_step',
+          arguments: { step: { title: 'Run the checks', command: 'npm test' } },
+        },
+      },
+      caller,
+      context,
+    );
+    expect(recorded).toEqual([
+      {
+        projectId: 'P-1',
+        sessionId: 'A-1',
+        tool: 'workflow_add_step',
+        args: { step: { title: 'Run the checks', command: 'npm test' } },
+      },
+    ]);
+    const result = response!['result'] as { content: { text: string }[] };
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ ok: true, savedPath: 'procedure.md' });
+  });
+
+  it('notifications_get_no_response_and_unknown_methods_error', async () => {
+    expect(
+      await workerHandleMessage({ jsonrpc: '2.0', method: 'notifications/initialized' }, caller, context),
+    ).toBeNull();
+    const response = await workerHandleMessage({ jsonrpc: '2.0', id: 3, method: 'conjure' }, caller, context);
     expect(response).toMatchObject({ error: { code: -32601 } });
   });
 });

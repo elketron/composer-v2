@@ -12,6 +12,7 @@ import { Bus } from './bus.js';
 import { EventStore } from './store.js';
 import { Processor } from './processor.js';
 import { router } from './http.js';
+import { KnowledgeStore } from './knowledge.js';
 import { PlanningOrchestrator, resumeStrandedTurns } from './planning.js';
 import { AssistantOrchestrator, resumeStrandedThreads } from './assistant.js';
 import { PipelineRunner } from './runner.js';
@@ -36,8 +37,21 @@ export interface Config {
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     addr: env['COMPOSER_HTTP_ADDR'] ?? '127.0.0.1:5214',
-    dataDir: env['COMPOSER_DATA_DIR'] ?? join(homedir(), '.local', 'share', 'composer-v2'),
+    dataDir: env['COMPOSER_DATA_DIR'] ?? defaultDataDir(env),
   };
+}
+
+/**
+ * The default data home per platform (packaged desktops): XDG on Linux,
+ * %APPDATA% on Windows (the packaged app sets COMPOSER_DATA_DIR itself
+ * when it wants a private dir — this default serves bare `node dist`).
+ */
+function defaultDataDir(env: NodeJS.ProcessEnv): string {
+  if (process.platform === 'win32') {
+    const appData = env['APPDATA'] ?? join(homedir(), 'AppData', 'Roaming');
+    return join(appData, 'composer-v2');
+  }
+  return join(homedir(), '.local', 'share', 'composer-v2');
 }
 
 export async function boot(config: Config): Promise<{
@@ -49,7 +63,8 @@ export async function boot(config: Config): Promise<{
   await store.connect(config.dataDir);
   const bus = new Bus(store);
   const rehydrated = await bus.rehydrate();
-  const processor = new Processor(bus);
+  const knowledge = new KnowledgeStore(config.dataDir);
+  const processor = new Processor(bus, knowledge);
 
   // t10: a restart drops in-flight turns; tell the stranded sessions (and
   // the desktop's send-lock) before anything listens.
@@ -65,7 +80,11 @@ export async function boot(config: Config): Promise<{
   const [hostname, port] = config.addr.includes(':')
     ? (config.addr.split(':') as [string, string])
     : ['127.0.0.1', config.addr];
-  const server = serve({ fetch: router(bus, processor, store).fetch, hostname, port: Number(port) });
+  const server = serve({
+    fetch: router(bus, processor, store, knowledge).fetch,
+    hostname,
+    port: Number(port),
+  });
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -122,7 +141,7 @@ export async function boot(config: Config): Promise<{
     }
     const runner = new PipelineRunner(bus, processor, engine, {
       serverUrl: url,
-      mcpScriptPath: mcpScriptPath(),
+      mcpScriptPath: workerMcpScriptPath(),
       getModel: () => store.getSettings(),
     });
     runner.start();
@@ -165,6 +184,14 @@ function assistantMcpScriptPath(): string {
   return (
     process.env['COMPOSER_ASSISTANT_MCP_SCRIPT'] ??
     fileURLToPath(new URL('../dist/assistant-mcp.js', import.meta.url))
+  );
+}
+
+/** The workers' MCP child script (dist/worker-mcp.js). */
+function workerMcpScriptPath(): string {
+  return (
+    process.env['COMPOSER_WORKER_MCP_SCRIPT'] ??
+    fileURLToPath(new URL('../dist/worker-mcp.js', import.meta.url))
   );
 }
 

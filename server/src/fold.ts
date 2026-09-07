@@ -53,6 +53,8 @@ export interface AgentSessionState {
   id: string;
   projectId: string;
   cardId: string;
+  /** The pipeline step's agent kind (the shipped agent the turn loads). */
+  agentKind?: string;
   status: 'running' | 'ended' | 'failed';
   startedAt: string;
   endedAt?: string;
@@ -98,11 +100,26 @@ export function newState(): State {
   };
 }
 
-/** The card sub-state stage a pipeline step kind works in (v1, M3). */
-export function stepStageOf(kind: 'agent' | 'command' | 'human'): string {
+/**
+ * The card sub-state stage a pipeline step works in (v1, M3). An agent
+ * step works in its kind's stage (S33): the coder implements, the tester
+ * runs validation, the reviewer reviews, the security agent
+ * security-reviews. The fold's replay calls pass no agentKind (the wire's
+ * step events carry only the step kind), which lands on 'implement'.
+ */
+export function stepStageOf(kind: 'agent' | 'command' | 'human', agentKind?: string): string {
   switch (kind) {
     case 'agent':
-      return 'implement';
+      switch (agentKind) {
+        case 'tester':
+          return 'runValidation';
+        case 'reviewer':
+          return 'reviewChanges';
+        case 'security':
+          return 'securityReview';
+        default:
+          return 'implement';
+      }
     case 'command':
       return 'runValidation';
     case 'human':
@@ -366,6 +383,7 @@ export function apply(state: State, envelope: EventEnvelope): void {
         id: body.sessionId,
         projectId,
         cardId: body.cardId,
+        agentKind: body.agentKind,
         status: 'running',
         startedAt: body.startedAt,
         transcript: [],

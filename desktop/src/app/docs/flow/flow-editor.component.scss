@@ -1,0 +1,228 @@
+.flow-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.flow-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  flex-wrap: wrap;
+
+  .toolbar-hint {
+    color: var(--text-faint);
+    font-size: 11px;
+  }
+
+  .props {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+  }
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border-strong);
+  background: none;
+  border-radius: 4px;
+  padding: 3px 10px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--text-faint);
+  }
+
+  &.active {
+    background: var(--rail-active-fill);
+    color: var(--accent-soft);
+    border-color: var(--accent);
+  }
+
+  &.danger:hover {
+    color: var(--err);
+    border-color: var(--err);
+  }
+}
+
+.field {
+  width: 160px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+  }
+}
+
+.flow-error {
+  .detail {
+    display: block;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+}
+
+.canvas {
+  position: relative;
+  flex: 1;
+  min-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--text) 7%, transparent) 1px, transparent 1px) 0 0 / 22px 22px,
+    var(--panel);
+  touch-action: none;
+
+  &.error {
+    opacity: 0.45;
+    pointer-events: none;
+  }
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  padding-top: 18vh;
+}
+
+.wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+
+  .wire {
+    fill: none;
+    stroke: var(--text-dim);
+    stroke-width: 1.5;
+
+    &.active {
+      stroke: var(--accent-soft);
+      stroke-width: 2;
+    }
+
+    &.pending {
+      stroke: var(--accent-soft);
+      stroke-dasharray: 5 4;
+    }
+  }
+
+  .wire-hit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 14;
+    cursor: pointer;
+  }
+
+  .arrow {
+    fill: var(--text-dim);
+  }
+
+  .wire-label {
+    fill: var(--text);
+    font-size: 11px;
+    paint-order: stroke;
+    stroke: var(--panel);
+    stroke-width: 4px;
+    text-anchor: middle;
+    user-select: none;
+
+    &.active {
+      fill: var(--accent-soft);
+    }
+  }
+}
+
+.flow-node {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--text-dim);
+  background: color-mix(in srgb, var(--text) 6%, var(--bg));
+  color: var(--text);
+  font-size: 12px;
+  user-select: none;
+  cursor: grab;
+
+  &:active {
+    cursor: grabbing;
+  }
+
+  &.rect {
+    border-radius: 4px;
+  }
+
+  &.round {
+    border-radius: 999px;
+  }
+
+  &.diamond {
+    transform: rotate(45deg);
+    border-radius: 6px;
+
+    .node-label {
+      transform: rotate(-45deg);
+      max-width: 70%;
+      text-align: center;
+    }
+
+    .handle {
+      transform: rotate(-45deg);
+    }
+  }
+
+  &.selected {
+    border-color: var(--accent-soft);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+
+  .node-label {
+    overflow: hidden;
+    max-width: 88%;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .handle {
+    position: absolute;
+    right: -11px;
+    bottom: -11px;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    background: var(--panel);
+    color: var(--text-faint);
+    font-size: 10px;
+    cursor: crosshair;
+
+    &:hover {
+      color: var(--accent-soft);
+      border-color: var(--accent);
+    }
+  }
+}

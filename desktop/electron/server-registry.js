@@ -26,7 +26,7 @@ const path = require('node:path');
 
 // Bump together with server/src/wire/events.ts PROTOCOL_VERSION on any
 // wire change (event catalog or commands).
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 5;
 
 const PROBE_TIMEOUT_MS = 1_500;
 const SPAWN_POLL_MS = 250;
@@ -60,10 +60,23 @@ function spawnRecordPath() {
   return process.env['COMPOSER_SPAWN_RECORD'] ?? path.join(__dirname, '..', 'logs', 'server.json');
 }
 
-/** The workspace server entry: `<repo>/server/dist/index.js` when present. */
+/** The workspace server entry: `<repo>/server/dist/index.js` when present.
+ *  The packaged desktop points `COMPOSER_SERVER_ENTRY` at its bundled
+ *  copy (see main.js) — this fallback only serves the dev checkout. */
 function serverEntry() {
+  const override = process.env['COMPOSER_SERVER_ENTRY'];
+  if (override !== undefined && override !== '') return override;
   const candidate = path.join(__dirname, '..', '..', 'server', 'dist', 'index.js');
   return fs.existsSync(candidate) ? candidate : null;
+}
+
+/** The spawn's stdout/stderr sink: `$COMPOSER_SERVER_LOG`, else the dev
+ *  checkout's `desktop/logs/server.log` (never written in a packaged
+ *  app — main.js points the env at the user-data dir). */
+function serverLogFile() {
+  const override = process.env['COMPOSER_SERVER_LOG'];
+  if (override !== undefined && override !== '') return override;
+  return path.join(__dirname, '..', 'logs', 'server.log');
 }
 
 /**
@@ -202,15 +215,19 @@ async function discover() {
       if (command) {
         spawn(command, { stdio: 'ignore', shell: true, detached: true }).unref();
       } else if (entryJs !== null) {
-        const logDir = path.join(__dirname, '..', 'logs');
-        fs.mkdirSync(logDir, { recursive: true });
-        const logFile = fs.openSync(path.join(logDir, 'server.log'), 'a');
+        const logPath = serverLogFile();
+        fs.mkdirSync(path.dirname(logPath), { recursive: true });
+        const logFile = fs.openSync(logPath, 'a');
         const child = spawn(process.execPath, [entryJs], {
           stdio: ['ignore', logFile, logFile],
           detached: true,
           env: {
             ...process.env,
             COMPOSER_HTTP_ADDR: uri.replace(/^https?:\/\//, ''),
+            // Run the child as plain Node: in a packaged app process.execPath
+            // is the installed composer binary, and an Electron child would
+            // boot the app instead of the server.
+            ELECTRON_RUN_AS_NODE: '1',
           },
         });
         child.unref();

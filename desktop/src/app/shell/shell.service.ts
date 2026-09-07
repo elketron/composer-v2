@@ -34,8 +34,12 @@ export class ShellService {
   readonly activeTabId = signal<string | null>(null);
   readonly activeTab = computed(() => this.tabs().find((t) => t.id === this.activeTabId()) ?? null);
 
-  /** Active planner model shown in the top bar and status strip. */
-  readonly model = signal('qwen3.6');
+  /**
+   * Active planner model shown in the top bar and status strip. Starts at
+   * the server's neutral default; SettingsService replaces it with the
+   * server's real value as soon as `/settings` answers.
+   */
+  readonly model = signal('default');
 
   private readonly lastViews = readLastViews();
 
@@ -106,7 +110,7 @@ export class ShellService {
   rememberWorkspaceUrl(url: string): void {
     const path = url.split(/[?#]/, 1)[0];
     const match = path.match(
-      /^\/projects\/([^/]+)\/(coding\/(?:board|plan|pipelines|coding|run\/[^/]+))$/,
+      /^\/projects\/([^/]+)\/(coding\/(?:board|plan|docs|pipelines|coding|run\/[^/]+))$/,
     );
     if (!match) return;
     const projectId = decodeURIComponent(match[1]);
@@ -206,7 +210,7 @@ function readLastViews(): Record<string, string> {
       Object.entries(value).filter(
         (entry): entry is [string, string] =>
           typeof entry[1] === 'string' &&
-          /^coding\/(?:board|plan|pipelines|coding|run\/[^/]+)$/.test(entry[1]),
+          /^coding\/(?:board|plan|docs|pipelines|coding|run\/[^/]+)$/.test(entry[1]),
       ),
     );
   } catch {

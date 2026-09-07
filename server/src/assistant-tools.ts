@@ -16,6 +16,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { isAbsolute, resolve, sep } from 'node:path';
 import type { State } from './fold.js';
 import { readGitStatus, type GitRunner } from './dashboard.js';
+import type { KnowledgeStore } from './knowledge.js';
 
 /** One tool result, tool-shaped either way (rejections are content, not transport errors). */
 export type ToolResult = { ok: true; content: string } | { ok: false; error: string };
@@ -30,12 +31,15 @@ export interface AssistantToolEnv {
   fetchPage?: typeof fetch;
   /** The host resolver for the web tool's private-network guard. */
   resolveHost?: (host: string) => Promise<string[]>;
+  /** The knowledge library (the knowledge_search read). */
+  knowledge?: KnowledgeStore;
 }
 
 export const ASSISTANT_TOOL_NAMES = [
   'composer_overview',
   'composer_card',
   'composer_plan',
+  'knowledge_search',
   'list_files',
   'read_file',
   'git_status',
@@ -47,14 +51,20 @@ export const ASSISTANT_TOOL_NAMES = [
 export type AssistantToolName = (typeof ASSISTANT_TOOL_NAMES)[number];
 
 /**
- * The one write-capable tool on the assistant's MCP surface: it drafts a
- * proposal (validated, reversible via discard) and never creates cards
- * directly. Dispatched by the route before the read executor.
+ * The write-capable tools on the assistant's MCP surface: proposals are
+ * drafted (validated, reversible via discard) and never create cards;
+ * knowledge saves write only the composer data dir's library. Both are
+ * dispatched by the route before the read executor.
  */
 export const ASSISTANT_PROPOSAL_TOOL = 'propose_cards' as const;
+export const ASSISTANT_KNOWLEDGE_SAVE_TOOL = 'knowledge_save' as const;
 
 /** Every tool name the assistant's MCP child may call. */
-export const ASSISTANT_MCP_TOOL_NAMES: readonly string[] = [...ASSISTANT_TOOL_NAMES, ASSISTANT_PROPOSAL_TOOL];
+export const ASSISTANT_MCP_TOOL_NAMES: readonly string[] = [
+  ...ASSISTANT_TOOL_NAMES,
+  ASSISTANT_PROPOSAL_TOOL,
+  ASSISTANT_KNOWLEDGE_SAVE_TOOL,
+];
 
 export function isAssistantToolName(name: string): name is AssistantToolName {
   return (ASSISTANT_TOOL_NAMES as readonly string[]).includes(name);
@@ -93,6 +103,8 @@ export async function executeAssistantTool(
         return composerCard(env.state, scope, requiredString(args, 'projectId'), requiredString(args, 'cardId'));
       case 'composer_plan':
         return composerPlan(env.state, scope, requiredString(args, 'projectId'), optionalString(args['sessionId']));
+      case 'knowledge_search':
+        return knowledgeSearch(env.knowledge, requiredString(args, 'query'));
       case 'list_files':
         return listFiles(env.state, scope, requiredString(args, 'projectId'), optionalString(args['path']) ?? '.');
       case 'read_file':
@@ -348,6 +360,32 @@ function nonPrintableRatio(buffer: Buffer): number {
     if (byte < 9 || (byte > 13 && byte < 32)) nonPrintable += 1;
   }
   return nonPrintable / buffer.length;
+}
+
+// ---- Knowledge reads (the save is a routed write, like propose_cards) ----
+
+function knowledgeSearch(knowledge: KnowledgeStore | undefined, query: string): ToolResult {
+  if (knowledge === undefined) {
+    return { ok: false, error: 'knowledge storage is unavailable' };
+  }
+  const results = knowledge.search(query);
+  return {
+    ok: true,
+    content: JSON.stringify(
+      {
+        query,
+        results: results.map((result) => ({
+          path: result.info.path,
+          title: result.info.title,
+          tags: result.info.tags,
+          score: result.score,
+          snippet: result.snippet,
+        })),
+      },
+      null,
+      2,
+    ),
+  };
 }
 
 // ---- Git tools (no shell; bounded output) ----

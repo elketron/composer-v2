@@ -42,6 +42,7 @@ Project workflow routes:
 - `/projects/:projectId/coding/plan`
 - `/projects/:projectId/coding/pipelines`
 - `/projects/:projectId/coding/coding`
+- `/projects/:projectId/coding/docs`
 - `/projects/:projectId/coding/run/:cardId`
 
 Opening a project returns to its last-used workflow route, with the coding board
@@ -234,6 +235,88 @@ existing validated processor. One conversation proposal may span projects, but
 confirmation executes as a separate idempotent batch per project and reports
 partial failures explicitly.
 
+## Phase 9 - Docs, diagrams, and knowledge
+
+Status: implemented 2026-09-06 (S26 docs storage and the read-only
+viewer; S27 the editor with unsaved-work guards; S28 mermaid rendering
+in docs and assistant replies; S29 the knowledge library and the
+agent's search/save MCP tools; S30 the knowledge pane and the one-click
+remember; S31 the drag-and-drop flow editor over the mermaid subset).
+
+Composer gains durable written artifacts: per-project documentation as real
+markdown files, inline diagrams, and a global knowledge library the assistant
+can query and extend.
+
+Decisions:
+
+- Docs are plain markdown files under `<projectDirectory>/docs/` — versioned
+  with the project's own code, readable by the assistant's existing file
+  tools, and editable outside Composer without breaking anything. A project
+  without a linked directory has no docs surface (empty state pointing at
+  directory linking).
+- Diagrams are ```mermaid fenced blocks rendered inline. A drag-and-drop flow
+  editor round-trips a small mermaid flowchart subset (boxes, diamonds,
+  labeled arrows — logic flows, not art), so the saved file stays markdown.
+- Knowledge is markdown (small title/tags frontmatter) under the composer
+  data dir (`$COMPOSER_DATA_DIR/knowledge/`) — global, project-agnostic,
+  outside any repository.
+- The assistant recalls nothing automatically. It queries knowledge and docs
+  itself through new MCP tools (`composer_knowledge_search`,
+  `composer_knowledge_save`), visible in the tool-activity strip; project
+  docs stay reachable through the existing `list_files`/`read_file` tools.
+
+Architecture notes:
+
+- File content is the truth; the event log carries change notifications, not
+  copies. Doc and knowledge events carry metadata only (path, title, size,
+  hash, timestamps). Content moves over REST (list/read/write/delete).
+- Doc and knowledge writes go through the processor (single writer), enforce
+  real-path containment, symlink, binary, and size limits like the assistant
+  file tools, and publish metadata events (`docCreated`, `docSaved`,
+  `docDeleted`, `knowledgeSaved`, `knowledgeDeleted`) so desktop folds stay
+  reactive. External file edits reconcile on list refresh and view entry.
+- The knowledge directory is the only agent-writable location added by this
+  phase. The assistant still cannot edit project files; docs remain
+  human-edited through the editor.
+
+Slices:
+
+- S26 Docs storage and viewer: wire additions (commands, metadata events,
+  golden regen, protocol bump to 3), server CRUD over
+  `<projectDirectory>/docs/**.md`, docs view in the coding rail with list and
+  safe markdown rendering.
+- S27 Doc editor: create, edit, rename, delete with a real editor
+  (CodeMirror 6 — CSP-clean), unsaved-changes guard, save/delete through the
+  processor with explicit confirmations for destructive actions.
+- S28 Mermaid rendering: shared markdown pipeline renders ```mermaid blocks
+  to inline SVG (mermaid npm) in the docs viewer and the assistant
+  transcript; malformed diagrams render a visible error, never break the
+  page; sanitizer/CSP verification (no unsafe-eval; Angular sanitizer
+  bypassed only for mermaid-owned SVG output).
+- S29 Knowledge storage and agent access: knowledge service over the XDG
+  knowledge dir, REST list/read/write/delete/search (title, tag, and body
+  scoring), metadata events, and the two MCP tools behind the existing
+  `/mcp/read` whitelist.
+- S30 Knowledge UX: knowledge tab in the assistant surface (list, view,
+  search, edit) and a "save as knowledge" action on assistant messages that
+  writes through the same server path.
+- S31 Flow editor: drag-and-drop canvas over the mermaid flowchart subset —
+  add, connect, move, relabel nodes and edges, auto-layout (dagre), two-way
+  sync with the fenced block in the doc being edited.
+
+Acceptance criteria:
+
+- Docs are ordinary `.md` files in the project repository; edits made outside
+  Composer appear on refresh, and Composer's writes are plain file writes.
+- Assistant threads scoped to a project can read its docs with existing
+  tools; agents can save and later find knowledge through MCP.
+- Mermaid blocks render in docs and assistant replies; a bad diagram shows an
+  inline error without losing the rest of the document.
+- The flow editor round-trips: canvas edits re-emit the fenced block; hand
+  edits to the code appear on the canvas; surrounding doc text is untouched.
+- Every slice keeps `pnpm verify` green; the protocol bump leaves stale
+  servers refused, not silently attached.
+
 ## Cross-cutting engineering requirements
 
 - Preserve old event logs through additive fold defaults and migrations.
@@ -260,3 +343,4 @@ partial failures explicitly.
 6. Persistent read-only global assistant.
 7. Assistant branching and advanced conversation controls.
 8. Editable work proposals and confirmed card creation.
+9. Docs, diagrams, and the global knowledge library.

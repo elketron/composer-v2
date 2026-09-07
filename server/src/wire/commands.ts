@@ -10,8 +10,8 @@ import type {
   ProposalItem,
   Stage,
   SubStateStatus,
+  WorkflowStep,
 } from './models.js';
-
 export type Command =
   | { type: 'requestProjectCreate'; name: string; directory?: string }
   | { type: 'requestProjectSetDirectory'; projectId: string; directory: string }
@@ -51,7 +51,40 @@ export type Command =
   // confirm/discard come from the desktop's proposal panel.
   | { type: 'requestProposalDraft'; threadId: string; items: ProposalItem[] }
   | { type: 'requestProposalConfirm'; proposalId: string; items: ProposalItem[] }
-  | { type: 'requestProposalDiscard'; proposalId: string };
+  | { type: 'requestProposalDiscard'; proposalId: string }
+  // Docs (Phase 9): project-scoped writes over `<projectDirectory>/docs/`.
+  // The content rides the command; the events carry metadata only.
+  // Rename is one transaction (a single rename), landing as docSaved(new)
+  // + docDeleted(old); it never overwrites an existing target.
+  | { type: 'requestDocSave'; path: string; content: string }
+  | { type: 'requestDocRename'; path: string; to: string }
+  | { type: 'requestDocDelete'; path: string }
+  // Knowledge (Phase 9): global writes over the data dir's library.
+  // With a path the content is the exact file (desktop edit); without one
+  // title/tags frontmatter the entry and a unique slug filename.
+  | {
+      type: 'requestKnowledgeSave';
+      path?: string;
+      title?: string;
+      tags?: string[];
+      content: string;
+    }
+  | { type: 'requestKnowledgeDelete'; path: string }
+  // Agent workflows (S34): a worker agent records a procedure over its MCP
+  // tools — start opens the recording, add_step appends to it, stop
+  // finalizes it into `.composer/workflows/` (the write + the metadata
+  // event). The recording lives in the processor, keyed by the agent
+  // session. Delete is the human/REST path.
+  | {
+      type: 'requestWorkflowRecordStart';
+      sessionId: string;
+      title: string;
+      description?: string;
+      tags?: string[];
+    }
+  | { type: 'requestWorkflowRecordStep'; sessionId: string; step: WorkflowStep }
+  | { type: 'requestWorkflowRecordStop'; sessionId: string; links?: string[] }
+  | { type: 'requestWorkflowDelete'; path: string };
 
 /** One ticket the planner emits on approval; lands as an ordinary card. */
 export interface TicketEmission {
@@ -85,5 +118,7 @@ export interface Rejection {
 }
 
 export type CommandOutcome =
-  | { ok: true }
+  // `savedPath` rides knowledge saves: the agent's tool result names the
+  // file the note landed in (slug + uniqueness happen server-side).
+  | { ok: true; savedPath?: string }
   | { ok: false; rejection: Rejection };

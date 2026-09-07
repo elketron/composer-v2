@@ -60,6 +60,63 @@ export interface Project {
 }
 
 /**
+ * One markdown doc under the project's `docs/` directory (Phase 9). Files
+ * are the truth; this metadata rides events and lists — content is read
+ * over REST. `path` is slash-separated and relative to `docs/`.
+ */
+export interface DocInfo {
+  path: string;
+  title: string;
+  size: number;
+  updatedAt: string;
+}
+
+/**
+ * One note in the global knowledge library (Phase 9): markdown with a
+ * small frontmatter (title, tags) under the composer data dir. Files are
+ * the truth; this metadata rides events and lists — content over REST.
+ */
+export interface KnowledgeEntryInfo {
+  path: string;
+  title: string;
+  tags: string[];
+  size: number;
+  updatedAt: string;
+}
+
+/**
+ * One step of a recorded agent workflow (S34): what to do, why, and the
+ * command that does it — any one of the three may carry a step alone.
+ */
+export interface WorkflowStep {
+  title: string;
+  detail?: string;
+  command?: string;
+}
+
+/**
+ * One recorded agent workflow (S34): a stored procedure a worker agent
+ * captured after doing a task, under the project's
+ * `.composer/workflows/`. Files are the truth; this metadata rides events
+ * and lists — content over REST. `source` is the card id the recording
+ * came from; `agent` the agentKind that recorded it; `links` the docs,
+ * knowledge notes, and cards the procedure draws on.
+ */
+export interface WorkflowInfo {
+  path: string;
+  title: string;
+  description: string;
+  tags: string[];
+  source?: string;
+  agent?: string;
+  steps: number;
+  links: string[];
+  size: number;
+  recordedAt?: string;
+  updatedAt: string;
+}
+
+/**
  * One transcript message. Assistant-thread messages (Phase 7) carry a
  * stable `id` and the `parentId` they follow (absent = the thread root) —
  * edit-and-resend creates sibling branches; nothing is ever rewritten.

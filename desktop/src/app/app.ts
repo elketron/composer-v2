@@ -6,6 +6,7 @@ import { ConfirmDialogComponent } from './core/confirm/confirm-dialog.component'
 import { EventsClient } from './core/events/events-client';
 import { PaletteComponent } from './core/palette/palette.component';
 import { PlanService } from './plan/plan.service';
+import { SettingsService } from './settings/settings.service';
 import { ShellComponent } from './shell/shell.component';
 import { ShellService } from './shell/shell.service';
 
@@ -20,10 +21,13 @@ export class App {
   // they are instantiated lazily on first injection, but events$ is a plain
   // Subject: a service constructed later (e.g. PlanService when the Plan view
   // first opens) would miss the startup snapshot. Inject them all here so
-  // all folds are subscribed before the stream connects.
+  // all folds are subscribed before the stream connects. SettingsService
+  // counts too: its connected-effect pulls `/settings` at boot, which keeps
+  // the shell's model badge truthful before any view is visited.
   private readonly events = inject(EventsClient);
   private readonly shell = inject(ShellService);
   private readonly board = inject(BoardService);
   private readonly plan = inject(PlanService);
   private readonly assistant = inject(AssistantService);
+  private readonly settings = inject(SettingsService);
 }

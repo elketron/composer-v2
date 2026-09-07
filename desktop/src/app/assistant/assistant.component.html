@@ -1,10 +1,38 @@
 <div class="assistant">
   <aside class="thread-list">
     <header class="list-header">
-      <span class="label">threads</span>
-      <button type="button" class="new-thread" title="new thread" (click)="newThread()">+</button>
+      <div class="pane-tabs" role="tablist" aria-label="assistant panes">
+        <button
+          type="button"
+          class="pane-tab"
+          role="tab"
+          [class.active]="pane() === 'threads'"
+          [attr.aria-selected]="pane() === 'threads'"
+          (click)="switchPane('threads')"
+        >
+          threads
+        </button>
+        <button
+          type="button"
+          class="pane-tab"
+          role="tab"
+          [class.active]="pane() === 'knowledge'"
+          [attr.aria-selected]="pane() === 'knowledge'"
+          (click)="switchPane('knowledge')"
+        >
+          knowledge
+        </button>
+      </div>
+      @if (pane() === 'threads') {
+        <button type="button" class="new-thread" title="new thread" (click)="newThread()">+</button>
+      }
     </header>
 
+    @if (pane() === 'knowledge') {
+      <div class="list-body">
+        <app-knowledge-list />
+      </div>
+    } @else {
     <div class="list-body">
       @for (entry of threads(); track entry.id) {
         <button
@@ -40,9 +68,13 @@
         </div>
       }
     </div>
+    }
   </aside>
 
   <main class="conversation">
+    @if (pane() === 'knowledge') {
+      <app-knowledge-pane />
+    } @else {
     @if (error(); as message) {
       <div class="state-error">{{ message }}</div>
     }
@@ -145,9 +177,27 @@
                   }
                 </span>
               }
+              @if (message.isAgent && message.id !== '') {
+                <span class="message-tools">
+                  <button
+                    type="button"
+                    class="remember"
+                    [class.saved]="isRemembered(message)"
+                    [disabled]="isRemembered(message)"
+                    title="save this reply to the knowledge library"
+                    (click)="remember(message)"
+                  >
+                    {{ isRemembered(message) ? 'saved ✓' : 'remember' }}
+                  </button>
+                </span>
+              }
             </header>
             @if (message.isAgent) {
-              <div class="message-text markdown" [innerHTML]="markdown(message.text)"></div>
+              <div
+                class="message-text markdown"
+                [innerHTML]="markdown(message.text)"
+                [appMermaid]="markdown(message.text)"
+              ></div>
             } @else {
               <div class="message-text">{{ message.text }}</div>
             }
@@ -327,6 +377,7 @@
         <span class="state-label">assistant</span>
         <span>select or start a thread</span>
       </div>
+    }
     }
   </main>
 </div>

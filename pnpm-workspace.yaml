@@ -6,12 +6,15 @@ packages:
 
 onlyBuiltDependencies:
   - esbuild
+  - electron-winstaller
   - "@surrealdb/node"
   - "@parcel/watcher"
   - lmdb
   - msgpackr-extract
 
 allowBuilds:
-  '@parcel/watcher': set this to true or false
-  lmdb: set this to true or false
-  msgpackr-extract: set this to true or false
+  '@parcel/watcher': true
+  electron-winstaller: true
+  esbuild: true
+  lmdb: true
+  msgpackr-extract: true

@@ -1,0 +1,179 @@
+<div class="docs">
+  <header class="head">
+    <lucide-icon [img]="icons.docs" [size]="14" />
+    <h1>docs</h1>
+    @if (directory(); as dir) {
+      <span class="root" [title]="dir">docs/</span>
+    }
+  </header>
+
+  @if (projectId() === null) {
+    <p class="state-empty inline">open a project first</p>
+  } @else if (directory() === null) {
+    <div class="state-empty">
+      <p class="state-label">no directory linked</p>
+      <p>docs live as markdown files in the project's directory</p>
+      <button type="button" class="link" (click)="linkDirectory()">
+        <lucide-icon [img]="icons.link" [size]="12" />
+        link a directory
+      </button>
+    </div>
+  } @else {
+    <div class="panes">
+      <nav class="list" aria-label="documents">
+        <button type="button" class="new-doc" (click)="beginCreate()">
+          <lucide-icon [img]="icons.newDoc" [size]="12" />
+          new doc
+        </button>
+        @if (loading()) {
+          <p class="state-empty inline">loading…</p>
+        } @else if (indexError(); as error) {
+          <p class="state-error">{{ error }}</p>
+        } @else if (entries().length === 0) {
+          <p class="state-empty inline">no docs yet — markdown files under docs/ appear here</p>
+        } @else {
+          @for (entry of entries(); track entry.path) {
+            <button
+              type="button"
+              class="entry"
+              [class.active]="selected() === entry.path && mode() === 'view'"
+              [class.editing]="selected() === entry.path && mode() !== 'view'"
+              (click)="select(entry)"
+            >
+              <span class="title">{{ entry.title }}</span>
+              <span class="path">{{ entry.path }}</span>
+            </button>
+          }
+        }
+      </nav>
+
+      <section class="viewer">
+        @if (mode() === 'view') {
+          @if (readError(); as error) {
+            <p class="state-error">{{ error }}</p>
+          } @else if (selected() === null) {
+            <p class="state-empty inline">select a document</p>
+          } @else if (content() === null) {
+            <p class="state-empty inline">loading…</p>
+          } @else {
+            <div class="doc-bar">
+              <span class="doc-path" [title]="selected()!">{{ selected() }}</span>
+              <span class="doc-actions">
+                <button type="button" class="action" (click)="beginEdit()">
+                  <lucide-icon [img]="icons.edit" [size]="12" />
+                  edit
+                </button>
+                <button type="button" class="action" (click)="beginRename()">rename</button>
+                <button type="button" class="action danger" (click)="deleteSelected()">
+                  <lucide-icon [img]="icons.delete" [size]="12" />
+                  delete
+                </button>
+              </span>
+            </div>
+            <article
+              class="document markdown"
+              [innerHTML]="content()!"
+              [appMermaid]="rendered()!"
+            ></article>
+          }
+        } @else {
+          <div class="editor-pane">
+            <div class="doc-bar">
+              @if (mode() === 'rename') {
+                <span class="doc-path">rename {{ selected() }} →</span>
+                <input
+                  type="text"
+                  class="path-input"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="new/path.md"
+                  [value]="pathField()"
+                  (input)="pathField.set(renamePath.value)"
+                  #renamePath
+                />
+                <span class="doc-actions">
+                  @if (dirty()) {
+                    <span class="dirty-mark">unsaved</span>
+                  }
+                  <button
+                    type="button"
+                    class="action primary"
+                    [disabled]="saveDisabled()"
+                    (click)="save()"
+                  >
+                    rename
+                  </button>
+                  <button type="button" class="action" (click)="cancel()">cancel</button>
+                </span>
+              } @else {
+                <span class="doc-path">{{ mode() === 'edit' ? 'editing' : 'new doc' }}</span>
+                @if (mode() === 'create') {
+                  <input
+                    type="text"
+                    class="path-input"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="path/within/docs.md"
+                    [value]="pathField()"
+                    (input)="pathField.set(createPath.value)"
+                    #createPath
+                  />
+                }
+                <span class="doc-actions">
+                  @if (dirty()) {
+                    <span class="dirty-mark">unsaved</span>
+                  }
+                  <span class="view-toggle">
+                    <button
+                      type="button"
+                      class="action toggle"
+                      [class.active]="editorView() === 'code'"
+                      (click)="setEditorView('code')"
+                    >code</button>
+                    <button
+                      type="button"
+                      class="action toggle"
+                      [class.active]="editorView() === 'flow'"
+                      (click)="setEditorView('flow')"
+                    >flow</button>
+                  </span>
+                  <button
+                    type="button"
+                    class="action primary"
+                    [disabled]="saveDisabled()"
+                    (click)="save()"
+                  >
+                    save
+                  </button>
+                  <button type="button" class="action" (click)="cancel()">cancel</button>
+                </span>
+              }
+            </div>
+            @if (saveError(); as error) {
+              <p class="state-error">{{ error }}</p>
+            }
+            @if (mode() === 'rename') {
+              <p class="rename-note">the file is renamed on disk; content is untouched</p>
+            } @else if (editorView() === 'flow') {
+              <app-flow-editor
+                class="flow-editor"
+                [code]="fenceCode()"
+                (codeChange)="applyFence($event)"
+              />
+            } @else {
+              @defer (when true) {
+                <app-doc-editor
+                  class="editor"
+                  [content]="mode() === 'edit' ? (editOriginal() ?? '') : starterText"
+                  (contentChange)="draft.set($event)"
+                />
+              } @placeholder {
+                <p class="state-empty inline">loading editor…</p>
+              }
+            }
+          </div>
+        }
+      </section>
+    </div>
+  }
+</div>

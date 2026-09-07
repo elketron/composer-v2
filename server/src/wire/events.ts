@@ -11,7 +11,7 @@
  * catalog or commands), together with the gateway's copy in
  * desktop/electron/server-registry.js.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 5;
 
 import type {
   AgentSession,
@@ -23,6 +23,8 @@ import type {
   CardProposal,
   CardType,
   ChatMessage,
+  DocInfo,
+  KnowledgeEntryInfo,
   Pipeline,
   PipelineRunStatus,
   PipelineStepKind,
@@ -31,6 +33,7 @@ import type {
   ProposalOutcome,
   Stage,
   SubStateStatus,
+  WorkflowInfo,
 } from './models.js';
 
 export interface CardCreated {
@@ -333,6 +336,46 @@ export interface ProposalDiscarded {
   proposalId: string;
 }
 
+// ---- Docs (Phase 9): metadata notifications over file-backed state. The
+// files under `<projectDirectory>/docs/` are the truth; content moves over
+// REST, the log carries the change records. Project-scoped. ----
+
+/** A create and an update are the same record: the fold upserts by path. */
+export interface DocSaved {
+  doc: DocInfo;
+}
+
+export interface DocDeleted {
+  path: string;
+}
+
+// ---- Knowledge (Phase 9): the global library of saved notes. Global
+// events — knowledge is project-agnostic; every frame reaches every
+// subscriber and the fold owns a top-level slice (S30). Metadata only:
+// the files under the data dir are the truth. ----
+
+/** A create and an update are the same record: the fold upserts by path. */
+export interface KnowledgeSaved {
+  entry: KnowledgeEntryInfo;
+}
+
+export interface KnowledgeDeleted {
+  path: string;
+}
+
+// ---- Agent workflows (S34): recorded procedures under the project's
+// `.composer/workflows/`. Metadata notifications over file-backed state —
+// the files are the truth; content moves over REST. Project-scoped. ----
+
+/** A create and an update are the same record: upserts key on path. */
+export interface WorkflowSaved {
+  workflow: WorkflowInfo;
+}
+
+export interface WorkflowDeleted {
+  path: string;
+}
+
 // ---- The catalog: name → payload shape (the one registry both sides use) ----
 
 export interface EventBodyMap {
@@ -385,6 +428,12 @@ export interface EventBodyMap {
   proposalDrafted: ProposalDrafted;
   proposalConfirmed: ProposalConfirmed;
   proposalDiscarded: ProposalDiscarded;
+  docSaved: DocSaved;
+  docDeleted: DocDeleted;
+  knowledgeSaved: KnowledgeSaved;
+  knowledgeDeleted: KnowledgeDeleted;
+  workflowSaved: WorkflowSaved;
+  workflowDeleted: WorkflowDeleted;
 }
 
 export type EventName = keyof EventBodyMap;
@@ -441,6 +490,12 @@ export const EVENT_NAMES = Object.keys({
   proposalDrafted: null,
   proposalConfirmed: null,
   proposalDiscarded: null,
+  docSaved: null,
+  docDeleted: null,
+  knowledgeSaved: null,
+  knowledgeDeleted: null,
+  workflowSaved: null,
+  workflowDeleted: null,
 }) as EventName[];
 
 /** Events that persist for the live stream but skip replay (v1 rule). */
@@ -469,6 +524,8 @@ export const GLOBAL_EVENTS: ReadonlySet<EventName> = new Set([
   'proposalDrafted',
   'proposalConfirmed',
   'proposalDiscarded',
+  'knowledgeSaved',
+  'knowledgeDeleted',
 ]);
 
 /** Whether an event name is in the catalog. */

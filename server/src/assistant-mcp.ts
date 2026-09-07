@@ -1,9 +1,12 @@
 // Composer's assistant MCP server (Phase 6) — a stdio child spawned by
-// opencode for the global assistant's turns. Read tools only: composer
-// state (overview, cards, plans), bounded file reads inside the scoped
-// project directories, git status/log/diff, and restricted web fetches.
-// Every call POSTs to composer's `/mcp/read` route, which re-validates the
-// thread's scope at call time — the child carries no authority of its own.
+// opencode for the global assistant's turns. Read tools plus the two
+// routed writes: composer state (overview, cards, plans), the knowledge
+// library (search; save writes only the composer data dir), bounded file
+// reads inside the scoped project directories, git status/log/diff, and
+// restricted web fetches.
+// Every call POSTs to composer's `/mcp/read` route, which re-validates
+// thread scope and tool names at call time — the child carries no
+// authority of its own.
 //
 // Context rides the environment (composer → opencode → this process):
 // COMPOSER_SERVER_URL and COMPOSER_THREAD_ID. opencode prefixes tool names
@@ -51,6 +54,16 @@ const TOOLS: McpToolDefinition[] = [
         sessionId: { type: 'string', description: 'A specific session; omit for the latest' },
       },
       required: ['projectId'],
+    },
+  },
+  {
+    name: 'knowledge_search',
+    description:
+      'Searches the composer knowledge library — saved notes of durable facts, decisions, and conventions (titles, tags, bodies). Search before saving to avoid duplicates, and to recall what earlier sessions recorded.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Whitespace-split keywords, AND-matched' } },
+      required: ['query'],
     },
   },
   {
@@ -145,6 +158,20 @@ const TOOLS: McpToolDefinition[] = [
         },
       },
       required: ['items'],
+    },
+  },
+  {
+    name: 'knowledge_save',
+    description:
+      'Saves a note into the composer knowledge library (markdown, global, survives restarts) and returns its path. Only when the user asks to remember or clearly states a durable fact/decision/convention — never for transient state or project files.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short note title; the filename derives from it' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Keywords for later search' },
+        content: { type: 'string', description: 'The note body (markdown)' },
+      },
+      required: ['title', 'content'],
     },
   },
 ];

@@ -119,7 +119,12 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
         frame(
           project.id,
           'agentSessionStarted',
-          { cardId: session.cardId, sessionId: session.id, agentKind: 'coder', startedAt: session.startedAt },
+          {
+            cardId: session.cardId,
+            sessionId: session.id,
+            agentKind: session.agentKind ?? 'coder',
+            startedAt: session.startedAt,
+          },
           nonce,
           index++,
         ),

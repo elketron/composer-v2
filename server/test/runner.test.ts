@@ -262,7 +262,7 @@ describe('the pipeline runner', () => {
       rejection: { code: 'invalidCommand', message: 'Project P-2 has no directory set' },
     });
 
-    await savePipeline(projectId, pipelineFixture('PL-9', [{ ...coderStep('st-1'), agentKind: 'reviewer' }]));
+    await savePipeline(projectId, pipelineFixture('PL-9', [{ ...coderStep('st-1'), agentKind: 'designer' }]));
     const unknownKind = await processor.execute(projectId, {
       type: 'requestPipelineRun',
       pipelineId: 'PL-9',
@@ -270,7 +270,7 @@ describe('the pipeline runner', () => {
     });
     expect(unknownKind).toEqual({
       ok: false,
-      rejection: { code: 'unknownAgentKind', message: "Agent kind 'reviewer' has no implementation yet" },
+      rejection: { code: 'unknownAgentKind', message: "Agent kind 'designer' has no implementation yet" },
     });
   });
 
@@ -348,6 +348,94 @@ describe('the pipeline runner', () => {
     expect(cardOf(projectId, cardId).rejectionComment).toBe('needs tests');
     const ended = recorded.findLast((frame) => frame.eventType === 'pipelineRunEnded')?.body as { status: string };
     expect(ended.status).toBe('completed', 'a rejected gate completes the run; the routing is the rejection');
+  });
+
+  it('the_workers_walk_their_own_lanes_and_stages', async () => {
+    // coder → tester → reviewer → security → gate: each agent kind loads
+    // its shipped agent, works its lane, and checks its own checklist stage.
+    engine.enqueue(async ({ spec }) => {
+      expect(spec.agentName).toBe('composer-coder');
+      expect(spec.mcpTools).toBe('worker');
+      expect(spec.prompt).toContain(`Implement card ${cardId}`);
+      return 'implemented';
+    });
+    engine.enqueue(async ({ spec }) => {
+      expect(spec.agentName).toBe('composer-tester');
+      expect(spec.prompt).toContain(`Verify card ${cardId}`);
+      return 'tests pass';
+    });
+    engine.enqueue(async ({ spec }) => {
+      expect(spec.agentName).toBe('composer-reviewer');
+      expect(spec.prompt).toContain(`Review card ${cardId}`);
+      return 'approved';
+    });
+    engine.enqueue(async ({ spec }) => {
+      expect(spec.agentName).toBe('composer-security');
+      expect(spec.prompt).toContain(`Security-review card ${cardId}`);
+      return 'no findings';
+    });
+    const workerStep = (id: string, agentKind: string): Pipeline['steps'][number] => ({
+      id,
+      kind: 'agent',
+      agentKind,
+      instructions: 'Do your part.',
+    });
+    const pipelineId = await savePipeline(projectId, pipelineFixture('', [
+      coderStep('st-1'),
+      workerStep('st-2', 'tester'),
+      workerStep('st-3', 'reviewer'),
+      workerStep('st-4', 'security'),
+      humanStep('st-5'),
+    ]));
+    const started = await processor.execute(projectId, { type: 'requestPipelineRun', pipelineId, cardId });
+    expect(started.ok).toBe(true);
+
+    await waitUntil(() => cardOf(projectId, cardId).subState['humanReview'] === 'running');
+    expect(cardOf(projectId, cardId).stage).toBe('approval');
+    expect(cardOf(projectId, cardId).subState).toMatchObject({
+      implement: 'ok',
+      runValidation: 'ok',
+      reviewChanges: 'ok',
+      securityReview: 'ok',
+      humanReview: 'running',
+    });
+
+    // Each step's session names its kind on the wire (ids allocate A-N in
+    // walk order) — what the desktop's session list folds.
+    const startedKinds = recorded
+      .filter((frame) => frame.eventType === 'agentSessionStarted')
+      .map((frame) => (frame.body as { agentKind: string }).agentKind);
+    expect(startedKinds).toEqual(['coder', 'tester', 'reviewer', 'security']);
+
+    await processor.execute(projectId, { type: 'requestPipelineGateRespond', cardId, approved: true });
+    await waitUntil(() => cardOf(projectId, cardId).stage === 'done');
+    expect(cardOf(projectId, cardId).subState['securityReview']).toBe('ok');
+  });
+
+  it('a_security_step_projects_nothing_on_a_card_type_without_the_lane', async () => {
+    // Security is code-only: on a docs card the run completes but the
+    // card keeps its lane and the checklist grows no securityReview key.
+    const docsResult = await processor.execute(projectId, {
+      type: 'requestCardCreate',
+      card: { id: '', projectId, type: 'docs', title: 'guide', description: '', tags: [], stage: 'new', blockedBy: [], subState: {}, retries: {}, createdAt: '', updatedAt: '' },
+    });
+    expect(docsResult.ok).toBe(true);
+    const docsCardId = 'T-2';
+    engine.enqueue(async () => 'no findings');
+    const pipelineId = await savePipeline(projectId, pipelineFixture('PL-9', [{
+      id: 'st-1',
+      kind: 'agent',
+      agentKind: 'security',
+      instructions: 'Security-review the card.',
+    }]));
+    const started = await processor.execute(projectId, { type: 'requestPipelineRun', pipelineId, cardId: docsCardId });
+    expect(started.ok).toBe(true);
+
+    await waitUntil(() => runOf(projectId, docsCardId) === undefined);
+    const ended = recorded.findLast((frame) => frame.eventType === 'pipelineRunEnded')?.body as { status: string };
+    expect(ended.status).toBe('completed');
+    expect(cardOf(projectId, docsCardId).stage).toBe('new');
+    expect(cardOf(projectId, docsCardId).subState).not.toHaveProperty('securityReview');
   });
 
   it('a_failed_command_step_fails_the_run_and_records_the_retry', async () => {

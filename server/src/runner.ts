@@ -1,11 +1,13 @@
 // The pipeline runner (S3): one in-process sequential task per run — no
 // durable runs (D5). Steps execute in order: `command` (child process in
 // the project directory, output captured, wall-clock cap), `agent` (the
-// engine; agentKind names the shipped agent), `human` (the run parks
-// `waiting`; the gate command resolves it). Lane + sub-state are the
-// board's progress projection (v1 on_step_started/on_step_finished
-// semantics): agent → implement lane, command → validation, human →
-// approval, all override moves.
+// engine; agentKind names the shipped worker — coder, tester, reviewer,
+// security), `human` (the run parks `waiting`; the gate command resolves
+// it). Lane + sub-state are the board's progress projection (v1
+// on_step_started/on_step_finished semantics): each agent kind works its
+// own lane and checklist stage, command → validation, human → approval,
+// all override moves; a lane the card's type doesn't carry (security is
+// code-only) projects nothing.
 //
 // A failed step fails the run (the card's retries record it via the
 // fold); the user re-runs. Stop kills the current child — the cancelled
@@ -21,12 +23,12 @@ import { nowIso } from './wire/envelope.js';
 import { ensureAgentFiles } from './agents.js';
 import { resolveModel } from './store.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
-import type { Card, Pipeline, PipelineStep } from './wire/models.js';
+import { isLaneValid, type Card, type Pipeline, type PipelineStep } from './wire/models.js';
 
 export interface RunnerOptions {
   /** Composer's HTTP base (the MCP tools' callback target). */
   serverUrl?: string;
-  /** Absolute path to composer's MCP server script. */
+  /** Absolute path to the worker MCP server script (dist/worker-mcp.js). */
   mcpScriptPath?: string;
   /** Wall-clock cap per command step (default 10 minutes). */
   commandTimeoutMs?: number;
@@ -182,20 +184,26 @@ export class PipelineRunner {
         kind: step.kind,
       });
       // The board's progress projection: the lane move and the stage's
-      // sub-state go running (v1 on_step_started; override moves).
-      const lane = laneFor(step, this.cardOf(projectId, cardId));
-      await this.processor.execute(projectId, {
-        type: 'requestCardMove',
-        cardId,
-        toLane: lane,
-        override: true,
-      });
-      await this.processor.execute(projectId, {
-        type: 'requestSubStateUpdate',
-        cardId,
-        stage: stepStageOf(step.kind),
-        status: 'running',
-      });
+      // sub-state go running (v1 on_step_started; override moves). A lane
+      // the card's type doesn't carry projects nothing (security is
+      // code-only) — the step still runs, the card stays put.
+      const card = this.cardOf(projectId, cardId);
+      const lane = laneFor(step, card);
+      const projects = card === undefined || isLaneValid(card.type, lane);
+      if (projects) {
+        await this.processor.execute(projectId, {
+          type: 'requestCardMove',
+          cardId,
+          toLane: lane,
+          override: true,
+        });
+        await this.processor.execute(projectId, {
+          type: 'requestSubStateUpdate',
+          cardId,
+          stage: stepStageOf(step.kind, step.agentKind),
+          status: 'running',
+        });
+      }
 
       const result:
         | { ok: true; decision?: GateDecision }
@@ -214,12 +222,14 @@ export class PipelineRunner {
         ok: result.ok,
         ...(result.ok ? {} : { error: result.error }),
       });
-      await this.processor.execute(projectId, {
-        type: 'requestSubStateUpdate',
-        cardId,
-        stage: stepStageOf(step.kind),
-        status: result.ok ? 'ok' : 'failed',
-      });
+      if (projects) {
+        await this.processor.execute(projectId, {
+          type: 'requestSubStateUpdate',
+          cardId,
+          stage: stepStageOf(step.kind, step.agentKind),
+          status: result.ok ? 'ok' : 'failed',
+        });
+      }
       if (!result.ok) {
         // A failed step fails the run (D5): the user re-runs.
         await this.bus.publish(projectId, 'pipelineRunEnded', {
@@ -366,13 +376,16 @@ export class PipelineRunner {
       projectId: task.projectId,
       sessionId,
       projectDirectory: directory,
-      prompt: coderPrompt(card, step),
+      prompt: promptFor(agentKind, card, step),
       serverUrl: this.options.serverUrl ?? '',
       mcpScriptPath: this.options.mcpScriptPath ?? '',
       agentName: `composer-${agentKind}`,
       ...(model ? { model } : {}),
       timeoutMs: this.options.agentTimeoutMs,
       signal: task.abort.signal,
+      // The workers' own surface: workflow recording + retrieval. The
+      // planner's write tools stay the planner's.
+      mcpTools: 'worker',
     };
     const onEvent = (event: AgentTurnEvent): void => {
       if (event.kind === 'toolCall') {
@@ -464,11 +477,20 @@ export class PipelineRunner {
   }
 }
 
-/** The lane a step works in (v1 on_step_started). */
+/** The lane a step works in (v1 on_step_started; S33 adds the workers). */
 function laneFor(step: PipelineStep, card: Card | undefined): Card['stage'] {
   switch (step.kind) {
     case 'agent':
-      return card !== undefined ? implementLaneOf(card.type) : 'coding';
+      switch (step.agentKind) {
+        case 'tester':
+          return 'validation';
+        case 'reviewer':
+          return 'review';
+        case 'security':
+          return 'security';
+        default:
+          return card !== undefined ? implementLaneOf(card.type) : 'coding';
+      }
     case 'command':
       return 'validation';
     case 'human':
@@ -487,21 +509,61 @@ function implementLaneOf(type: Card['type']): Card['stage'] {
   }
 }
 
-/** The coder's brief: the card is the work order; the runtime's own tools are the surface. */
-function coderPrompt(card: Card, step: PipelineStep): string {
-  const instructions = step.instructions?.trim() !== '' ? step.instructions!.trim() : 'Implement the card.';
+/** The worker's brief: the card is the work order; the runtime's own tools are the surface. */
+function promptFor(agentKind: string, card: Card, step: PipelineStep): string {
+  const instructions = step.instructions?.trim() !== '' ? step.instructions!.trim() : defaultInstructionOf(agentKind);
   const blockers =
     card.blockedBy.length > 0 ? `\n\nBlockers (already satisfied): ${card.blockedBy.join(', ')}` : '';
+  const [verb, closing] = briefOf(agentKind);
   return [
-    `Implement card ${card.id}: ${card.title}`,
+    `${verb} card ${card.id}: ${card.title}`,
     '',
     card.description.trim() !== '' ? card.description : '(no description)',
     blockers,
     '',
     `Instructions: ${instructions}`,
     '',
-    'Work in the current directory with your own file and shell tools. Keep the change minimal and make the relevant checks pass.',
+    closing,
   ]
     .filter((part) => part !== undefined)
     .join('\n');
+}
+
+function defaultInstructionOf(agentKind: string): string {
+  switch (agentKind) {
+    case 'tester':
+      return 'Verify the card.';
+    case 'reviewer':
+      return 'Review the card.';
+    case 'security':
+      return 'Security-review the card.';
+    default:
+      return 'Implement the card.';
+  }
+}
+
+/** Per-worker opening verb and working rules (the coder's are v1's). */
+function briefOf(agentKind: string): [string, string] {
+  switch (agentKind) {
+    case 'tester':
+      return [
+        'Verify',
+        'Work in the current directory with your own file and shell tools. Confirm the implementation matches the card, write or extend the tests that prove it, and make the relevant checks pass.',
+      ];
+    case 'reviewer':
+      return [
+        'Review',
+        'Review the working tree\'s change against the card — git diff is the first look. Judge correctness and fit; do not edit anything. Finish with a clear verdict: approved, or the changes the card still needs.',
+      ];
+    case 'security':
+      return [
+        'Security-review',
+        'Security-review the working tree\'s change — git diff is the first look. Report the risks the change could introduce; never fix anything. Finish with a clear verdict: no findings, or each finding with its file and what must change.',
+      ];
+    default:
+      return [
+        'Implement',
+        'Work in the current directory with your own file and shell tools. Keep the change minimal and make the relevant checks pass.',
+      ];
+  }
 }

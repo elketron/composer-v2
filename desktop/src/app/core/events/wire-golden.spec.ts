@@ -36,6 +36,8 @@ const GLOBAL_KINDS: ReadonlySet<string> = new Set([
   'proposalDrafted',
   'proposalConfirmed',
   'proposalDiscarded',
+  'knowledgeSaved',
+  'knowledgeDeleted',
 ]);
 
 const byKind = () => new Map(frames.map((frame) => [frame.eventType, frame]));

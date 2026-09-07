@@ -1,0 +1,124 @@
+<div class="flow-shell">
+  <div class="flow-toolbar">
+    <button type="button" class="action" (click)="addNode()">+ node</button>
+    <span class="toolbar-hint">drag nodes · drag a node's ➤ onto another to connect</span>
+    @if (selected(); as node) {
+      <span class="props">
+        <input
+          type="text"
+          class="field"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="node label"
+          [value]="node.label"
+          (input)="relabel(labelInput.value)"
+          #labelInput
+        />
+        <button
+          type="button"
+          class="action shape"
+          [class.active]="node.shape === 'rect'"
+          title="box"
+          (click)="reshape('rect')"
+        >▭</button>
+        <button
+          type="button"
+          class="action shape"
+          [class.active]="node.shape === 'round'"
+          title="rounded"
+          (click)="reshape('round')"
+        >◯</button>
+        <button
+          type="button"
+          class="action shape"
+          [class.active]="node.shape === 'diamond'"
+          title="decision"
+          (click)="reshape('diamond')"
+        >◇</button>
+        <button type="button" class="action danger" (click)="deleteSelectedNode()">delete node</button>
+      </span>
+    } @else if (selectedEdge(); as edge) {
+      <span class="props">
+        <input
+          type="text"
+          class="field"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="edge label"
+          aria-label="edge label"
+          [value]="edge.label"
+          (input)="relabelEdge(labelInput.value)"
+          #labelInput
+        />
+        <button type="button" class="action danger" (click)="deleteSelectedEdge()">delete edge</button>
+      </span>
+    }
+  </div>
+
+  @if (parseError(); as error) {
+    <div class="state-error flow-error">
+      this diagram uses syntax the flow editor does not cover — edit it as code.
+      <span class="detail">{{ error }}</span>
+    </div>
+  }
+
+  <div
+    class="canvas"
+    [class.error]="parseError() !== null"
+    (pointermove)="onPointerMove($event)"
+    (pointerup)="onPointerUp($event)"
+    (click)="clearSelection()"
+  >
+    <svg class="wires">
+      <defs>
+        <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" class="arrow" />
+        </marker>
+      </defs>
+      @for (edge of edges(); track $index) {
+        @if (geometry(edge); as points) {
+          <path class="wire-hit" [attr.d]="line(points)" (click)="selectEdge($event, edge)" />
+          <path
+            class="wire"
+            [class.active]="selectedEdge() === edge"
+            [attr.d]="line(points)"
+            marker-end="url(#flow-arrow)"
+          />
+          @if (edge.label !== '') {
+            <text class="wire-label" [class.active]="selectedEdge() === edge" [attr.x]="(points.x1 + points.x2) / 2" [attr.y]="(points.y1 + points.y2) / 2 - 6">
+              {{ edge.label }}
+            </text>
+          }
+        }
+      }
+      @if (pendingGeometry(); as pending) {
+        <path class="wire pending" [attr.d]="line(pending)" />
+      }
+    </svg>
+
+    @for (node of nodes(); track node.id) {
+      <div
+        class="flow-node"
+        [class.selected]="selectedNode() === node.id"
+        [class.rect]="node.shape === 'rect'"
+        [class.round]="node.shape === 'round'"
+        [class.diamond]="node.shape === 'diamond'"
+        [style.left.px]="node.x"
+        [style.top.px]="node.y"
+        [style.width.px]="node.w"
+        [style.height.px]="node.h"
+        [attr.data-node-id]="node.id"
+        (pointerdown)="startDrag(node, $event)"
+      >
+        <span class="node-label">{{ node.label }}</span>
+        <span
+          class="handle"
+          title="drag to connect"
+          (pointerdown)="startConnect(node, $event)"
+        >➤</span>
+      </div>
+    } @empty {
+      <p class="state-empty inline canvas-empty">add a node to start the flow</p>
+    }
+  </div>
+</div>

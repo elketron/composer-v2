@@ -37,6 +37,33 @@
     text-transform: uppercase;
     font-size: 11px;
   }
+
+  .pane-tabs {
+    display: flex;
+    gap: 2px;
+  }
+
+  .pane-tab {
+    border: 0;
+    background: transparent;
+    border-radius: 4px;
+    padding: 3px 8px;
+    color: var(--text-faint);
+    font: inherit;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--text);
+    }
+
+    &.active {
+      background: var(--rail-active-fill);
+      color: var(--accent-soft);
+    }
+  }
 }
 
 .new-thread {
@@ -510,6 +537,10 @@
     opacity: 0.35;
     cursor: default;
   }
+}
+
+.message-tools .remember.saved {
+  color: var(--ok);
 }
 
 .branch-position {

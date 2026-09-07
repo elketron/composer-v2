@@ -1,0 +1,31 @@
+<div class="picker">
+  <input
+    type="text"
+    autocomplete="off"
+    role="combobox"
+    aria-autocomplete="list"
+    [attr.aria-expanded]="open() && filteredModels().length > 0"
+    [attr.aria-controls]="listId"
+    [value]="value()"
+    [placeholder]="placeholder()"
+    [disabled]="disabled()"
+    (input)="update($any($event.target).value)"
+    (keydown)="onKeydown($event)"
+    (blur)="open.set(false)"
+  />
+  @if (open() && filteredModels().length > 0) {
+    <ul [id]="listId" role="listbox">
+      @for (model of filteredModels(); track model; let index = $index) {
+        <li
+          role="option"
+          [attr.aria-selected]="index === activeIndex()"
+          [class.active]="index === activeIndex()"
+          (mouseenter)="activeIndex.set(index)"
+          (mousedown)="$event.preventDefault(); choose(model)"
+        >
+          {{ model }}
+        </li>
+      }
+    </ul>
+  }
+</div>

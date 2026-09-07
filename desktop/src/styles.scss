@@ -8,7 +8,10 @@
   --border-strong: #222224;
   --text: #c2c0b6;
   --text-dim: #8a8880;
-  --text-faint: #4a4845;
+  // Faint text still carries real content (status lines, hints, disabled
+  // labels), so it must clear WCAG AA 4.5:1 on --bg and --panel (#827f7b
+  // measures 4.84/4.74) while staying dimmer than --text-dim.
+  --text-faint: #827f7b;
   --accent: #4e46a0;
   --accent-soft: #8a82cc;
   --ok: #4caf82;
@@ -85,6 +88,42 @@ p.state-empty,
   background: color-mix(in srgb, var(--err) 8%, transparent);
   color: var(--err);
   font-size: 12px;
+}
+
+// Mermaid diagrams (S28) render inside markdown panes (docs viewer,
+// assistant transcript) whose content is innerHTML — the blocks' styles
+// live here, not in component styles.
+.mermaid-block {
+  margin: 10px 0;
+  overflow-x: auto;
+
+  svg {
+    max-width: 100%;
+    height: auto;
+  }
+
+  &.mermaid-pending {
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+}
+
+.mermaid-error {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--err);
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+  font-size: 12px;
+
+  span {
+    color: var(--err);
+  }
+
+  pre {
+    margin: 6px 0 0;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+  }
 }
 
 // Live-agent pulse (design.md §1: opacity 1 <-> .3 over 2s).

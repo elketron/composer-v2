@@ -6,14 +6,11 @@
   <section class="form">
     <label class="field">
       <span class="label">default model</span>
-      <input
-        type="text"
-        name="model"
-        autocomplete="off"
-        placeholder="opencode default"
-        [ngModel]="model()"
-        (ngModelChange)="setModel($event)"
+      <app-model-picker
+        [value]="model()"
+        [models]="availableModels()"
         [disabled]="saving()"
+        (valueChange)="setModel($event)"
       />
       <span class="hint">
         what every agent loads unless it has its own override below — e.g.
@@ -28,14 +25,11 @@
         @for (kind of agentKinds(); track kind) {
           <div class="agent-row">
             <span class="agent-kind">{{ kind }}</span>
-            <input
-              type="text"
-              [ngModel]="models()[kind] || ''"
-              [ngModelOptions]="{ standalone: true }"
-              autocomplete="off"
-              [placeholder]="'opencode default'"
-              (ngModelChange)="setAgentModel(kind, $event)"
+            <app-model-picker
+              [value]="models()[kind] || ''"
+              [models]="availableModels()"
               [disabled]="saving()"
+              (valueChange)="setAgentModel(kind, $event)"
             />
           </div>
         }
@@ -56,8 +50,8 @@
         </button>
       </div>
       <span class="hint">
-        overrides for one agent — the planner, the coder, or a pipeline step's
-        custom agent kind.
+        overrides for one agent — the planner, the coder, the pipeline
+        workers (tester, reviewer, security), or a custom agent kind.
       </span>
     </div>
 

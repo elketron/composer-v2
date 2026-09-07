@@ -8,7 +8,8 @@ export const tokens = {
   borderStrong: '#222224',
   text: '#c2c0b6',
   textDim: '#8a8880',
-  textFaint: '#4a4845',
+  // WCAG AA on bg/panel (≥4.5:1); keep in sync with --text-faint.
+  textFaint: '#827f7b',
   accent: '#4e46a0',
   accentSoft: '#8a82cc',
   ok: '#4CAF82',

@@ -8,29 +8,52 @@ import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import type { Bus } from './bus.js';
 import type { Processor } from './processor.js';
-import type { Command } from './wire/commands.js';
+import type { Command, CommandOutcome } from './wire/commands.js';
 import { PROTOCOL_VERSION } from './wire/events.js';
 import type { Card, CardType, Pipeline, PipelineStep, ProposalItem, Stage, SubStateStatus } from './wire/models.js';
 import { ALL_STAGES } from './wire/models.js';
 import { snapshotEvents } from './snapshot.js';
 import type { ComposerSettings, EventStore, SettingsPatch } from './store.js';
 import { dashboardProjects } from './dashboard.js';
+import { listOpenCodeModels } from './models.js';
+import { listDocs, readDoc } from './docs.js';
+import { listWorkflows, readWorkflow, searchWorkflows, normalizeLinks } from './workflows.js';
+import type { KnowledgeStore } from './knowledge.js';
 import {
   ASSISTANT_MCP_TOOL_NAMES,
+  ASSISTANT_KNOWLEDGE_SAVE_TOOL,
   executeAssistantTool,
   type AssistantToolName,
 } from './assistant-tools.js';
 
-/** The commands the MCP tools may issue (the planner's two, for now). */
+/** The commands the MCP tools may issue: the planner's two, and the
+ * workers' workflow-recording commands (S34). */
 const MCP_COMMAND_TYPES: ReadonlySet<string> = new Set([
   'requestPlanDocumentUpdate',
   'requestTicketsCreate',
+  'requestWorkflowRecordStart',
+  'requestWorkflowRecordStep',
+  'requestWorkflowRecordStop',
+]);
+
+/** The worker agents' MCP tool whitelist (S34): recording + retrieval. */
+const WORKER_MCP_TOOLS: ReadonlySet<string> = new Set([
+  'workflow_start_recording',
+  'workflow_add_step',
+  'workflow_stop_recording',
+  'workflow_search',
+  'workflow_read',
 ]);
 
 /** The assistant's MCP tool whitelist (reads + the proposal draft). */
 const ASSISTANT_MCP_TOOLS: ReadonlySet<string> = new Set(ASSISTANT_MCP_TOOL_NAMES);
 
-export function router(bus: Bus, processor: Processor, store?: EventStore): Hono {
+export function router(
+  bus: Bus,
+  processor: Processor,
+  store?: EventStore,
+  knowledge?: KnowledgeStore,
+): Hono {
   const app = new Hono();
 
   // Permissive CORS (the v1 rule): the desktop renderer connects directly,
@@ -49,11 +72,146 @@ export function router(bus: Bus, processor: Processor, store?: EventStore): Hono
     context.json({ projects: await dashboardProjects(bus.state) }),
   );
 
+  // Docs reads (Phase 9): content lives in the project's files, so these
+  // are straight reads over the docs layer — no event log involved.
+  app.get('/projects/:projectId/docs', (context) => {
+    const projectId = context.req.param('projectId');
+    const project = bus.state.projects.get(projectId);
+    if (!project) {
+      return context.json({ error: `unknown project ${projectId}` }, 404);
+    }
+    if (project.directory === undefined) {
+      return context.json({ error: `project ${projectId} has no directory` });
+    }
+    const result = listDocs(project.directory);
+    if (!result.ok) {
+      return context.json({ error: result.error });
+    }
+    return context.json({ docs: result.value });
+  });
+
+  app.get('/projects/:projectId/docs/content', (context) => {
+    const projectId = context.req.param('projectId');
+    const path = context.req.query('path') ?? '';
+    const project = bus.state.projects.get(projectId);
+    if (!project) {
+      return context.json({ error: `unknown project ${projectId}` }, 404);
+    }
+    if (project.directory === undefined) {
+      return context.json({ error: `project ${projectId} has no directory` });
+    }
+    const result = readDoc(project.directory, path);
+    if (!result.ok) {
+      return context.json({ error: result.error });
+    }
+    return context.json({ doc: { ...result.value.info, content: result.value.content } });
+  });
+
+  // Workflow reads (S34): straight reads over the project's recorded
+  // procedures — the files are the truth, the log carries metadata only.
+  app.get('/projects/:projectId/workflows', (context) => {
+    const projectId = context.req.param('projectId');
+    const project = bus.state.projects.get(projectId);
+    if (!project) {
+      return context.json({ error: `unknown project ${projectId}` }, 404);
+    }
+    if (project.directory === undefined) {
+      return context.json({ error: `project ${projectId} has no directory` });
+    }
+    return context.json({ workflows: listWorkflows(project.directory) });
+  });
+
+  app.get('/projects/:projectId/workflows/content', (context) => {
+    const projectId = context.req.param('projectId');
+    const path = context.req.query('path') ?? '';
+    const project = bus.state.projects.get(projectId);
+    if (!project) {
+      return context.json({ error: `unknown project ${projectId}` }, 404);
+    }
+    if (project.directory === undefined) {
+      return context.json({ error: `project ${projectId} has no directory` });
+    }
+    const result = readWorkflow(project.directory, path);
+    if (!result.ok) {
+      return context.json({ error: result.error });
+    }
+    return context.json({ workflow: { ...result.value.info, content: result.value.content } });
+  });
+
+  app.get('/projects/:projectId/workflows/search', (context) => {
+    const projectId = context.req.param('projectId');
+    const project = bus.state.projects.get(projectId);
+    if (!project) {
+      return context.json({ error: `unknown project ${projectId}` }, 404);
+    }
+    if (project.directory === undefined) {
+      return context.json({ error: `project ${projectId} has no directory` });
+    }
+    const query = context.req.query('q') ?? '';
+    return context.json({
+      results: searchWorkflows(project.directory, query).map((result) => ({
+        ...result.info,
+        snippet: result.snippet,
+        score: result.score,
+      })),
+    });
+  });
+
+  // Knowledge reads (Phase 9): straight reads over the library's files.
+  // Writes ride the knowledge commands through the processor.
+  app.get('/knowledge', (context) => {
+    if (knowledge === undefined) {
+      return context.json({ error: 'knowledge storage is unavailable' });
+    }
+    return context.json({ entries: knowledge.list() });
+  });
+
+  app.get('/knowledge/content', (context) => {
+    if (knowledge === undefined) {
+      return context.json({ error: 'knowledge storage is unavailable' });
+    }
+    const path = context.req.query('path') ?? '';
+    const result = knowledge.read(path);
+    if (!result.ok) {
+      return context.json({ error: result.error });
+    }
+    return context.json({
+      entry: { ...result.value.info, content: result.value.content, body: result.value.body },
+    });
+  });
+
+  app.get('/knowledge/search', (context) => {
+    if (knowledge === undefined) {
+      return context.json({ error: 'knowledge storage is unavailable' });
+    }
+    const query = context.req.query('q') ?? '';
+    return context.json({
+      results: knowledge.search(query).map((result) => ({
+        ...result.info,
+        snippet: result.snippet,
+        score: result.score,
+      })),
+    });
+  });
+
   // Global settings (config, not domain history): the desktop's settings
   // view reads and writes these; the runner/planner read them per spawn.
   app.get('/settings', async (context) => {
     const settings = store ? await store.getSettings() : {};
     return context.json(settings);
+  });
+  app.get('/models', async (context) => {
+    try {
+      return context.json({ models: await listOpenCodeModels() });
+    } catch (error) {
+      return context.json(
+        {
+          error: 'models unavailable',
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        503,
+      );
+    }
   });
   app.put('/settings', async (context) => {
     if (store === undefined) {
@@ -137,8 +295,9 @@ export function router(bus: Bus, processor: Processor, store?: EventStore): Hono
     if (threadId === '' || !ASSISTANT_MCP_TOOLS.has(tool)) {
       return context.json({ error: 'malformed read', detail: 'unknown read tool' }, 400);
     }
-    // The one non-read tool on the assistant surface: drafting a proposal
-    // lands on the validated processor (never creates cards directly).
+    // The assistant's write tools: a proposal draft lands on the validated
+    // processor (never creates cards directly); a knowledge save lands on
+    // the knowledge store via the processor (metadata events publish).
     if (tool === 'propose_cards') {
       const rawItems = Array.isArray(args['items']) ? (args['items'] as unknown[]) : [];
       const outcome = await processor.execute(undefined, {
@@ -153,13 +312,114 @@ export function router(bus: Bus, processor: Processor, store?: EventStore): Hono
       const proposal = [...proposals.values()].at(-1);
       return context.json({ ok: true, proposalId: proposal?.id, itemCount: proposal?.items.length ?? 0 });
     }
+    if (tool === ASSISTANT_KNOWLEDGE_SAVE_TOOL) {
+      if (!bus.state.assistantThreads.has(threadId)) {
+        return context.json({ ok: false, error: `unknown thread ${threadId}` });
+      }
+      const outcome = await processor.execute(undefined, {
+        type: 'requestKnowledgeSave',
+        ...(typeof args['path'] === 'string' && args['path'] !== '' ? { path: args['path'] } : {}),
+        ...(typeof args['title'] === 'string' ? { title: args['title'] } : {}),
+        ...(Array.isArray(args['tags'])
+          ? { tags: args['tags'].filter((tag): tag is string => typeof tag === 'string') }
+          : {}),
+        content: typeof args['content'] === 'string' ? args['content'] : '',
+      });
+      if (!outcome.ok) {
+        return context.json({ ok: false, error: outcome.rejection.message });
+      }
+      return context.json({ ok: true, savedPath: outcome.savedPath });
+    }
     const result = await executeAssistantTool(
-      { state: bus.state },
+      { state: bus.state, knowledge },
       threadId,
       tool as AssistantToolName,
       args,
     );
     return context.json(result);
+  });
+
+  // The worker agents' MCP route (S34): the recording tools land on the
+  // validated processor (the session binding rides the command); the
+  // retrieval tools read the project's workflow files. Every call
+  // re-validates the project and session — the child carries no authority.
+  app.post('/mcp/worker', async (context) => {
+    const body = await context.req
+      .json<{ projectId?: unknown; sessionId?: unknown; tool?: unknown; args?: unknown }>()
+      .catch(() => undefined);
+    const projectId = typeof body?.projectId === 'string' ? body.projectId : '';
+    const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
+    const tool = typeof body?.tool === 'string' ? body.tool : '';
+    const args =
+      typeof body?.args === 'object' && body?.args !== null ? (body!.args as Record<string, unknown>) : {};
+    if (projectId === '' || sessionId === '' || !WORKER_MCP_TOOLS.has(tool)) {
+      return context.json({ error: 'malformed worker call', detail: 'unknown worker tool' }, 400);
+    }
+    if (tool === 'workflow_start_recording') {
+      const outcome = await processor.execute(projectId, {
+        type: 'requestWorkflowRecordStart',
+        sessionId,
+        title: typeof args['title'] === 'string' ? args['title'] : '',
+        ...(typeof args['description'] === 'string' ? { description: args['description'] } : {}),
+        ...(Array.isArray(args['tags'])
+          ? { tags: args['tags'].filter((tag): tag is string => typeof tag === 'string') }
+          : {}),
+      });
+      return context.json(outcomeToToolResult(outcome));
+    }
+    if (tool === 'workflow_add_step') {
+      const raw = args['step'];
+      const step =
+        typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : undefined;
+      const title = typeof step?.['title'] === 'string' ? step['title'] : '';
+      if (step === undefined || title.trim() === '') {
+        return context.json({ ok: false, error: 'a workflow step needs a title' });
+      }
+      const outcome = await processor.execute(projectId, {
+        type: 'requestWorkflowRecordStep',
+        sessionId,
+        step: {
+          title,
+          ...(typeof step['detail'] === 'string' ? { detail: step['detail'] } : {}),
+          ...(typeof step['command'] === 'string' ? { command: step['command'] } : {}),
+        },
+      });
+      return context.json(outcomeToToolResult(outcome));
+    }
+    if (tool === 'workflow_stop_recording') {
+      const links = normalizeLinks(args['links']);
+      if (links === null) {
+        return context.json({ ok: false, error: 'links must be strings, at most 20 of 200 chars each' });
+      }
+      const outcome = await processor.execute(projectId, {
+        type: 'requestWorkflowRecordStop',
+        sessionId,
+        ...(links.length > 0 ? { links } : {}),
+      });
+      return context.json(outcomeToToolResult(outcome));
+    }
+    // Retrieval reads over the project's workflow files.
+    const project = bus.state.projects.get(projectId);
+    if (project === undefined || project.directory === undefined) {
+      return context.json({ ok: false, error: `project ${projectId} has no readable directory` });
+    }
+    if (tool === 'workflow_search') {
+      const query = typeof args['query'] === 'string' ? args['query'] : '';
+      return context.json({
+        ok: true,
+        results: searchWorkflows(project.directory, query).map((result) => ({
+          ...result.info,
+          snippet: result.snippet,
+          score: result.score,
+        })),
+      });
+    }
+    const path = typeof args['path'] === 'string' ? args['path'] : '';
+    const result = readWorkflow(project.directory, path);
+    if (!result.ok) {
+      return context.json({ ok: false, error: result.error });
+    }
+    return context.json({ ok: true, workflow: { ...result.value.info, content: result.value.content } });
   });
 
   app.post('/action', async (context) => {
@@ -407,6 +667,43 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
     }
     case 'delete:proposal':
       return { type: 'requestProposalDiscard', proposalId: str('id') ?? '' };
+    // Docs (Phase 9): save is an upsert by path; content rides the body.
+    // Rename is one transaction (never overwrites); delete is a tombstone.
+    case 'create:doc':
+      return {
+        type: 'requestDocSave',
+        path: str('path') ?? '',
+        content: str('content') ?? '',
+      };
+    case 'update:doc':
+      return {
+        type: 'requestDocRename',
+        path: str('path') ?? '',
+        to: str('to') ?? '',
+      };
+    case 'delete:doc':
+      return { type: 'requestDocDelete', path: str('path') ?? '' };
+    // Knowledge (Phase 9): global writes over the data-dir library.
+    case 'create:knowledge': {
+      const path = str('path');
+      const title = str('title');
+      const tags = body['tags'];
+      return {
+        type: 'requestKnowledgeSave',
+        ...(path !== undefined && path !== '' ? { path } : {}),
+        ...(title !== undefined && title !== '' ? { title } : {}),
+        ...(Array.isArray(tags)
+          ? { tags: tags.filter((tag): tag is string => typeof tag === 'string') }
+          : {}),
+        content: str('content') ?? '',
+      };
+    }
+    case 'delete:knowledge':
+      return { type: 'requestKnowledgeDelete', path: str('path') ?? '' };
+    // Agent workflows (S34): the delete path is the human/REST one; the
+    // recording commands are MCP-only (the session binding rides them).
+    case 'delete:workflow':
+      return { type: 'requestWorkflowDelete', path: str('path') ?? '' };
     default:
       return null;
   }
@@ -415,6 +712,16 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
 /** Wire-enum parsing: unknown strings fall back to the first variant (v1 rule). */
 function parseStage(value: string | undefined): Stage {
   return ALL_STAGES.includes(value as Stage) ? (value as Stage) : 'new';
+}
+
+/** The tool result a recording command's outcome becomes (the MCP child's JSON). */
+function outcomeToToolResult(outcome: CommandOutcome): { ok: true; savedPath?: string } | { ok: false; error: string } {
+  if (outcome.ok) {
+    return outcome.savedPath !== undefined
+      ? { ok: true, savedPath: outcome.savedPath }
+      : { ok: true };
+  }
+  return { ok: false, error: outcome.rejection.message };
 }
 
 function parseCardType(value: string | undefined): CardType {

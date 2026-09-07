@@ -1,0 +1,87 @@
+.search-box {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.search-input {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+  }
+}
+
+.new-note {
+  display: block;
+  width: 100%;
+  border: 1px dashed var(--border-strong);
+  background: none;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--text-faint);
+  }
+}
+
+.note-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  .note-title {
+    color: var(--text);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .note-path {
+    color: var(--text-faint);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &:hover {
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+  }
+
+  &.active {
+    background: var(--rail-active-fill);
+    border-color: var(--border);
+
+    .note-path {
+      color: var(--accent-soft);
+    }
+  }
+
+  &.editing {
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  }
+}

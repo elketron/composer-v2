@@ -1,0 +1,40 @@
+# The composer desktop installer build (electron-builder).
+appId: dev.composer.desktop
+productName: composer
+# The npm name (@composer/desktop) is not a safe executable name.
+executableName: composer
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/composer-desktop/**/*
+  - electron/**/*
+  - package.json
+asar: true
+# The bundled server: the esbuild bundle plus the native SurrealDB engine,
+# staged by scripts/prepare-server.mjs (see electron/main.js for how the
+# packaged app points the gateway at it).
+extraResources:
+  - from: packaging/server
+    to: server
+    filter:
+      - '**/*'
+  - from: build/resources/icon.png
+    to: icon.png
+linux:
+  artifactName: composer-${version}.${ext}
+  icon: build
+  category: Development
+  maintainer: composer
+  syncDesktopName: true
+  target:
+    - AppImage
+    - deb
+win:
+  icon: build/icon.ico
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: composer-setup-${version}.${ext}

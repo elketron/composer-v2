@@ -102,4 +102,40 @@ describe('ConfirmService + ConfirmDialogComponent', () => {
     expect(document.activeElement).toBe(trigger);
     trigger.remove();
   });
+
+  it('focuses the cancel button, never the destructive accept, when it opens', async () => {
+    const fixture = TestBed.createComponent(ConfirmDialogComponent);
+    const decided = confirm.confirm({ title: 'Archive?', danger: true });
+    await fixture.whenStable();
+
+    const el = fixture.nativeElement as HTMLElement;
+    const buttons = el.querySelectorAll<HTMLButtonElement>('.actions button');
+    expect(document.activeElement).toBe(buttons[0]);
+    expect(document.activeElement).not.toBe(buttons[1]);
+
+    confirm.resolve(false);
+    expect(await decided).toBe(false);
+  });
+
+  it('traps Tab and Shift+Tab within the dialog', async () => {
+    const fixture = TestBed.createComponent(ConfirmDialogComponent);
+    const decided = confirm.confirm({ title: 'Archive?' });
+    await fixture.whenStable();
+
+    const buttons = (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>(
+      '.actions button',
+    );
+    // Opened focused on cancel: Tab moves to accept, then wraps back.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+    expect(document.activeElement).toBe(buttons[1]);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+    expect(document.activeElement).toBe(buttons[0]);
+
+    // Shift+Tab from cancel wraps to accept.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
+    expect(document.activeElement).toBe(buttons[1]);
+
+    confirm.resolve(false);
+    expect(await decided).toBe(false);
+  });
 });

@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { FormsModule } from '@angular/forms';
 
 import { SettingsService } from './settings.service';
+import { ModelPickerComponent } from './model-picker.component';
 
 /**
  * Settings view: the default model plus per-agent overrides (planner,
@@ -12,7 +13,7 @@ import { SettingsService } from './settings.service';
 @Component({
   selector: 'app-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, ModelPickerComponent],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
 })
@@ -22,6 +23,7 @@ export class SettingsComponent {
   protected readonly model = this.settings.model;
   protected readonly models = this.settings.models;
   protected readonly agentKinds = this.settings.agentKinds;
+  protected readonly availableModels = this.settings.availableModels;
   protected readonly loading = this.settings.loading;
   protected readonly saving = this.settings.saving;
   protected readonly error = this.settings.error;

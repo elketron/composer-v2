@@ -141,6 +141,38 @@ export interface ProjectJson {
   readonly archivedAt?: string;
 }
 
+/** One markdown doc under the project's docs/ directory (metadata only). */
+export interface DocInfoJson {
+  readonly path: string;
+  readonly title: string;
+  readonly size: number;
+  readonly updatedAt: string;
+}
+
+/** One note of the global knowledge library (metadata only). */
+export interface KnowledgeEntryInfoJson {
+  readonly path: string;
+  readonly title: string;
+  readonly tags: string[];
+  readonly size: number;
+  readonly updatedAt: string;
+}
+
+/** One recorded agent workflow under the project's .composer/workflows/ (metadata only). */
+export interface WorkflowInfoJson {
+  readonly path: string;
+  readonly title: string;
+  readonly description: string;
+  readonly tags: string[];
+  readonly source?: string;
+  readonly agent?: string;
+  readonly steps: number;
+  readonly links: string[];
+  readonly size: number;
+  readonly recordedAt?: string;
+  readonly updatedAt: string;
+}
+
 export const WirePipelineStepKind = {
   PIPELINE_STEP_KIND_AGENT: 'agent',
   PIPELINE_STEP_KIND_COMMAND: 'command',
@@ -388,6 +420,12 @@ export interface DomainEventJson {
     readonly confirmedAt: string;
   };
   readonly proposalDiscarded?: { readonly proposalId: string };
+  readonly docSaved?: { readonly doc: DocInfoJson };
+  readonly docDeleted?: { readonly path: string };
+  readonly knowledgeSaved?: { readonly entry: KnowledgeEntryInfoJson };
+  readonly knowledgeDeleted?: { readonly path: string };
+  readonly workflowSaved?: { readonly workflow: WorkflowInfoJson };
+  readonly workflowDeleted?: { readonly path: string };
 }
 
 /** The payload field names (the oneof members, camelCase). */
@@ -441,6 +479,12 @@ export const EVENT_KINDS = [
   'proposalDrafted',
   'proposalConfirmed',
   'proposalDiscarded',
+  'docSaved',
+  'docDeleted',
+  'knowledgeSaved',
+  'knowledgeDeleted',
+  'workflowSaved',
+  'workflowDeleted',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -494,6 +538,12 @@ export type CommandKind =
   | 'requestAssistantResend'
   | 'requestProposalConfirm'
   | 'requestProposalDiscard'
+  | 'requestDocSave'
+  | 'requestDocRename'
+  | 'requestDocDelete'
+  | 'requestKnowledgeSave'
+  | 'requestKnowledgeDelete'
+  | 'requestWorkflowDelete'
   | 'requestAgentSessionStart'
   | 'requestAgentSessionStop';
 
@@ -550,6 +600,17 @@ export interface PublishRequestJson {
     readonly items: ProposalItemJson[];
   };
   readonly requestProposalDiscard?: { readonly proposalId: string };
+  readonly requestDocSave?: { readonly path: string; readonly content: string };
+  readonly requestDocRename?: { readonly path: string; readonly to: string };
+  readonly requestDocDelete?: { readonly path: string };
+  readonly requestKnowledgeSave?: {
+    readonly path?: string;
+    readonly title?: string;
+    readonly tags?: string[];
+    readonly content: string;
+  };
+  readonly requestKnowledgeDelete?: { readonly path: string };
+  readonly requestWorkflowDelete?: { readonly path: string };
 }
 
 /** The generic write-path envelope (`POST /action`, http.rs). */
@@ -563,10 +624,13 @@ export interface ActionEnvelopeJson {
     | 'automation'
     | 'pipeline'
     | 'pipelineGate'
-    | 'assistantThread'
-    | 'assistantMessage'
-    | 'assistantResend'
-    | 'proposal';
+  | 'assistantThread'
+  | 'assistantMessage'
+  | 'assistantResend'
+  | 'proposal'
+  | 'doc'
+  | 'knowledge'
+  | 'workflow';
   readonly projectId: string;
   readonly body: Record<string, unknown>;
 }
@@ -753,6 +817,36 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
   }
   if (request.requestProposalDiscard) {
     return env('delete', 'proposal', { id: request.requestProposalDiscard.proposalId });
+  }
+  if (request.requestDocSave) {
+    return env('create', 'doc', {
+      path: request.requestDocSave.path,
+      content: request.requestDocSave.content,
+    });
+  }
+  if (request.requestDocRename) {
+    return env('update', 'doc', {
+      path: request.requestDocRename.path,
+      to: request.requestDocRename.to,
+    });
+  }
+  if (request.requestDocDelete) {
+    return env('delete', 'doc', { path: request.requestDocDelete.path });
+  }
+  if (request.requestKnowledgeSave) {
+    const save = request.requestKnowledgeSave;
+    return env('create', 'knowledge', {
+      ...(save.path !== undefined ? { path: save.path } : {}),
+      ...(save.title !== undefined ? { title: save.title } : {}),
+      ...(save.tags !== undefined ? { tags: [...save.tags] } : {}),
+      content: save.content,
+    });
+  }
+  if (request.requestKnowledgeDelete) {
+    return env('delete', 'knowledge', { path: request.requestKnowledgeDelete.path });
+  }
+  if (request.requestWorkflowDelete) {
+    return env('delete', 'workflow', { path: request.requestWorkflowDelete.path });
   }
   return null;
 }

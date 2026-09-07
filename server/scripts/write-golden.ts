@@ -207,6 +207,36 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
     confirmedAt: TS,
   },
   proposalDiscarded: { proposalId: 'PR-1' },
+  docSaved: {
+    doc: { path: 'setup.md', title: 'Setup guide', size: 128, updatedAt: TS },
+  },
+  docDeleted: { path: 'drafts/old.md' },
+  knowledgeSaved: {
+    entry: {
+      path: 'postgres-conventions.md',
+      title: 'Postgres conventions',
+      tags: ['postgres', 'conventions'],
+      size: 96,
+      updatedAt: TS,
+    },
+  },
+  knowledgeDeleted: { path: 'stale-note.md' },
+  workflowSaved: {
+    workflow: {
+      path: 'add-an-http-endpoint.md',
+      title: 'Add an HTTP endpoint',
+      description: 'The procedure for a new route, from scaffold to verified.',
+      tags: ['backend', 'http'],
+      source: 'T-1',
+      agent: 'coder',
+      steps: 2,
+      links: ['docs/api.md', 'card:T-3'],
+      size: 512,
+      recordedAt: TS,
+      updatedAt: TS,
+    },
+  },
+  workflowDeleted: { path: 'stale-procedure.md' },
 };
 
 const frames = EVENT_NAMES.map((name, index) =>

@@ -17,17 +17,17 @@ describe('LeftRailComponent', () => {
     await fixture.whenStable();
     const entries = (fixture.nativeElement as HTMLElement).querySelectorAll('.entry');
 
-    expect(entries.length).toBe(8);
+    expect(entries.length).toBe(9);
   });
 
-  it('wires board, plan, pipelines, coding and settings as links', async () => {
+  it('wires board, plan, pipelines, coding, docs and settings as links', async () => {
     const fixture = TestBed.createComponent(LeftRailComponent);
     fixture.componentRef.setInput('projectId', 'P-1');
     await fixture.whenStable();
     const links = [...(fixture.nativeElement as HTMLElement).querySelectorAll('a.entry')];
     const labels = links.map((a) => a.getAttribute('aria-label'));
 
-    expect(labels).toEqual(['board', 'plan', 'pipelines', 'coding', 'projects', 'settings']);
+    expect(labels).toEqual(['board', 'plan', 'pipelines', 'coding', 'docs', 'projects', 'settings']);
   });
 
   it('renders canvas and account as disabled stubs', async () => {

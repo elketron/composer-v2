@@ -1063,6 +1063,545 @@ Research notes for later slices:
   write tools' effects already land as document edits); retargeting this
   slice's fold there would want `parentId` equivalents for sessions.
 
+## S26 — Docs storage and the read-only viewer  ·  done (2026-09-06)
+
+Phase 9 opens. Docs are plain markdown files under the project's own
+`docs/` directory — versioned with the code, editable outside Composer,
+readable by the assistant's file tools. Files are the truth: the event
+log carries change records only (metadata, never content), and content
+moves over REST reads. The desktop gets a read-only docs view; editing
+lands in S27.
+
+- **Wire** (50–51, project-scoped, durable; golden regenerated to 51
+  frames, `PROTOCOL_VERSION` → 3 with the gateway's copy): `docSaved`
+  (`doc`: `path`/`title`/`size`/`updatedAt` — a create and an update are
+  the same upsert record, the fold keys on path) and `docDeleted`
+  (`path`). Commands `requestDocSave` (`path`, `content` — content rides
+  the command, the event stays metadata-only) and `requestDocDelete`,
+  mapped as `create:doc` / `delete:doc` on the action envelope.
+- **Server** (`src/docs.ts`): the file layer. Real-path containment
+  rooted at `<projectDirectory>/docs/` — write containment is proven
+  against the deepest existing ancestor so a fresh tree cannot be planted
+  outside; reads resolve through realpath like the assistant file tools.
+  Clean-relative-path rule (`.md` only, no `..`/dot segments, `/`
+  separators), 256 KiB cap, binary sniff, recursive listing that skips
+  symlinks and reads only a head window per file for titles (first `#`
+  heading, else filename). The processor executes both commands inside
+  the single write path and publishes the events. REST reads
+  (`GET /projects/:id/docs`, `.../docs/content?path=`) answer from disk;
+  unknown projects 404, a missing directory answers a typed error. No
+  fold changes — unknown-to-state events stay change records, not state.
+- **Desktop**: `DocsService` — REST `open()` per view entry reconciles
+  the index from disk, `docSaved`/`docDeleted` folds keep only opened
+  projects' indexes live (unopened projects stay unindexed), per-doc
+  read on selection. The docs view (`/projects/:id/coding/docs`, the
+  BookOpen rail entry) pairs the list pane with a rendered viewer (the
+  shared escaped-then-parsed markdown pipeline); empty states for
+  unlinked projects (link-directory action) and no docs; index errors
+  inline. The shell's last-view memory learned `coding/docs`.
+- **Specs**: the server docs suite drives boot end to end — a live
+  stream attach proves metadata-only events (the snapshot carries no
+  docs), REST list/read answer from disk, and traversal, symlink, binary,
+  oversize, and no-directory rejections hold. Desktop specs cover the
+  REST index, live fold upsert/delete, empty/error states, and rendered
+  markdown.
+
+Exit criteria (met): `pnpm verify` (server 160, desktop 241 + gateway 7
+— the gateway spec pins both `PROTOCOL_VERSION` copies together). The
+live smoke ran the built server (protocol 3, isolated data dir) against
+the built desktop: the gateway attached at the new pin, the docs view
+listed a seeded `docs/` tree path-sorted, rendered `setup.md` (headings,
+ordered list, inline code), the unlinked project showed the
+link-directory empty state, and the renderer console stayed clean under
+the CSP.
+
+Research notes for later slices:
+
+- Rename is deliberately absent: it is a save+delete pair and needs a
+  single-transaction shape before the editor exposes it (S27).
+- External edits reconcile on view entry (REST refresh); a file watcher
+  would make the list live without navigation if that ever matters.
+- Blockquote lines render literally under the escape-first markdown rule
+  (raw `>` is escaped before `marked` sees it) — consistent with
+  assistant messages; a targeted unescape for quote markers is a shared
+  renderer decision, not a docs one.
+
+## S27 — The doc editor: create, edit, rename, delete  ·  done (2026-09-06)
+
+The docs view grows hands. A CodeMirror 6 editor replaces the viewer in
+an edit session; the list pane grows a `new doc` action; the viewer bar
+gains edit, rename, and delete. Every mutation rides the validated
+processor (`create:doc` upserts, `update:doc` renames, `delete:doc`
+tombstones) and lands back as metadata events — the S26 loop, closed.
+Unsaved work never disappears silently: cancel, doc switches, and
+leaving the route all confirm first, and the delete confirmation is the
+shared destructive dialog (which now opens on cancel, not delete).
+
+- **Server**: `requestDocRename` (`path`, `to`) — one on-disk
+  `renameSync` inside the docs root, published as `docSaved(new)` +
+  `docDeleted(old)` (no new event kinds, so the catalog, the golden, and
+  the protocol pin stay at S26's shape; folds reconcile in either
+  order). The target must not exist — renames never overwrite — the
+  same-path command is an idempotent no-op, and target containment
+  reuses the save path's deepest-existing-ancestor proof (extracted as
+  `resolveTarget`, now shared by save and rename).
+- **Desktop**: `DocEditorComponent` — a minimal CodeMirror 6 surface
+  (markdown language + highlight, history, line wrap, the app's
+  monospace voice; no eval, CSP-clean). The docs view runs four modes
+  (view/edit/create/rename): edit refetches raw markdown (the viewer
+  holds sanitized HTML), create asks for a path (saving over an
+  existing path confirms the overwrite first), rename edits only the
+  path. A `dirty` computed (keystroke vs baseline) drives an `unsaved`
+  mark, cancel/switch confirms, a create-overwrite confirm, and a
+  `canDeactivate` route guard so leaving the view asks too. Saved text
+  renders in the viewer without a refetch — the file is the truth.
+- **Bundle**: the docs route is lazy (`loadComponent`) — CodeMirror
+  (~500 kB raw) ships in the docs chunk and the initial bundle stays at
+  its pre-editor size.
+- **Specs**: service save/rename/delete command mapping + typed
+  rejections; component flows — create (command + auto-select), edit
+  (dirty mark → save → viewer shows the new text), cancel's
+  confirm-then-resume-or-discard, delete's confirm + tombstone,
+  rename's command, and the route guard's ask-when-dirty. CodeMirror
+  runs in jsdom with ResizeObserver/rAF stubs.
+
+Exit criteria (met): `pnpm verify` (server 162, desktop 248 + gateway
+7). The live smoke drove the built app against the built server: an
+edit typed through real input events flagged `unsaved`, saved to disk
+(content verified on the filesystem), and rendered refreshed; a nested
+create planted `guide/new-page.md`; its delete opened the confirm
+dialog focused on cancel and removed the file; a rename moved
+`setup.md` to `guide/setup-guide.md` in one command; the renderer
+console stayed clean under the CSP throughout.
+
+Research notes for later slices:
+
+- The editor is deliberately bare (no file tree, no preview split); a
+  preview toggle rides the mermaid slice (S28) since it exists for
+  diagram feedback anyway.
+- Multi-doc undo/history is CodeMirror-local per session; a doc-level
+  revision history would want the event log to carry content hashes (or
+  a git-integration pass) — out of scope here.
+
+## S28 — Mermaid diagrams in markdown  ·  done (2026-09-06)
+
+```mermaid fences render as diagrams in the docs viewer and assistant
+transcript. The escape-first markdown pipeline stays synchronous —
+`renderMarkdown` leaves a fence as an ordinary `language-mermaid` code
+block — and a directive enhances it asynchronously: each fence is
+replaced by mermaid's SVG, and a diagram that fails to parse becomes a
+visible error panel that keeps the source. Nothing throws into the host
+view.
+
+- **Renderer** (`core/mermaid/mermaid-renderer.ts`): the
+  `MERMAID_RENDERER` injection token (root-provided) bounds the async
+  render — specs substitute fakes, since jsdom has no SVG measurement.
+  The real implementation lazy-imports mermaid on the first diagram
+  (the chunk never touches the initial bundle) and initializes once:
+  `startOnLoad: false`, `securityLevel: 'strict'` (mermaid sanitizes the
+  diagram text; clicks are inert), `theme: 'dark'`.
+- **Directive** (`core/mermaid/mermaid.directive.ts`): scans the host's
+  rendered HTML for `pre > code.language-mermaid`, swaps in a pending
+  placeholder, then the SVG (DOM APIs — no sanitizer bypass beyond the
+  host's own, so the assistant's sanitized innerHTML path works
+  unchanged). Fences arrive double-escaped by the escape-first rule
+  (`-->` reads back as `--&gt;`), so one entity-decode pass recovers the
+  authored text before rendering; a literal `&gt;` in the source
+  survives as written. Input changes bump a generation counter — stale
+  renders discard themselves instead of overwriting fresh content.
+- **Integration**: the docs viewer passes its pre-bypass markdown string
+  (the `rendered` signal, split from the `SafeHtml` the article binds);
+  assistant agent bubbles pass `markdown(message.text)` directly. The
+  `.mermaid-block` / `.mermaid-error` styles live in the global
+  stylesheet — the content is innerHTML, so component scoping can't see
+  it. The plan document view is one attribute away when wanted.
+- **Specs**: directive-level — svg replacement (fence gone, prose kept),
+  ordinary code blocks untouched, the error panel (message + source),
+  and the stale-generation discard. Assistant-level — a mermaid fence in
+  an agent reply renders through the real sanitized innerHTML path,
+  proving the class attribute survives sanitization.
+
+Exit criteria (met): `pnpm verify` (server 162, desktop 253 + gateway
+7). The live smoke drove the built app against the built server: a doc
+with one valid and one broken diagram rendered the flowchart inline
+(Draft → Review → Merge with edge labels, dark theme) and the parse
+failure as an error panel with its source; the renderer console stayed
+clean under the CSP — mermaid v11 needs no `unsafe-eval`, closing the
+plan's S28 verification clause.
+
+Research notes for later slices:
+
+- The edge/flow visual vocabulary is mermaid's default dark theme; a
+  token-driven theme (accent colors from `core/tokens.ts`) is a
+  `themeVariables` pass if the default grays feel off next to the app.
+- The plan document view (`plan-document.component`) renders the same
+  markdown pipeline but was not wired to the enhancer this slice; plan
+  documents with diagrams can adopt the directive verbatim.
+- Editing diagrams visually (the drag-and-drop flow editor over a
+  mermaid subset) is S31.
+
+## S29 — The knowledge library and the agent's access to it  ·  done (2026-09-06)
+
+The global knowledge library lands: markdown notes with a small
+frontmatter (title, tags) under the composer data dir —
+`$COMPOSER_DATA_DIR/knowledge/` — project-agnostic, outside any
+repository, human-editable, and machine-queryable. The agent reaches it
+through two new MCP tools: `knowledge_search` (scored, AND-matched) and
+`knowledge_save` (the store builds the frontmatter and a unique slug, so
+an agent can never overwrite by accident). No auto-recall: the assistant
+queries when it needs to — recall is a tool call, not a prompt injection.
+
+- **Store** (`src/knowledge.ts`): a flat `.md` library under the data
+  dir — clean-filename paths only (no subdirectories, no traversal),
+  256 KiB cap, frontmatter parsed with filename fallbacks. `saveToFile`
+  writes the exact text (the desktop's edit flow); `createEntry` builds
+  `title`/`tags` frontmatter plus a slugified unique filename
+  (`name.md`, `name-2.md`, …) and returns the saved path. Search scores
+  AND-matched tokens — title ×4, tag ×3, body ×1 — and returns the top
+  10 with 400-char snippets. Files are the truth; containment resolves
+  through the real root.
+- **Wire** (52–53, global, durable; golden regenerated to 53 frames,
+  `PROTOCOL_VERSION` → 4 with the gateway's copy): `knowledgeSaved`
+  (entry metadata — path, title, tags, size, updatedAt; a create and an
+  update are the same upsert record) and `knowledgeDeleted` (path).
+  Commands `requestKnowledgeSave` (`path` for the exact-file write,
+  `title`/`tags` for the agent flow, `content` always) and
+  `requestKnowledgeDelete`, mapped as `create:knowledge` /
+  `delete:knowledge`. Metadata only — the log never carries note bodies.
+- **Processor**: holds the store (boot builds it from the data dir);
+  the save outcome carries `savedPath` so the tool result can name the
+  file. No fold changes — knowledge state is files, not the log.
+- **MCP surface**: `knowledge_search` joins the read executor (thread
+  validated, store injected through the tool env);
+  `knowledge_save` is a routed write like `propose_cards` — the
+  `/mcp/read` route checks the thread and lands the command on the
+  validated processor. Tool descriptions steer the model: search before
+  saving, save only durable facts the user asked to remember.
+- **REST reads**: `GET /knowledge` (list), `/knowledge/content?path=`
+  (raw file + parsed metadata), `/knowledge/search?q=` (flattened
+  results). The desktop's knowledge UI rides these in S30.
+- **Specs**: the knowledge suite drives boot end to end — agent saves
+  (frontmatter on disk, unique slugs, the tool result's path), desktop
+  saves (exact file) and tombstones, ranking (title 4 / tag 3 / body 1
+  with AND semantics), metadata-only frames on the global stream
+  (no projectId, no bodies), path rejections, and the thread check on
+  the routed save. The MCP list test pins the twelve-tool surface.
+
+Exit criteria (met): `pnpm verify` (server 168, desktop 253 + gateway
+7). The live smoke drove the built `assistant-mcp.js` child exactly as
+opencode would — stdio JSON-RPC with `COMPOSER_SERVER_URL` +
+`COMPOSER_THREAD_ID`: `tools/list` enumerates the twelve tools,
+`knowledge_save` wrote `composer-protocol-pin.md` (frontmatter verified
+on disk) and returned its path, `knowledge_search` scored and returned
+it; the built desktop attached at the protocol-4 pin.
+
+Research notes for later slices:
+
+- The knowledge UI (list, view, search, edit, and a "save as knowledge"
+  action on assistant messages) is S30 — the REST reads and the metadata
+  events are already its full backend.
+- Search is deliberately dependency-free substring scoring; if recall
+  quality ever matters at scale, tag prefixes or an embedded index are
+  the next step, not a rewrite.
+- Knowledge notes are markdown — the S28 mermaid enhancer applies to
+  their viewer verbatim.
+
+## S30 — The knowledge pane and the one-click remember  ·  done (2026-09-06)
+
+The assistant surface grows its second sidebar tab: threads | knowledge.
+The knowledge tab pairs the library list (search field over the scored
+server search, `+ new note`) with the pane — read, edit, create, delete.
+Agent messages gain a `remember` action: one click lands the reply in
+the library (title = its first markdown line, body = the full text),
+flipping to `saved ✓` per message.
+
+- **Service** (`desktop/src/app/knowledge/knowledge.service.ts`): the
+  library state — REST `open()` per tab entry, the knowledgeSaved /
+  knowledgeDeleted folds keeping the loaded list live (a deletion also
+  clears the selection), scored search, and the three mutations
+  publishing the S29 commands. Selection and mode (view/edit/create)
+  are shared state: the list selects, the pane renders, and unsaved
+  edits confirm through one `confirmDiscard` used by tab switches,
+  cancels, and the assistant route's `canDeactivate` guard.
+- **Pane**: view renders the note body as markdown (frontmatter is
+  structured, not rendered) with the S28 mermaid enhancer applied —
+  notes are markdown like everything else. Edit prefills title/tags
+  fields over a CodeMirror body; save rebuilds the frontmatter and
+  writes the exact file. Create requires a title (the server derives
+  the unique slug; the pane selects the saved note when its event
+  lands). Delete is the shared destructive dialog. The editor rides an
+  `@defer` block, so CodeMirror stays out of the initial bundle even
+  though the assistant view loads eagerly.
+- **Remember**: the agent message header's `remember` button publishes
+  the create command (title from the first non-empty markdown line,
+  stripped of `#`/emphasis; tags empty; body verbatim) — the note is
+  editable afterwards in the pane. Per-message saved state is
+  component-local (a refresh forgets the acknowledgement, not the note).
+
+Exit criteria (met): `pnpm verify` (server 168, desktop 272 + gateway
+7). The live smoke drove the built app against the built server: the
+knowledge tab opened, a note was created through the pane (title, tags,
+and body typed through the real editor), the dirty mark appeared, save
+landed the file with rebuilt frontmatter (verified on disk), the list
+folded the new entry and rendered the body; switching tabs and routes
+respected the unsaved-work guard.
+
+Research notes for later slices:
+
+- The remember flow saves verbatim; trimming tool-activity noise or
+  extracting fenced blocks into the note could be a nicety if replies
+  grow long.
+- Knowledge notes could carry `source: threadId` frontmatter for
+  provenance; the pane would show a "from conversation" chip.
+- Search-as-you-type debounces nothing yet (server search is cheap at
+  library scale); debounce if libraries grow past a few hundred notes.
+
+## S31 — The flow editor: drawing diagrams in place  ·  done (2026-09-06)
+
+Phase 9 closes with the drag-and-drop canvas. A doc's edit mode gains a
+code | flow toggle: flow opens the document's mermaid fence as a graph —
+drag nodes, drag a node's handle onto another to connect, relabel in the
+properties strip, reshape (box / rounded / decision), delete — and every
+gesture re-serializes the fence in place. The rest of the document is
+untouched; the doc's save writes the fence the canvas drew.
+
+- **Graph layer** (`flow-graph.ts`, framework-free): a strict mermaid
+  subset — rect `[]`, rounded `()`, diamond `{}` nodes chained with
+  `-->`, labels as `-- text -->` or `-->|text|` — parsed to a graph and
+  serialized back (shapes ride edge statements until declared). Manual
+  positions round-trip through `%% composer: id x,y` comment lines,
+  which mermaid ignores: the saved file stays plain markdown, hand
+  edits to the code appear on the canvas, and canvas drags persist in
+  the file. Nodes without a pin are laid out by dagre (the only new
+  dependency) on first sight. Anything beyond the subset — dotted or
+  thick arrows, subgraphs, missing headers — throws a typed
+  `FlowParseError`; the editor refuses instead of mangling.
+- **Canvas** (`FlowEditorComponent`): pointer-driven — drag to move,
+  handle-drag to connect (drop-on-nothing cancels, duplicate edges
+  dedupe), a properties strip edits the selected node/edge. Edges are
+  SVG lines clipped at node borders with an arrowhead and a fat
+  invisible hit path; the pending connection follows the cursor. Node
+  geometry is computed once (label-length-based, explicit sizes) so the
+  DOM, the edge math, and dagre agree. Emissions are coalesced per
+  gesture into one `codeChange`; the parent splices the fence into the
+  draft (a doc with no fence gets a starter one planted).
+- **Integration**: the docs editor's `code | flow` toggle swaps the
+  CodeMirror for the canvas over the same draft — one source of truth,
+  so the S27 dirty tracking, save, and cancel cover canvas work too.
+- **Specs**: graph-level — shape/chain/label parsing, the pipe form,
+  position round-trips through comments, serialize-parse equality,
+  empty fences, subset refusals, id allocation, and edge geometry.
+  Component-level — dagre layout render, add-node emission, drag (move
+  + position pin on drop), connect (edge emitted; null drop cancels),
+  relabel, and the parse-failure refusal (canvas inert, code
+  untouched).
+
+Exit criteria (met): `pnpm verify` (server 168, desktop 287 + gateway
+7). The live smoke drew in the built app: toggled flow on a fenceless
+doc (starter fence planted), added two nodes, connected them by
+handle-drag, relabeled one through the strip, and saved — the file
+carried the doc text plus the fence with position comments, and the
+viewer rendered the diagram from the drawn layout. The renderer console
+stayed clean under the CSP.
+
+Research notes for later slices:
+
+- The canvas deliberately covers only `flowchart` (no `sequenceDiagram`,
+  no subgraphs, no styles/classes); widening the subset is a parser
+  concern only — the canvas already refuses what it cannot represent.
+- Edge routing is straight lines; mermaid's default renderer uses its
+  own curves, so a fence drawn in the canvas renders slightly rounder in
+  the viewer. If that bothers, dagre's edge points could seed a path.
+- Positions are per-file (not per-user); a second editor dragging the
+  same fence wins on save — ordinary last-write semantics.
+
+## S32 — Packaging: the desktop as an installable app (Linux + Windows)  ·  done (2026-09-06)
+
+Composer ships as a real application: electron-builder (config in
+`desktop/electron-builder.yml`) produces an AppImage, a deb, and a
+Windows NSIS setup — each self-contained (Electron shell, Angular
+renderer, and the composer server with its embedded SurrealDB engine in
+the app's resources). `npm run dist:linux` / `dist:win` from `desktop/`;
+the flow is documented in `desktop/docs/deployment.md`.
+
+- **The bundled server** (`scripts/prepare-server.mjs`): esbuild packs
+  the server into one ESM file with only the engine's `.node` binaries
+  external; the bindings (`linux-x64-gnu/musl`, `win32-x64/arm64-msvc`
+  by default, `COMPOSER_BINDINGS` to trim) are staged beside the bundle.
+  The gateway spawns it with `ELECTRON_RUN_AS_NODE=1` — in an installed
+  app `process.execPath` is the composer binary itself, and the child
+  must be plain Node, not a second GUI. (First attempt copied
+  `@surrealdb/node`'s package tree; electron-builder's default
+  `!**/node_modules/**` ignore applies to extraResources, so the
+  bundle-in approach replaced it — no `node_modules` ships at all.)
+- **Packaged paths** (`electron/main.js`): the server entry resolves to
+  `resources/server/index.mjs` (`COMPOSER_SERVER_ENTRY`); the spawn
+  record and the server log move to the Electron `userData` dir — the
+  app bundle is a read-only asar, so the dev `desktop/logs/` defaults
+  cannot be written. `server-registry.js` honors the entry/log envs; the
+  server's default data dir is now platform-correct (XDG on Linux,
+  `%APPDATA%\composer-v2` on Windows).
+- **Install hardening**: a single-instance lock (packaged builds only —
+  dev keeps multi-instance) with second-launch focus, and the Windows
+  app-user-model id.
+- **Icons**: `scripts/make-icons.mjs` rasterizes the composer diamond
+  and encodes PNG/ICO with node's zlib alone (no image tooling), feeding
+  electron-builder's `build/` resources.
+
+Exit criteria (met): `pnpm verify` (server 168, desktop 287 + gateway
+7). Built all three artifacts from Linux — `composer-0.0.0.AppImage`
+(213 MB), `composer-0.0.0.deb` (165 MB), `composer-setup-0.0.0.exe`
+(166 MB, PE32 GUI, unsigned) — and verified the packaged runtime chain
+without a GUI: the gateway driven through `server-registry.discover()`
+with the packaged env spawned `resources/server/index.mjs` via
+`ELECTRON_RUN_AS_NODE`, the protocol-4 server answered `/health`, and
+the spawn record landed in the overridden path; the asar carries the
+renderer and the electron scripts.
+
+Research notes for later slices:
+
+- Code signing (Windows Authenticode; Linux needs none) is the next
+  packaging concern — the NSIS build is ready for a certificate.
+- Auto-update: the `.blockmap` artifacts already exist; electron-updater
+  needs a feed (GitHub releases or a static server) — a product decision
+  before wiring.
+- The server bundle could drop `COMPOSER_ASSISTANT_ENABLED=0`-style
+  kill switches at package time if the desktop ever wants them fixed.
+
+## S33 — The worker agents: tester, reviewer, security  ·  done (2026-09-07)
+
+The board's other workers become real agents. S17 restructured the board
+into work-state columns (coder | tester | reviewer | security), but only
+the coder could run — the processor's run gate rejected every other
+agentKind (`Agent kind 'X' has no implementation yet`). S33 ships the
+three missing workers, so a pipeline can walk
+coder → tester → reviewer → security → gate.
+
+- **Definitions** (`server/src/agents.ts`): `composer-tester`,
+  `composer-reviewer`, and `composer-security` ship beside the coder's
+  (`.opencode/agent/`, written once, user-editable). The tester keeps full
+  tools (it writes tests); the reviewer and security agent run
+  `write/edit: false` — read plus checks, review-only by prompt
+  discipline. `PIPELINE_AGENT_KINDS` moves into agents.ts as the single
+  source of truth; the processor's run gate reads it (an unknown kind
+  still rejects `unknownAgentKind`).
+- **Lanes + stages** (runner, fold): `stepStageOf` is agentKind-aware —
+  coder → implement lane / `implement`, tester → `validation` /
+  `runValidation`, reviewer → `review` / `reviewChanges`, security →
+  `security` / `securityReview`. The fold's replay passes no agentKind
+  (the wire's step events carry only the step kind) and lands on
+  `implement`, unchanged. The runner skips the whole projection — lane
+  move and sub-state alike — when the lane isn't valid for the card's
+  type: security is code-only, so on a design/docs card the step runs,
+  the card stays put, and the checklist grows no `securityReview` key.
+- **Briefs** (runner): `coderPrompt` → `promptFor` — per-kind work orders
+  ("Implement/Verify/Review/Security-review card T-N: …") with the same
+  shape (description, satisfied blockers, the step's instructions) and
+  per-kind working rules; the coder's are v1's, verbatim.
+- **Desktop**: settings' per-agent model rows and the pipeline editor's
+  kind picker offer the five shipped kinds (planner, coder, tester,
+  reviewer, security) plus custom overrides.
+- **Wire**: untouched — `agentKind` was already on `PipelineStep` and
+  `agentSessionStarted`; no protocol bump, golden stays at 53.
+
+Exit criteria (met): `pnpm verify` (server 170, desktop 287 + gateway
+7). The runner suite covers the four-worker walk (each kind loads its
+shipped agent, works its lane and checklist stage, and the sessions name
+their kind on the wire) and the security-on-docs no-projection rule; the
+unknown-kind rejection is pinned with a kind outside the list.
+
+Research notes for later slices:
+
+- The fold's `retries` key still rides the step kind (an agent step's
+  failure lands on `implement` even when the step was a tester), because
+  `pipelineStepStarted` carries no agentKind; if per-worker retry counts
+  ever matter, the event body grows the field (a wire change).
+- The new definitions have no real-opencode smoke yet — the FakeEngine
+  covers the walk; a live smoke follows the S3 pattern when one of the
+  workers first earns its keep.
+
+## S34 — Agent workflows: recorded procedures  ·  done (2026-09-07)
+
+The workers learn to leave a trail. A "stored procedure" a worker agent
+captures after doing a task: `workflow_start_recording` opens it,
+`workflow_add_step` appends what it actually did (title, detail, the
+exact command), `workflow_stop_recording` finalizes it — with `links` to
+the docs, knowledge notes, and cards the procedure draws on — into the
+project's `.composer/workflows/<slug>.md`. Later, any worker
+(`workflow_search` → `workflow_read`) retrieves and follows it instead of
+rediscovering the procedure. Recall stays a tool call (the knowledge
+rule) — nothing is auto-injected.
+
+- **Files are the truth** (`server/src/workflows.ts`): one markdown file
+  per workflow — frontmatter (title, description, tags, source card,
+  agent kind, recorded timestamp, links) plus a `## Steps` ordered list
+  (`N. title`, indented detail, an indented `!command` line). The store
+  list/reads/deletes/searches them (the knowledge scorer: title ×4, tag
+  ×3, body ×1, AND-matched) and builds the frontmatter, the step list,
+  and a unique slug filename on save, so an agent can never overwrite by
+  accident. Parsing is tolerant — human edits keep reading (stray prose
+  is ignored, the first `!command` per step wins); containment mirrors
+  the knowledge store's (flat `.md` names, real-path resolved).
+- **Wire** (54–55, project-scoped, durable; golden regenerated to 55
+  frames, `PROTOCOL_VERSION` → 5 with the gateway's copy):
+  `workflowSaved` (metadata upsert — path, title, description, tags,
+  source, agent, step count, links, size, timestamps) and `workflowDeleted`
+  (path). Content never rides the log. Commands: `requestWorkflowRecordStart
+  /Step/Stop` (the recording tools' validated commands; the session binds
+  them) and `requestWorkflowDelete` (the human path, action
+  `delete:workflow`).
+- **Processor**: the open recording is in-memory state keyed
+  `<projectId>/<sessionId>` — start validates the agent session exists
+  and is running, one recording per session, title required; add_step
+  requires an open recording (a failed stop keeps it open, so the agent
+  can add the missing step and retry); stop requires ≥1 step, writes
+  through the store, publishes the event, and returns `savedPath` in the
+  tool result. A restart (or a crashed run) drops the open recording —
+  only a stopped one is durable.
+- **The workers get their own MCP surface** (`server/src/worker-mcp.ts`,
+  the engine's third `mcpTools` mode): five tools (start/add/stop +
+  search/read) over the `/mcp/worker` route, which re-validates the
+  project and session per call — the child carries no authority. Pipeline
+  agent steps switch from the planner's write tools to this surface (the
+  coder carrying `edit_document`/`create_tickets` was a latent
+  accident); the planner keeps its surface, the assistant keeps `/mcp/read`
+  (its existing `read_file` already reaches `.composer/workflows/`).
+  Boot resolves `dist/worker-mcp.js` (`COMPOSER_WORKER_MCP_SCRIPT`
+  overrides).
+- **Definitions**: each worker's shipped agent file gained a workflows
+  paragraph — search first and follow a match; record only reusable
+  procedures; links at stop.
+- **Fold**: the server's `AgentSessionState` now carries `agentKind`
+  (from `agentSessionStarted`; the snapshot replays it — the desktop
+  always folded it from the live event). The workflow events themselves
+  fold nothing: files are the state, the events are change records.
+- **Desktop**: wire types + `delete:workflow` mapping only — the UI view
+  is a later slice (REST reads are its full backend).
+
+Exit criteria (met): `pnpm verify` (server 181, desktop 287 + gateway 7).
+The workflows suite drives a real boot with a parked engine turn: the
+recording lands as a file (frontmatter verified on disk), the event
+carries metadata only, REST list/read/search answer from disk, the
+session-binding and non-empty rules hold, and delete tombstones through
+the action route; the format suite covers the serialize/parse round-trip
+and hand-edited files; the MCP suite pins the five-tool surface; the
+runner suite asserts agent steps load the worker surface.
+
+Research notes for later slices:
+
+- Running a workflow is follow-along only (the agent executes the steps
+  with its own tools). If a procedure ever deserves one-command replay,
+  promoting a workflow into a pipeline (steps → command steps) is the
+  natural shape — the runner already walks it.
+- The packaged-server bundle (`prepare-server.mjs`) ships only
+  `index.mjs`; the MCP children (`mcp.js`, `assistant-mcp.js`,
+  `worker-mcp.js`) resolve as separate files that the bundle does not
+  stage — agent turns through a packaged server predate this slice and
+  remain unsmoked (S32's scope was the runtime chain, not agent turns).
+- The worker surface carries no git/file tools: the workers use
+  opencode's own (read/write/bash/…) as before; only composer-side
+  effects went through MCP.
+
 ## Testing strategy
 
 - Tests are co-located (`server/test/*.test.ts`, desktop `*.spec.ts`).

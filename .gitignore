@@ -5,3 +5,6 @@ coverage/
 *.log
 .DS_Store
 desktop/logs/
+
+# esbuild staging for the packaged server
+dist-bundle/

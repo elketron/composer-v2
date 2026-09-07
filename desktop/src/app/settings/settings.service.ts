@@ -5,10 +5,10 @@ import { ShellService } from '../shell/shell.service';
 
 /**
  * Global app settings (the server's `/settings`): the default model plus
- * per-agent overrides (planner, coder, and any custom agent kind). The
- * shell's model badge shows the default; the pipeline editor's agent
- * picker offers the known kinds. The provider endpoint stays opencode's
- * own config.
+ * per-agent overrides (planner, coder, the pipeline workers, and any
+ * custom agent kind). The shell's model badge shows the default; the
+ * pipeline editor's agent picker offers the known kinds. The provider
+ * endpoint stays opencode's own config.
  */
 @Injectable({ providedIn: 'root' })
 export class SettingsService {
@@ -20,13 +20,15 @@ export class SettingsService {
   private readonly savedModel = signal('');
   private readonly savedModels = signal<Record<string, string>>({});
 
+  readonly availableModels = signal<readonly string[]>([]);
+
   /** The editable default-model field: '' until a load/save gives it a value. */
   readonly model = computed(() => this.modelDraft() ?? this.savedModel());
   /** The per-agent overrides (kind → model), as last edited. */
   readonly models = computed(() => this.modelsDraft() ?? this.savedModels());
-  /** The known agent kinds: the shipped two plus anything with an override. */
+  /** The known agent kinds: the shipped ones plus anything with an override. */
   readonly agentKinds = computed(() => [
-    ...new Set(['planner', 'coder', ...Object.keys(this.models())]),
+    ...new Set(['planner', 'coder', 'tester', 'reviewer', 'security', ...Object.keys(this.models())]),
   ]);
 
   readonly loading = signal(false);
@@ -66,6 +68,23 @@ export class SettingsService {
       // Offline: keep whatever the shell shows.
     } finally {
       this.loading.set(false);
+    }
+    await this.loadModels();
+  }
+
+  private async loadModels(): Promise<void> {
+    const base = this.events.serverBase;
+    if (base === null) return;
+    try {
+      const response = await fetch(`${base}/models`);
+      if (!response.ok) return;
+      const body = (await response.json()) as { models?: unknown };
+      if (!Array.isArray(body.models)) return;
+      this.availableModels.set(
+        body.models.filter((model): model is string => typeof model === 'string' && model !== ''),
+      );
+    } catch {
+      // Free-text model entry remains available when opencode cannot be queried.
     }
   }
 

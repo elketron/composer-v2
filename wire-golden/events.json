@@ -660,5 +660,89 @@
     "body": {
       "proposalId": "PR-1"
     }
+  },
+  {
+    "id": "e-50",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "docSaved",
+    "body": {
+      "doc": {
+        "path": "setup.md",
+        "title": "Setup guide",
+        "size": 128,
+        "updatedAt": "2026-09-04T12:00:00.123456Z"
+      }
+    }
+  },
+  {
+    "id": "e-51",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "docDeleted",
+    "body": {
+      "path": "drafts/old.md"
+    }
+  },
+  {
+    "id": "e-52",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "knowledgeSaved",
+    "body": {
+      "entry": {
+        "path": "postgres-conventions.md",
+        "title": "Postgres conventions",
+        "tags": [
+          "postgres",
+          "conventions"
+        ],
+        "size": 96,
+        "updatedAt": "2026-09-04T12:00:00.123456Z"
+      }
+    }
+  },
+  {
+    "id": "e-53",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "knowledgeDeleted",
+    "body": {
+      "path": "stale-note.md"
+    }
+  },
+  {
+    "id": "e-54",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "workflowSaved",
+    "body": {
+      "workflow": {
+        "path": "add-an-http-endpoint.md",
+        "title": "Add an HTTP endpoint",
+        "description": "The procedure for a new route, from scaffold to verified.",
+        "tags": [
+          "backend",
+          "http"
+        ],
+        "source": "T-1",
+        "agent": "coder",
+        "steps": 2,
+        "links": [
+          "docs/api.md",
+          "card:T-3"
+        ],
+        "size": 512,
+        "recordedAt": "2026-09-04T12:00:00.123456Z",
+        "updatedAt": "2026-09-04T12:00:00.123456Z"
+      }
+    }
+  },
+  {
+    "id": "e-55",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "workflowDeleted",
+    "body": {
+      "path": "stale-procedure.md"
+    }
   }
 ]

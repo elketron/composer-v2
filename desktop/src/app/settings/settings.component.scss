@@ -88,7 +88,8 @@ input {
     color: var(--text-dim);
   }
 
-  input {
+  input,
+  app-model-picker {
     flex: 1;
     min-width: 0;
   }

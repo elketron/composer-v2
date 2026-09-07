@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
+import { vi } from 'vitest';
 
 import {
   FakeEventsClient,
@@ -8,17 +9,39 @@ import {
   wireGlobalEvent,
 } from '../core/events/events-client.fake';
 import { ConfirmService } from '../core/confirm/confirm.service';
+import { MERMAID_RENDERER, type MermaidRenderer } from '../core/mermaid/mermaid-renderer';
 import { AssistantComponent } from './assistant.component';
+
+/** Fake mermaid renderer: asserts the sanitized transcript path works. */
+class FakeMermaid implements MermaidRenderer {
+  readonly calls: string[] = [];
+  render(code: string): Promise<string> {
+    this.calls.push(code);
+    return Promise.resolve(`<svg data-fake="${code.trim()}"></svg>`);
+  }
+}
 
 describe('AssistantComponent', () => {
   let events: FakeEventsClient;
+  let mermaid: FakeMermaid;
+  let fetchJson: (url: string) => { status: number; body: unknown };
 
   beforeEach(async () => {
     events = new FakeEventsClient();
+    mermaid = new FakeMermaid();
     await TestBed.configureTestingModule({
       imports: [AssistantComponent],
-      providers: [provideFakeEventsClient(events), provideRouter([])],
+      providers: [
+        provideFakeEventsClient(events),
+        provideRouter([]),
+        { provide: MERMAID_RENDERER, useValue: mermaid },
+      ],
     }).compileComponents();
+    fetchJson = () => ({ status: 200, body: {} });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string) => {
+      const { status, body } = fetchJson(url);
+      return Promise.resolve(new Response(JSON.stringify(body), { status }));
+    }) as typeof fetch);
   });
 
   function emitThread(overrides: Record<string, unknown> = {}): void {
@@ -278,6 +301,95 @@ describe('AssistantComponent', () => {
     // Raw HTML was escaped before parsing: no script element exists.
     expect(bubble.querySelector('script')).toBeNull();
     expect(bubble.textContent).toContain('<script>');
+  });
+
+  it('a mermaid fence in an agent reply renders as a diagram (sanitizer-safe path)', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: {
+          index: 1,
+          role: 'agent',
+          text: 'Here is the flow:\n\n```mermaid\ngraph TD; A-->B;\n```',
+          at: '',
+        },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    // The class attribute survives Angular's sanitizer on this (non-bypass)
+    // innerHTML path, so the enhancer finds the fence and renders it.
+    expect(mermaid.calls).toEqual(['graph TD; A-->B;']);
+    const bubble = el.querySelector<HTMLElement>('.message.agent .message-text.markdown')!;
+    expect(bubble.querySelector('svg[data-fake="graph TD; A-->B;"]')).toBeTruthy();
+    expect(bubble.querySelector('code.language-mermaid')).toBeNull();
+  });
+
+  it('the knowledge tab swaps the sidebar and main pane', async () => {
+    fetchJson = () => ({ status: 200, body: { entries: [] } });
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.transcript')).toBeTruthy();
+
+    const tabs = [...el.querySelectorAll<HTMLButtonElement>('.pane-tab')];
+    tabs.find((tab) => tab.textContent?.trim() === 'knowledge')!.click();
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fixture.detectChanges();
+
+    expect(el.querySelector('.transcript')).toBeNull();
+    expect(el.querySelector('app-knowledge-pane')).toBeTruthy();
+    expect(el.querySelector('app-knowledge-list')).toBeTruthy();
+
+    const back = [...el.querySelectorAll<HTMLButtonElement>('.pane-tab')].find(
+      (tab) => tab.textContent?.trim() === 'threads',
+    )!;
+    back.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fixture.detectChanges();
+    expect(el.querySelector('.transcript')).toBeTruthy();
+  });
+
+  it('remember saves an agent reply as a knowledge note (once)', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: {
+          id: 'am-1',
+          index: 1,
+          role: 'agent',
+          text: '## Deploy pipeline\n\nRuns on fridays.',
+          at: '',
+        },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const button = el.querySelector<HTMLButtonElement>('.message.agent .remember')!;
+    expect(button.textContent?.trim()).toBe('remember');
+    button.click();
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fixture.detectChanges();
+
+    expect(events.lastCommand('requestKnowledgeSave')).toEqual({
+      requestKnowledgeSave: { title: 'Deploy pipeline', tags: [], content: '## Deploy pipeline\n\nRuns on fridays.' },
+    });
+    expect(el.querySelector<HTMLButtonElement>('.message.agent .remember')?.textContent?.trim()).toBe('saved ✓');
   });
 
   it('edit loads the message into the composer and resend publishes the sibling', async () => {
