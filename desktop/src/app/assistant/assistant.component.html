@@ -195,8 +195,8 @@
             @if (message.isAgent) {
               <div
                 class="message-text markdown"
-                [innerHTML]="markdown(message.text)"
-                [appMermaid]="markdown(message.text)"
+                [innerHTML]="message.markup()"
+                [appMermaid]="message.markup()"
               ></div>
             } @else {
               <div class="message-text">{{ message.text }}</div>

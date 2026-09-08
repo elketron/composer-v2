@@ -1,3 +1,5 @@
+import { renderMarkdown } from '../markdown';
+
 export type AssistantThreadStatus = 'IDLE' | 'RUNNING' | 'FAILED' | 'STOPPED';
 
 export type MessageRole = 'user' | 'agent';
@@ -36,6 +38,20 @@ export class AssistantMessage {
 
   get isAgent(): boolean {
     return this.role === 'agent';
+  }
+
+  /** The note title a "remember" derives: the reply's first markdown line. */
+  get title(): string {
+    const line = this.text
+      .split('\n')
+      .map((candidate) => candidate.replace(/^#+\s*/, '').replace(/[*_`>]/g, '').trim())
+      .find((candidate) => candidate !== '');
+    return truncate(line ?? 'saved reply', 60);
+  }
+
+  /** Agent replies render as safe markdown; user messages stay plain text. */
+  markup(): string {
+    return renderMarkdown(this.text);
   }
 }
 
@@ -234,4 +250,78 @@ export function proposalItemFromWire(value: unknown): ProposalItem {
       : [],
     included: record['included'] !== false,
   };
+}
+
+// ---- Proposal editing + tool-strip repr ----
+
+/**
+ * The proposal panel's working copy (F3): the editable copies of a drafted
+ * proposal's items that confirmation sends back. Immutable — the component
+ * swaps instances on edit.
+ */
+export class ProposalDraft {
+  private constructor(
+    readonly id: string,
+    readonly items: readonly ProposalItem[],
+  ) {}
+
+  static fromProposal(proposal: CardProposal): ProposalDraft {
+    return new ProposalDraft(
+      proposal.id,
+      proposal.items.map((item) => ({ ...item })),
+    );
+  }
+
+  includedCount(): number {
+    return this.items.filter((item) => item.included).length;
+  }
+
+  toggleInclude(index: number, included: boolean): ProposalDraft {
+    return this.mapItem(index, { included });
+  }
+
+  setTitle(index: number, title: string): ProposalDraft {
+    return this.mapItem(index, { title });
+  }
+
+  setDescription(index: number, description: string): ProposalDraft {
+    return this.mapItem(index, { description });
+  }
+
+  setType(index: number, cardType: ProposalCardType): ProposalDraft {
+    return this.mapItem(index, { cardType });
+  }
+
+  /** The items a confirm publishes (copies, so the live edit stays intact). */
+  toItems(): ProposalItem[] {
+    return this.items.map((item) => ({ ...item }));
+  }
+
+  private mapItem(index: number, patch: Partial<ProposalItem>): ProposalDraft {
+    return new ProposalDraft(
+      this.id,
+      this.items.map((item, at) => (at === index ? { ...item, ...patch } : item)),
+    );
+  }
+}
+
+/** A tool row's label: the unprefixed name + its first string argument. */
+export function assistantToolLabel(entry: AssistantToolEntry): string {
+  const name = entry.toolName.replace(/^composer_/, '');
+  const digest = argDigest(entry.args);
+  return digest !== '' ? `${name} · ${digest}` : name;
+}
+
+/** The first string arg (path, url, query) as the row's digest. */
+function argDigest(args: unknown): string {
+  if (typeof args !== 'object' || args === null) return '';
+  const values = Object.values(args as Record<string, unknown>);
+  const first = values.find((value) => typeof value === 'string' && value !== '');
+  if (typeof first === 'string') return truncate(first, 48);
+  if (values.length > 0) return truncate(JSON.stringify(args), 48);
+  return '';
+}
+
+function truncate(value: string, cap: number): string {
+  return value.length <= cap ? value : `${value.slice(0, cap)}…`;
 }

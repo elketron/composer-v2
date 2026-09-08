@@ -1,7 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, viewChild, ElementRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { renderMarkdown } from '../core/markdown';
 import { MermaidDirective } from '../core/mermaid/mermaid.directive';
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
@@ -11,8 +10,9 @@ import { KnowledgeService } from '../knowledge/knowledge.service';
 import {
   AssistantMessage,
   AssistantToolEntry,
+  ProposalDraft,
+  assistantToolLabel,
   type ProposalCardType,
-  type ProposalItem,
 } from '../core/models/assistant.models';
 import { AssistantService } from './assistant.service';
 
@@ -49,16 +49,15 @@ export class AssistantComponent {
   /** The thread's proposals (Phase 8) and the local edits on the draft. */
   protected readonly proposals = this.assistant.proposals;
   protected readonly draftProposal = this.assistant.draftProposal;
-  protected readonly editItems = signal<ProposalItem[]>([]);
+  protected readonly proposalDraft = signal<ProposalDraft | null>(null);
   private readonly lastDraftId = signal('');
   protected readonly confirmError = signal<string | null>(null);
   protected readonly confirming = signal(false);
   protected readonly lastConfirmed = computed(
     () => this.proposals().find((proposal) => proposal.status === 'CONFIRMED') ?? null,
   );
-  protected readonly includedCount = computed(
-    () => this.editItems().filter((item) => item.included).length,
-  );
+  protected readonly editItems = computed(() => this.proposalDraft()?.items ?? []);
+  protected readonly includedCount = computed(() => this.proposalDraft()?.includedCount() ?? 0);
   /** The active thread's scope as project names, for the header chips. */
   protected readonly scope = computed(() => {
     const ids = this.thread()?.projectIds ?? [];
@@ -103,7 +102,7 @@ export class AssistantComponent {
    */
   protected async remember(message: AssistantMessage): Promise<void> {
     if (this.remembered().has(message.id)) return;
-    const title = firstLine(message.text);
+    const title = message.title;
     const result = await this.knowledge.create(title, [], message.text);
     if (result.ok) {
       this.remembered.update((saved) => new Set(saved).add(message.id));
@@ -143,7 +142,7 @@ export class AssistantComponent {
       if (draft && draft.id !== this.lastDraftId()) {
         this.lastDraftId.set(draft.id);
         this.confirmError.set(null);
-        this.editItems.set(draft.items.map((item) => ({ ...item })));
+        this.proposalDraft.set(ProposalDraft.fromProposal(draft));
       } else if (!draft) {
         this.lastDraftId.set('');
       }
@@ -212,9 +211,8 @@ export class AssistantComponent {
   }
 
   /** Agent replies render as safe markdown; user messages stay plain text. */
-  protected markdown(text: string): string {
-    return renderMarkdown(text);
-  }
+  // (markdown rendering lives on AssistantMessage.markup(); the template
+  // renders the message itself.)
 
   // ---- The working box (S25): a turn's tool activity ----
 
@@ -251,9 +249,7 @@ export class AssistantComponent {
 
   /** The entry's row title: the tool name (unprefixed) + its first arg. */
   protected toolLabel(entry: AssistantToolEntry): string {
-    const name = entry.toolName.replace(/^composer_/, '');
-    const digest = argDigest(entry.args);
-    return digest !== '' ? `${name} · ${digest}` : name;
+    return assistantToolLabel(entry);
   }
 
   /** Branch navigation: the sibling versions of a forked message. */
@@ -287,28 +283,20 @@ export class AssistantComponent {
   }
 
   protected toggleInclude(index: number, checked: boolean): void {
-    this.editItems.update((items) =>
-      items.map((item, at) => (at === index ? { ...item, included: checked } : item)),
-    );
+    this.proposalDraft.update((draft) => (draft ? draft.toggleInclude(index, checked) : draft));
   }
 
   protected editTitle(index: number, title: string): void {
-    this.editItems.update((items) =>
-      items.map((item, at) => (at === index ? { ...item, title } : item)),
-    );
+    this.proposalDraft.update((draft) => (draft ? draft.setTitle(index, title) : draft));
   }
 
   protected editDescription(index: number, description: string): void {
-    this.editItems.update((items) =>
-      items.map((item, at) => (at === index ? { ...item, description } : item)),
-    );
+    this.proposalDraft.update((draft) => (draft ? draft.setDescription(index, description) : draft));
   }
 
   protected editType(index: number, cardType: string): void {
-    this.editItems.update((items) =>
-      items.map((item, at) =>
-        at === index ? { ...item, cardType: cardType as ProposalCardType } : item,
-      ),
+    this.proposalDraft.update((draft) =>
+      draft ? draft.setType(index, cardType as ProposalCardType) : draft,
     );
   }
 
@@ -321,7 +309,7 @@ export class AssistantComponent {
     }
     this.confirming.set(true);
     this.confirmError.set(null);
-    const items: ProposalItem[] = this.editItems().map((item) => ({ ...item }));
+    const items = this.proposalDraft()?.toItems() ?? [];
     const failure = await this.assistant.confirmProposal(proposal.id, items);
     this.confirming.set(false);
     if (failure) this.confirmError.set(failure);
@@ -421,27 +409,4 @@ export class AssistantComponent {
     event.preventDefault();
     this.send();
   }
-}
-
-/** The first string arg (path, url, query) as the row's digest. */
-function argDigest(args: unknown): string {
-  if (typeof args !== 'object' || args === null) return '';
-  const values = Object.values(args as Record<string, unknown>);
-  const first = values.find((value) => typeof value === 'string' && value !== '');
-  if (typeof first === 'string') return truncate(first, 48);
-  if (values.length > 0) return truncate(JSON.stringify(args), 48);
-  return '';
-}
-
-function truncate(value: string, cap: number): string {
-  return value.length <= cap ? value : `${value.slice(0, cap)}…`;
-}
-
-/** A reply's first markdown line, stripped, as the note's title. */
-function firstLine(text: string): string {
-  const line = text
-    .split('\n')
-    .map((candidate) => candidate.replace(/^#+\s*/, '').replace(/[*_`>]/g, '').trim())
-    .find((candidate) => candidate !== '');
-  return truncate(line ?? 'saved reply', 60);
 }
