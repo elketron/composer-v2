@@ -2,6 +2,10 @@
 // project keyed, idempotent (v1 architecture.md §Projection). Re-applying
 // events yields the same state; the SSE snapshot is built from it.
 //
+// The fold builds the domain objects (server/src/domain): cards, pipelines,
+// runs, and projects are immutable instances replaced via `with()` as their
+// events land — no shared mutable records.
+//
 // Phase 10: cards carry their assigned pipeline and current stage, pipelines
 // keep every revision (runs pin theirs), and runs are first-class records.
 
@@ -9,33 +13,14 @@ import type { EventBodyMap, EventName } from './wire/events.js';
 import type { EventEnvelope } from './wire/envelope.js';
 import type {
   AssistantThread,
-  Card,
   CardProposal,
   ChatMessage,
-  Pipeline,
-  PipelineRunStatus,
-  PipelineStepKind,
   PlanningSession,
-  Project,
 } from './wire/models.js';
-
-/**
- * One pipeline run: an immutable attempt pinned to the pipeline revision it
- * started on. Active runs also carry their current position.
- */
-export interface RunRecord {
-  id: string;
-  cardId: string;
-  pipelineId: string;
-  revision: number;
-  status: PipelineRunStatus;
-  startedAt: string;
-  endedAt?: string;
-  error?: string;
-  stageId?: string;
-  stepId?: string;
-  stepKind?: PipelineStepKind;
-}
+import { Card } from './domain/card.js';
+import { Pipeline } from './domain/pipeline.js';
+import { Project } from './domain/project.js';
+import { Run } from './domain/run.js';
 
 export interface ProjectState {
   projectId: string;
@@ -50,7 +35,7 @@ export interface ProjectState {
   pipelineRevisions: Map<string, Map<number, Pipeline>>;
   deletedPipelines: Set<string>;
   /** Every run record, active and terminal (keyed by run id). */
-  runs: Map<string, RunRecord>;
+  runs: Map<string, Run>;
   /** The active run per card (at most one). */
   activeRuns: Map<string, string>;
 }
@@ -91,23 +76,6 @@ export function newState(): State {
   };
 }
 
-/** The card's visible Kanban column: the last visible stage at or before its stage. */
-export function visibleStageOf(pipeline: Pipeline | undefined, stageId: string): string | undefined {
-  if (pipeline === undefined) return undefined;
-  const order = pipeline.stages.findIndex((stage) => stage.id === stageId);
-  if (order < 0) return undefined;
-  for (let index = order; index >= 0; index--) {
-    const stage = pipeline.stages[index];
-    if (stage?.kanbanVisible) return stage.id;
-  }
-  return undefined;
-}
-
-/** Whether a card sits in its pipeline's terminal (completion) stage. */
-export function isTerminal(pipeline: Pipeline | undefined, card: Card): boolean {
-  return pipeline?.stages.find((stage) => stage.id === card.stageId)?.terminal === true;
-}
-
 function projectStateOf(state: State, projectId: string): ProjectState {
   let project = state.byProject.get(projectId);
   if (!project) {
@@ -138,16 +106,18 @@ export function apply(state: State, envelope: EventEnvelope): void {
   const projectId = envelope.projectId ?? '';
 
   switch (name) {
+    // ---- Projects ----
+
     case 'projectCreated': {
       const body = envelope.body as EventBodyMap['projectCreated'];
-      state.projects.set(body.project.id, structuredClone(body.project));
+      state.projects.set(body.project.id, Project.fromWire(body.project));
       projectStateOf(state, body.project.id);
       break;
     }
     case 'projectDirectoryChanged': {
       const body = envelope.body as EventBodyMap['projectDirectoryChanged'];
       const project = state.projects.get(body.projectId);
-      if (project) project.directory = body.directory;
+      if (project) state.projects.set(body.projectId, project.with({ directory: body.directory }));
       break;
     }
     case 'projectActivated': {
@@ -157,54 +127,75 @@ export function apply(state: State, envelope: EventEnvelope): void {
     case 'projectArchived': {
       const body = envelope.body as EventBodyMap['projectArchived'];
       const project = state.projects.get(body.projectId);
-      if (project) project.archivedAt = body.archivedAt;
+      if (project) state.projects.set(body.projectId, project.with({ archivedAt: body.archivedAt }));
       break;
     }
     case 'projectRestored': {
       const body = envelope.body as EventBodyMap['projectRestored'];
       const project = state.projects.get(body.projectId);
-      if (project) delete project.archivedAt;
+      if (project) state.projects.set(body.projectId, project.with({ archivedAt: undefined }));
       break;
     }
+
+    // ---- Cards ----
+
     case 'cardCreated': {
       const body = envelope.body as EventBodyMap['cardCreated'];
       const cards = projectStateOf(state, projectId).cards;
-      cards.set(body.card.id, structuredClone(body.card));
+      cards.set(body.card.id, Card.fromWire(body.card));
       break;
     }
     case 'cardStageMoved': {
       const body = envelope.body as EventBodyMap['cardStageMoved'];
-      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      const cards = projectStateOf(state, projectId).cards;
+      const card = cards.get(body.cardId);
       if (!card) break;
-      card.stageId = body.toStageId;
-      if (body.comment !== undefined) card.rejectionComment = body.comment;
-      card.updatedAt = envelope.occurredAt;
+      cards.set(
+        body.cardId,
+        card.with({
+          stageId: body.toStageId,
+          ...(body.comment !== undefined ? { rejectionComment: body.comment } : {}),
+          updatedAt: envelope.occurredAt,
+        }),
+      );
       break;
     }
     case 'cardPipelineAssigned': {
       const body = envelope.body as EventBodyMap['cardPipelineAssigned'];
-      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      const cards = projectStateOf(state, projectId).cards;
+      const card = cards.get(body.cardId);
       if (!card) break;
-      card.pipelineId = body.pipelineId;
-      card.stageId = body.stageId;
-      card.updatedAt = envelope.occurredAt;
+      cards.set(
+        body.cardId,
+        card.with({
+          pipelineId: body.pipelineId,
+          stageId: body.stageId,
+          updatedAt: envelope.occurredAt,
+        }),
+      );
       break;
     }
     case 'cardTypeChanged': {
       const body = envelope.body as EventBodyMap['cardTypeChanged'];
-      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      const cards = projectStateOf(state, projectId).cards;
+      const card = cards.get(body.cardId);
       if (!card) break;
-      card.type = body.to;
-      card.stepStates = {};
-      card.updatedAt = envelope.occurredAt;
+      cards.set(
+        body.cardId,
+        card.with({ type: body.to, stepStates: {}, updatedAt: envelope.occurredAt }),
+      );
       break;
     }
     case 'cardAssigned': {
       const body = envelope.body as EventBodyMap['cardAssigned'];
-      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      const cards = projectStateOf(state, projectId).cards;
+      const card = cards.get(body.cardId);
       if (!card) break;
-      card.assignee = body.assignee;
-      card.updatedAt = envelope.occurredAt;
+      // An absent assignee unassigns (the change set drops the field).
+      cards.set(
+        body.cardId,
+        card.with({ assignee: body.assignee, updatedAt: envelope.occurredAt }),
+      );
       break;
     }
     case 'cardArchived': {
@@ -214,10 +205,16 @@ export function apply(state: State, envelope: EventEnvelope): void {
     }
     case 'cardStepStateUpdated': {
       const body = envelope.body as EventBodyMap['cardStepStateUpdated'];
-      const card = projectStateOf(state, projectId).cards.get(body.cardId);
+      const cards = projectStateOf(state, projectId).cards;
+      const card = cards.get(body.cardId);
       if (!card) break;
-      card.stepStates[body.stepId] = body.status;
-      card.updatedAt = envelope.occurredAt;
+      cards.set(
+        body.cardId,
+        card.with({
+          stepStates: { ...card.stepStates, [body.stepId]: body.status },
+          updatedAt: envelope.occurredAt,
+        }),
+      );
       break;
     }
     case 'dependencyStateChanged':
@@ -282,7 +279,7 @@ export function apply(state: State, envelope: EventEnvelope): void {
       const body = envelope.body as EventBodyMap['cardsCommitted'];
       const cards = projectStateOf(state, projectId).cards;
       for (const card of body.cards) {
-        cards.set(card.id, structuredClone(card));
+        cards.set(card.id, Card.fromWire(card));
       }
       break;
     }
@@ -292,7 +289,7 @@ export function apply(state: State, envelope: EventEnvelope): void {
     case 'pipelineSaved': {
       const body = envelope.body as EventBodyMap['pipelineSaved'];
       const project = projectStateOf(state, projectId);
-      const pipeline = structuredClone(body.pipeline);
+      const pipeline = Pipeline.fromWire(body.pipeline);
       // Revisions may fold in any order across reconnects; the highest wins
       // as current, and every revision lands in the pinned history.
       const current = project.pipelines.get(pipeline.id);
@@ -320,14 +317,17 @@ export function apply(state: State, envelope: EventEnvelope): void {
     case 'pipelineRunStarted': {
       const body = envelope.body as EventBodyMap['pipelineRunStarted'];
       const project = projectStateOf(state, projectId);
-      project.runs.set(body.runId, {
-        id: body.runId,
-        cardId: body.cardId,
-        pipelineId: body.pipelineId,
-        revision: body.revision,
-        status: 'running',
-        startedAt: envelope.occurredAt,
-      });
+      project.runs.set(
+        body.runId,
+        new Run({
+          id: body.runId,
+          cardId: body.cardId,
+          pipelineId: body.pipelineId,
+          revision: body.revision,
+          status: 'running',
+          startedAt: envelope.occurredAt,
+        }),
+      );
       project.activeRuns.set(body.cardId, body.runId);
       break;
     }
@@ -336,19 +336,29 @@ export function apply(state: State, envelope: EventEnvelope): void {
       const project = projectStateOf(state, projectId);
       const run = runOf(project, body.runId, body.cardId);
       if (run) {
-        run.stageId = body.stageId;
-        run.stepId = body.stepId;
-        run.stepKind = body.kind;
-        // Only a gate waits; an agent or command step runs.
-        run.status = body.kind === 'human' ? 'waiting' : 'running';
+        project.runs.set(
+          run.id,
+          run.with({
+            stageId: body.stageId,
+            stepId: body.stepId,
+            stepKind: body.kind,
+            // Only a gate waits; an agent or command step runs.
+            status: body.kind === 'human' ? 'waiting' : 'running',
+          }),
+        );
       }
       // The run owns stage transitions: the card follows the step's stage
       // (hidden stages project to the previous visible column client-side).
       const card = project.cards.get(body.cardId);
       if (card) {
-        card.stageId = body.stageId;
-        card.stepStates[body.stepId] = 'running';
-        card.updatedAt = envelope.occurredAt;
+        project.cards.set(
+          body.cardId,
+          card.with({
+            stageId: body.stageId,
+            stepStates: { ...card.stepStates, [body.stepId]: 'running' },
+            updatedAt: envelope.occurredAt,
+          }),
+        );
       }
       break;
     }
@@ -356,13 +366,18 @@ export function apply(state: State, envelope: EventEnvelope): void {
       const body = envelope.body as EventBodyMap['pipelineStepFinished'];
       const project = projectStateOf(state, projectId);
       const run = runOf(project, body.runId, body.cardId);
-      if (run && run.stepId === body.stepId) {
-        if (body.error !== undefined) run.error = body.error;
+      if (run && run.stepId === body.stepId && body.error !== undefined) {
+        project.runs.set(run.id, run.with({ error: body.error }));
       }
       const card = project.cards.get(body.cardId);
       if (card) {
-        card.stepStates[body.stepId] = body.ok ? 'ok' : 'failed';
-        card.updatedAt = envelope.occurredAt;
+        project.cards.set(
+          body.cardId,
+          card.with({
+            stepStates: { ...card.stepStates, [body.stepId]: body.ok ? 'ok' : 'failed' },
+            updatedAt: envelope.occurredAt,
+          }),
+        );
       }
       break;
     }
@@ -371,11 +386,16 @@ export function apply(state: State, envelope: EventEnvelope): void {
       const project = projectStateOf(state, projectId);
       const run = runOf(project, body.runId, body.cardId);
       if (run) {
-        run.status = body.status;
-        run.endedAt = envelope.occurredAt;
-        if (body.error !== undefined) run.error = body.error;
-        run.stepId = undefined;
-        run.stepKind = undefined;
+        project.runs.set(
+          run.id,
+          run.with({
+            status: body.status,
+            endedAt: envelope.occurredAt,
+            ...(body.error !== undefined ? { error: body.error } : {}),
+            stepId: undefined,
+            stepKind: undefined,
+          }),
+        );
       }
       project.activeRuns.delete(body.cardId);
       break;
@@ -384,7 +404,9 @@ export function apply(state: State, envelope: EventEnvelope): void {
       const body = envelope.body as EventBodyMap['pipelineGateResponded'];
       const project = projectStateOf(state, projectId);
       const run = runOf(project, body.runId, body.cardId);
-      if (run && run.status === 'waiting') run.status = 'running';
+      if (run && run.status === 'waiting') {
+        project.runs.set(run.id, run.with({ status: 'running' }));
+      }
       break;
     }
 
@@ -566,7 +588,7 @@ export function apply(state: State, envelope: EventEnvelope): void {
 }
 
 /** The run a step/gate/end event belongs to: by runId, or the card's active run. */
-function runOf(project: ProjectState, runId: string | undefined, cardId: string): RunRecord | undefined {
+function runOf(project: ProjectState, runId: string | undefined, cardId: string): Run | undefined {
   if (runId !== undefined) return project.runs.get(runId);
   const active = project.activeRuns.get(cardId);
   return active !== undefined ? project.runs.get(active) : undefined;

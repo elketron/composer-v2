@@ -75,7 +75,7 @@ export async function cancelInterruptedRuns(bus: Bus): Promise<number> {
   let cancelled = 0;
   for (const [projectId, project] of bus.state.byProject) {
     for (const run of project.runs.values()) {
-      if (run.status !== 'running' && run.status !== 'waiting') continue;
+      if (!run.isActive) continue;
       await bus.publish(projectId, 'pipelineRunEnded', {
         runId: run.id,
         cardId: run.cardId,

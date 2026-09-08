@@ -7,7 +7,7 @@ import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
 import type { EventName } from './wire/events.js';
 import type { ProjectState, State } from './fold.js';
-import type { Card } from './wire/models.js';
+import { isBlockedIn } from './domain/card.js';
 
 /** Terminal runs replayed per card (older attempts stay in the log). */
 const TERMINAL_RUNS_PER_CARD = 20;
@@ -81,7 +81,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
   for (const project of projects) {
-    events.push(frame(project.id, 'projectCreated', { project }, nonce, index++));
+    events.push(frame(project.id, 'projectCreated', { project: project.toWire() }, nonce, index++));
     const projectState = state.byProject.get(project.id);
     if (!projectState) continue;
 
@@ -196,7 +196,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
           a.revision - b.revision,
       );
     for (const pipeline of revisions) {
-      events.push(frame(project.id, 'pipelineSaved', { pipeline: structuredClone(pipeline) }, nonce, index++));
+      events.push(frame(project.id, 'pipelineSaved', { pipeline: pipeline.toWire() }, nonce, index++));
     }
 
     // Run records replay as compact started/ended pairs at their original
@@ -207,7 +207,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     );
     const terminalCountByCard = new Map<string, number>();
     for (const run of runs) {
-      if (run.status === 'running' || run.status === 'waiting') continue;
+      if (run.isActive) continue;
       const seen = terminalCountByCard.get(run.cardId) ?? 0;
       terminalCountByCard.set(run.cardId, seen + 1);
       if (seen >= TERMINAL_RUNS_PER_CARD) continue;
@@ -240,7 +240,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
       );
     }
     for (const run of runs) {
-      if (run.status !== 'running' && run.status !== 'waiting') continue;
+      if (!run.isActive) continue;
       events.push(
         frame(
           project.id,
@@ -274,11 +274,11 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     for (const card of [...projectState.cards.values()].sort(
       (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
     )) {
-      events.push(frame(project.id, 'cardCreated', { card: { ...card } }, nonce, index++));
+      events.push(frame(project.id, 'cardCreated', { card: card.toWire() }, nonce, index++));
     }
     // Blocked cards replay their dependency state (order-insensitive fold).
     for (const card of projectState.cards.values()) {
-      if (isBlocked(projectState, card)) {
+      if (isBlockedIn(projectState.cards, card, projectState.pipelines)) {
         events.push(
           frame(
             project.id,
@@ -292,14 +292,4 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     }
   }
   return events;
-}
-
-function isBlocked(projectState: ProjectState, card: Card): boolean {
-  if (card.blockedBy.length === 0) return false;
-  return card.blockedBy.some((blocker) => {
-    const other = projectState.cards.get(blocker);
-    if (other === undefined) return false;
-    const pipeline = projectState.pipelines.get(other.pipelineId);
-    return pipeline?.stages.find((stage) => stage.id === other.stageId)?.terminal !== true;
-  });
 }

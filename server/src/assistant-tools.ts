@@ -14,7 +14,8 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isAbsolute, resolve, sep } from 'node:path';
-import type { RunRecord, State } from './fold.js';
+import type { State } from './fold.js';
+import type { Run } from './domain/run.js';
 import { readGitStatus, type GitRunner } from './dashboard.js';
 import type { KnowledgeStore } from './knowledge.js';
 
@@ -150,7 +151,7 @@ function composerOverview(state: State, scope: string[], projectId: string | und
       const label = pipeline?.stages.find((stage) => stage.id === card.stageId)?.label ?? card.stageId;
       byStage[label] = (byStage[label] ?? 0) + 1;
     }
-    const latestRunByCard = new Map<string, RunRecord>();
+    const latestRunByCard = new Map<string, Run>();
     for (const run of projectState?.runs.values() ?? []) {
       const latest = latestRunByCard.get(run.cardId);
       if (latest === undefined || run.startedAt >= latest.startedAt) latestRunByCard.set(run.cardId, run);
@@ -197,7 +198,7 @@ function composerCard(state: State, scope: string[], projectId: string, cardId: 
   if (!card) {
     return { ok: false, error: `unknown card ${cardId}` };
   }
-  let latestRun: RunRecord | undefined;
+  let latestRun: Run | undefined;
   for (const run of projectState?.runs.values() ?? []) {
     if (run.cardId !== cardId) continue;
     if (latestRun === undefined || run.startedAt >= latestRun.startedAt) latestRun = run;

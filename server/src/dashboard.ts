@@ -2,7 +2,8 @@ import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
-import type { RunRecord, State } from './fold.js';
+import type { State } from './fold.js';
+import type { Run } from './domain/run.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -100,7 +101,7 @@ export async function dashboardProjects(
       .sort((a, b) => a.cardId.localeCompare(b.cardId));
     // The card's latest run feeds health: failed and returned runs are both
     // actionable (a returned run means work came back from a later stage).
-    const latestRunByCard = new Map<string, RunRecord>();
+    const latestRunByCard = new Map<string, Run>();
     for (const run of projectState?.runs.values() ?? []) {
       const latest = latestRunByCard.get(run.cardId);
       if (latest === undefined || run.startedAt >= latest.startedAt) latestRunByCard.set(run.cardId, run);

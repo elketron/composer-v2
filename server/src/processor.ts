@@ -12,11 +12,11 @@ import { nowIso } from './wire/envelope.js';
 import {
   type AssistantThread,
   type Assignee,
-  type Card,
+  type Card as CardJson,
   type CardProposal,
   type CardType,
   type ChatMessage,
-  type Pipeline,
+  type Pipeline as PipelineJson,
   type PipelineStage,
   type PipelineStep,
   type PlanningSession,
@@ -26,8 +26,10 @@ import {
   type SubStateStatus,
   type WorkflowStep,
 } from './wire/models.js';
+import { Card, isBlockedIn } from './domain/card.js';
+import type { Pipeline } from './domain/pipeline.js';
+import type { Run } from './domain/run.js';
 import { defaultPipeline, DEFAULT_PIPELINE_ID } from './pipelines.js';
-import type { RunRecord } from './fold.js';
 import { PIPELINE_AGENT_KINDS } from './agents.js';
 import { deleteDoc as deleteDocFile, renameDoc as renameDocFile, saveDoc as saveDocFile } from './docs.js';
 import { deleteWorkflow as deleteWorkflowFile, saveWorkflow, MAX_WORKFLOW_STEPS } from './workflows.js';
@@ -56,7 +58,7 @@ export class Processor {
       projectId !== undefined &&
       command.type !== 'requestProjectArchive' &&
       command.type !== 'requestProjectRestore' &&
-      this.bus.state.projects.get(projectId)?.archivedAt !== undefined
+      this.bus.state.projects.get(projectId)?.isArchived
     ) {
       return rejected('invalidCommand', `Project ${projectId} is archived`);
     }
@@ -252,9 +254,9 @@ export class Processor {
     if (!project) {
       return rejected('unknownProject', `Unknown project ${commandProjectId}`);
     }
-    if (project.archivedAt !== undefined) return ok();
+    if (project.isArchived) return ok();
     const activeRuns = [...(this.bus.state.byProject.get(commandProjectId)?.runs.values() ?? [])].some(
-      (run) => run.status === 'running' || run.status === 'waiting',
+      (run) => run.isActive,
     );
     if (activeRuns) {
       return rejected('invalidCommand', `Project ${commandProjectId} has an active pipeline run`);
@@ -277,7 +279,7 @@ export class Processor {
     if (!project) {
       return rejected('unknownProject', `Unknown project ${commandProjectId}`);
     }
-    if (project.archivedAt === undefined) return ok();
+    if (!project.isArchived) return ok();
     await this.bus.publish(commandProjectId, 'projectRestored', {
       projectId: commandProjectId,
       restoredAt: nowIso(),
@@ -295,7 +297,7 @@ export class Processor {
    * project's default — and begins in that pipeline's first stage.
    * Events publish per card, so each allocation sees the previous one.
    */
-  private async createCards(scope: string | undefined, cards: Card[]): Promise<CommandOutcome> {
+  private async createCards(scope: string | undefined, cards: CardJson[]): Promise<CommandOutcome> {
     if (scope === undefined || !this.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
@@ -323,16 +325,16 @@ export class Processor {
             : `Project ${scope} has no pipeline to assign the card to`,
         );
       }
-      const created: Card = {
+      const created = new Card({
         ...card,
         id: card.id !== '' ? card.id : this.allocateCardId(scope),
         projectId: scope,
         pipelineId: pipeline.id,
-        stageId: firstStageOf(pipeline).id,
+        stageId: pipeline.firstStage().id,
         stepStates: card.stepStates ?? {},
         createdAt: isSet(card.createdAt) ? card.createdAt : now,
         updatedAt: now,
-      };
+      });
       existing.set(created.id, created);
       await this.bus.publish(scope, 'cardCreated', { card: created });
       if (isBlockedIn(existing, created, this.pipelinesOf(scope))) {
@@ -369,7 +371,7 @@ export class Processor {
     if (pipeline === undefined) {
       return rejected('unknownPipeline', `Card ${cardId} has no assigned pipeline`);
     }
-    if (!pipeline.stages.some((stage) => stage.id === toStageId)) {
+    if (pipeline.stageById(toStageId) === undefined) {
       return rejected('unknownStage', `Stage '${toStageId}' is not a stage of pipeline ${pipeline.id}`);
     }
     if (this.activeRunOf(projectId, cardId) !== null) {
@@ -390,7 +392,7 @@ export class Processor {
       toStageId,
       ...(comment !== undefined ? { comment } : {}),
     });
-    const moved: Card = { ...card, stageId: toStageId };
+    const moved = card.with({ stageId: toStageId });
     await this.appendDependencyTransitions(projectId, before, moved);
     return ok();
   }
@@ -420,7 +422,7 @@ export class Processor {
     await this.bus.publish(projectId, 'cardPipelineAssigned', {
       cardId: card.id,
       pipelineId: pipeline.id,
-      stageId: firstStageOf(pipeline).id,
+      stageId: pipeline.firstStage().id,
     });
     return ok();
   }
@@ -436,7 +438,7 @@ export class Processor {
     if (pipeline === undefined) {
       return rejected('unknownPipeline', `Card ${cardId} has no assigned pipeline`);
     }
-    if (!isTerminalStage(pipeline, card.stageId)) {
+    if (!pipeline.isTerminalStage(card.stageId)) {
       return rejected('invalidCommand', `Card ${cardId} is not completed`);
     }
     if (this.activeRunOf(projectId, cardId) !== null) {
@@ -446,7 +448,7 @@ export class Processor {
       cardId: card.id,
       pipelineId: pipeline.id,
       fromStageId: card.stageId,
-      toStageId: firstStageOf(pipeline).id,
+      toStageId: pipeline.firstStage().id,
     });
     return ok();
   }
@@ -511,7 +513,7 @@ export class Processor {
       return rejected('unknownCard', `Unknown card ${cardId}`);
     }
     const pipeline = this.pipelinesOf(found.projectId).get(found.card.pipelineId);
-    if (pipeline === undefined || !pipeline.steps.some((step) => step.id === stepId)) {
+    if (pipeline === undefined || pipeline.stepById(stepId) === undefined) {
       return rejected('unknownStage', `Step '${stepId}' is not a step of the card's pipeline`);
     }
     if (this.activeRunOf(found.projectId, cardId) !== null) {
@@ -539,7 +541,7 @@ export class Processor {
     if (pipeline === undefined) {
       return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
     }
-    if (!pipeline.stages.some((stage) => stage.id === stageId)) {
+    if (pipeline.stageById(stageId) === undefined) {
       return rejected('unknownStage', `Stage '${stageId}' is not a stage of pipeline ${pipelineId}`);
     }
     await this.bus.publish(scope, 'automationToggled', { pipelineId, stageId, on });
@@ -675,21 +677,24 @@ export class Processor {
       return rejected('invalidCommand', `Project ${found.projectId} has no pipeline to assign the tickets to`);
     }
     const now = nowIso();
-    const emitted: Card[] = tickets.map((ticket, offset) => ({
-      id: ids[offset]!,
-      projectId: found.projectId,
-      type: ticket.cardType,
-      title: ticket.title,
-      description: ticket.description,
-      tags: [],
-      pipelineId: pipeline.id,
-      stageId: firstStageOf(pipeline).id,
-      blockedBy: ticket.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
-      stepStates: {},
-      sessionId: found.session.id,
-      createdAt: now,
-      updatedAt: now,
-    }));
+    const emitted: Card[] = tickets.map(
+      (ticket, offset) =>
+        new Card({
+          id: ids[offset]!,
+          projectId: found.projectId,
+          type: ticket.cardType,
+          title: ticket.title,
+          description: ticket.description,
+          tags: [],
+          pipelineId: pipeline.id,
+          stageId: pipeline.firstStage().id,
+          blockedBy: ticket.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
+          stepStates: {},
+          sessionId: found.session.id,
+          createdAt: now,
+          updatedAt: now,
+        }),
+    );
 
     await this.bus.publish(found.projectId, 'cardsCommitted', { cards: emitted });
     for (const card of emitted) {
@@ -717,13 +722,14 @@ export class Processor {
     return card ? { projectId: scope, card } : null;
   }
 
+  /**
+   * The project's cards as a scratch map: a shallow copy of the fold's map —
+   * the immutable instances are shared, and in-flight batches (a card the
+   * next card in the batch may block on) mutate the copy, never the state.
+   */
   private cardsOf(projectId: string): Map<string, Card> {
     const cards = this.bus.state.byProject.get(projectId)?.cards;
-    const copy = new Map<string, Card>();
-    for (const [id, card] of cards ?? []) {
-      copy.set(id, structuredClone(card));
-    }
-    return copy;
+    return cards !== undefined ? new Map(cards) : new Map();
   }
 
   private allocateCardId(projectId: string): string {
@@ -779,7 +785,7 @@ export class Processor {
    * a changed save allocates the next revision — active and historical runs
    * keep the revision they started on.
    */
-  private async savePipeline(scope: string | undefined, pipeline: Pipeline): Promise<CommandOutcome> {
+  private async savePipeline(scope: string | undefined, pipeline: PipelineJson): Promise<CommandOutcome> {
     if (scope === undefined || !this.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
@@ -889,7 +895,7 @@ export class Processor {
     if (current !== undefined && sameDefinition(current, pipeline, name)) {
       return ok();
     }
-    const saved: Pipeline = {
+    const saved: PipelineJson = {
       id,
       projectId: scope,
       name,
@@ -945,7 +951,7 @@ export class Processor {
     if (this.activeRunOf(scope, cardId) !== null) {
       return rejected('runActive', `Card ${cardId} already has a running pipeline`);
     }
-    if (isTerminalStage(pipeline, card.stageId)) {
+    if (pipeline.isTerminalStage(card.stageId)) {
       return rejected('invalidCommand', `Card ${cardId} is completed — reopen it to run again`);
     }
     const kind = pipeline.steps.find((step) => step.kind === 'agent')?.agentKind;
@@ -1094,12 +1100,12 @@ export class Processor {
     return this.bus.state.byProject.get(projectId)?.pipelines ?? new Map();
   }
 
-  private runsOf(projectId: string): Map<string, RunRecord> {
+  private runsOf(projectId: string): Map<string, Run> {
     return this.bus.state.byProject.get(projectId)?.runs ?? new Map();
   }
 
   /** The card's active run, if any (at most one). */
-  private activeRunOf(projectId: string | undefined, cardId: string): RunRecord | null {
+  private activeRunOf(projectId: string | undefined, cardId: string): Run | null {
     if (projectId === undefined) return null;
     const project = this.bus.state.byProject.get(projectId);
     const runId = project?.activeRuns.get(cardId);
@@ -1369,20 +1375,23 @@ export class Processor {
         continue;
       }
       const now = nowIso();
-      const created: Card[] = batch.map((item, offset) => ({
-        id: ids[offset]!,
-        projectId,
-        type: item.cardType,
-        title: item.title,
-        description: item.description,
-        tags: [],
-        pipelineId: pipeline.id,
-        stageId: firstStageOf(pipeline).id,
-        blockedBy: item.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
-        stepStates: {},
-        createdAt: now,
-        updatedAt: now,
-      }));
+      const created: Card[] = batch.map(
+        (item, offset) =>
+          new Card({
+            id: ids[offset]!,
+            projectId,
+            type: item.cardType,
+            title: item.title,
+            description: item.description,
+            tags: [],
+            pipelineId: pipeline.id,
+            stageId: pipeline.firstStage().id,
+            blockedBy: item.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
+            stepStates: {},
+            createdAt: now,
+            updatedAt: now,
+          }),
+      );
       await this.bus.publish(projectId, 'cardsCommitted', { cards: created });
       for (const card of created) {
         if (card.blockedBy.length === 0) continue;
@@ -1698,27 +1707,8 @@ function rejected(code: Rejection['code'], message: string): CommandOutcome {
   return { ok: false, rejection: { code, message } };
 }
 
-/** Blocked while any blocker exists and has not reached its pipeline's terminal stage. */
-function isBlockedIn(cardsById: Map<string, Card>, card: Card, pipelines: Map<string, Pipeline>): boolean {
-  return card.blockedBy.some((id) => {
-    const blocker = cardsById.get(id);
-    if (blocker === undefined) return false;
-    return !isTerminalStage(pipelines.get(blocker.pipelineId), blocker.stageId);
-  });
-}
-
-/** The pipeline's first stage — a new or reopened card begins here. */
-function firstStageOf(pipeline: Pipeline): PipelineStage {
-  return pipeline.stages[0]!;
-}
-
-/** Whether a stage id is the pipeline's terminal (completion) stage. */
-function isTerminalStage(pipeline: Pipeline | undefined, stageId: string): boolean {
-  return pipeline?.stages.find((stage) => stage.id === stageId)?.terminal === true;
-}
-
 /** Fills the stage defaults the lenient wire allows (visibility, trimmed labels). */
-function normalizeStages(stages: PipelineStage[]): PipelineStage[] {
+function normalizeStages(stages: readonly PipelineStage[]): PipelineStage[] {
   return stages.map((stage) => ({
     id: stage.id.trim(),
     label: stage.label.trim(),
@@ -1742,7 +1732,7 @@ function normalizeStages(stages: PipelineStage[]): PipelineStage[] {
 }
 
 /** Whether a save would change the definition (name, stages, or steps). */
-function sameDefinition(current: Pipeline, next: Pipeline, name: string): boolean {
+function sameDefinition(current: Pipeline, next: PipelineJson, name: string): boolean {
   return (
     current.name === name &&
     JSON.stringify(normalizeStages(current.stages)) === JSON.stringify(normalizeStages(next.stages)) &&

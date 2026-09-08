@@ -26,12 +26,12 @@ export interface Card {
   type: CardType;
   title: string;
   description: string;
-  tags: string[];
+  tags: readonly string[];
   /** The one pipeline the card is assigned to; it appears on that pipeline's board tab. */
   pipelineId: string;
   /** The card's current stage of its assigned pipeline (may be a hidden stage). */
   stageId: string;
-  blockedBy: string[];
+  blockedBy: readonly string[];
   assignee?: Assignee;
   sessionId?: string;
   branch?: string;
@@ -213,7 +213,7 @@ export interface PipelineStage {
   /** The completion stage; exactly one per pipeline, and it must be last. */
   terminal?: boolean;
   /** The named outcomes an agent step in this stage may report (S36 enforces). */
-  outcomes?: StageOutcomeRule[];
+  outcomes?: readonly StageOutcomeRule[];
   /** Agent steps in this stage must signal their outcome through the tool (S36). */
   requiresOutcome?: boolean;
   /** A failed step in this stage returns the task to this earlier stage (S35). */
@@ -238,9 +238,9 @@ export interface Pipeline {
   /** 1-based; a save that changes the definition allocates the next revision. */
   revision: number;
   /** The ordered stage path (index = forward order). */
-  stages: PipelineStage[];
-  /** The ordered execution steps (each references a stage of this pipeline). */
-  steps: PipelineStep[];
+  stages: readonly PipelineStage[];
+  /** The ordered execution steps (each references one of its stages). */
+  steps: readonly PipelineStep[];
   updatedAt: string;
 }
 
