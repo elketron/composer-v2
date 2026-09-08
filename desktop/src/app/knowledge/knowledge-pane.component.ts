@@ -12,6 +12,7 @@ import { renderMarkdown } from '../core/markdown';
 import { MermaidDirective } from '../core/mermaid/mermaid.directive';
 import { DocEditorComponent } from '../docs/doc-editor.component';
 import { ConfirmService } from '../core/confirm/confirm.service';
+import { KnowledgeEntry } from '../core/models/knowledge.models';
 import { KnowledgeService } from './knowledge.service';
 
 /** The starter body a brand-new note opens with. */
@@ -207,22 +208,15 @@ export class KnowledgePaneComponent {
 
   /** The file text a save writes: frontmatter rebuilt, body as edited. */
   private serialize(): string {
-    const title = this.title().trim().replace(/\s+/g, ' ');
-    const tags = this.parseTags();
-    const frontmatter =
-      `---\ntitle: ${title}\n` + (tags.length > 0 ? `tags: ${tags.join(', ')}\n` : '') + `---\n\n`;
-    return `${frontmatter}${this.body()}`;
+    return KnowledgeEntry.serialize(this.title(), this.parseTags(), this.draft() ?? this.editBody);
   }
 
   private body(): string {
-    return (this.draft() ?? this.editBody).replace(/\s+$/, '') + '\n';
+    return KnowledgeEntry.normalizeBody(this.draft() ?? this.editBody);
   }
 
   private parseTags(): string[] {
-    return this.tags()
-      .split(',')
-      .map((tag) => tag.trim())
-      .filter((tag) => tag !== '');
+    return KnowledgeEntry.parseTags(this.tags());
   }
 
   private async load(path: string): Promise<void> {

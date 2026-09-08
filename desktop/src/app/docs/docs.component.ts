@@ -13,17 +13,11 @@ import { ShellService } from '../shell/shell.service';
 import { renderMarkdown } from '../core/markdown';
 import { MermaidDirective } from '../core/mermaid/mermaid.directive';
 import { ConfirmService } from '../core/confirm/confirm.service';
-import {
-  appendMermaidFence,
-  extractMermaidFence,
-  replaceMermaidFence,
-} from './flow/flow-graph';
 import { FlowEditorComponent } from './flow/flow-editor.component';
 import { DocInfoJson } from '../core/events/wire';
 import { DocEditorComponent } from './doc-editor.component';
 import { DocsService } from './docs.service';
-
-type Mode = 'view' | 'edit' | 'create' | 'rename';
+import { Doc, DocEditSession } from '../core/models/docs.models';
 
 /** The starter text a new doc opens with. */
 const CREATE_STARTER = '\n';
@@ -32,8 +26,8 @@ const CREATE_STARTER = '\n';
  * Docs view (Phase 9): the project's markdown files under `docs/` — read,
  * and since S27 created, edited, renamed, and deleted. Files are the
  * truth; every mutation rides the validated processor and lands back as
- * metadata events. Unsaved work confirms before anything discards it,
- * including leaving the view.
+ * metadata events. The editor's state machine lives on `DocEditSession`
+ * and the markdown rendering on `Doc`; this component renders and forwards.
  */
 @Component({
   selector: 'app-docs',
@@ -62,70 +56,33 @@ export class DocsComponent {
   protected readonly content = signal<SafeHtml | null>(null);
   protected readonly readError = signal<string | null>(null);
 
-  protected readonly mode = signal<Mode>('view');
-  /** The edit/create editor's live text (null until the first keystroke). */
-  protected readonly draft = signal<string | null>(null);
-  /** The edit surface: CodeMirror text or the flow canvas over the fence. */
-  protected readonly editorView = signal<'code' | 'flow'>('code');
-  /** The path field (create and rename modes). */
-  protected readonly pathField = signal('');
-  /** The content the edit session started from (the dirty baseline). */
-  protected readonly editOriginal = signal<string | null>(null);
+  /** The editor's working copy (mode, draft, path field, edit surface). */
+  readonly session = new DocEditSession(CREATE_STARTER);
+
   /** The text a brand-new doc opens with. */
   protected readonly starterText = CREATE_STARTER;
-  protected readonly saveError = signal<string | null>(null);
-  protected readonly busy = signal(false);
 
   protected readonly loading = this.docs.loading;
   protected readonly indexError = this.docs.error;
 
   /** Whether the current mode holds unsaved work. */
-  protected readonly dirty = computed(() => {
-    switch (this.mode()) {
-      case 'edit':
-        return this.draft() !== null && this.draft() !== this.editOriginal();
-      case 'create':
-        return this.pathField().trim() !== '' || this.draft() !== null && this.draft() !== CREATE_STARTER;
-      case 'rename':
-        return this.pathField() !== '' && this.pathField() !== this.selected();
-      default:
-        return false;
-    }
-  });
+  protected readonly dirty = computed(() => this.session.dirty(this.selected()));
 
-  protected readonly saveDisabled = computed(() => {
-    if (this.busy()) return true;
-    if (this.mode() === 'create' || this.mode() === 'rename') {
-      return this.pathField().trim() === '';
-    }
-    return false;
-  });
+  protected readonly saveDisabled = computed(() => this.session.saveDisabled());
 
   /** Whether the doc being edited carries a mermaid fence for the canvas. */
-  protected readonly hasFence = computed(() =>
-    this.draft() !== null && extractMermaidFence(this.draft()!) !== null,
-  );
+  protected readonly hasFence = computed(() => this.session.hasFence());
 
-  protected readonly fenceCode = computed(() => extractMermaidFence(this.draft() ?? '') ?? '');
+  protected readonly fenceCode = computed(() => this.session.fenceCode());
 
   /** Swaps the edit surface; flow mode plants a starter fence if needed. */
   protected setEditorView(view: 'code' | 'flow'): void {
-    if (view === this.editorView()) return;
-    if (view === 'flow' && !this.hasFence()) {
-      this.draft.set(appendMermaidFence(this.currentDraft()));
-    }
-    this.editorView.set(view);
+    this.session.setEditorView(view);
   }
 
   /** The flow canvas's fence edit lands back in the draft. */
   protected applyFence(code: string): void {
-    this.draft.set(replaceMermaidFence(this.currentDraft(), code));
-  }
-
-  /** The doc text being edited: the typed draft, else the loaded baseline. */
-  private currentDraft(): string {
-    if (this.mode() === 'create') return this.draft() ?? this.starterText;
-    return this.draft() ?? this.editOriginal() ?? '';
+    this.session.applyFence(code);
   }
 
   constructor() {
@@ -165,13 +122,9 @@ export class DocsComponent {
     this.readError.set(null);
     this.content.set(null);
     const result = await this.docs.read(projectId, entry.path);
-    if (this.selected() !== entry.path || this.mode() !== 'view') return;
+    if (this.selected() !== entry.path || this.session.mode() !== 'view') return;
     if (result.ok) {
-      // renderMarkdown escapes raw HTML first; the sanitizer guards the
-      // generated markup (the S11 rule shared with assistant messages).
-      const html = renderMarkdown(result.content);
-      this.rendered.set(html);
-      this.content.set(this.sanitizer.bypassSecurityTrustHtml(html));
+      this.showDoc(Doc.fromWire(entry, result.content));
     } else {
       this.readError.set(result.error);
     }
@@ -189,24 +142,15 @@ export class DocsComponent {
       this.readError.set(result.error);
       return;
     }
-    this.saveError.set(null);
-    this.editOriginal.set(result.content);
-    this.draft.set(null);
-    this.mode.set('edit');
+    this.session.beginEdit(result.content);
   }
 
   protected beginCreate(): void {
-    this.saveError.set(null);
-    this.editOriginal.set(null);
-    this.draft.set(null);
-    this.pathField.set('');
-    this.mode.set('create');
+    this.session.beginCreate();
   }
 
   protected beginRename(): void {
-    this.saveError.set(null);
-    this.pathField.set(this.selected() ?? '');
-    this.mode.set('rename');
+    this.session.beginRename(this.selected());
   }
 
   /** Cancel: unsaved work confirms first. */
@@ -228,36 +172,36 @@ export class DocsComponent {
   protected async save(): Promise<void> {
     const projectId = this.projectId();
     if (!projectId || this.saveDisabled()) return;
-    this.busy.set(true);
-    this.saveError.set(null);
+    this.session.busy.set(true);
+    this.session.saveError.set(null);
     try {
-      if (this.mode() === 'edit') {
+      if (this.session.mode() === 'edit') {
         await this.saveEdit(projectId);
-      } else if (this.mode() === 'create') {
+      } else if (this.session.mode() === 'create') {
         await this.saveCreate(projectId);
-      } else if (this.mode() === 'rename') {
+      } else if (this.session.mode() === 'rename') {
         await this.saveRename(projectId);
       }
     } finally {
-      this.busy.set(false);
+      this.session.busy.set(false);
     }
   }
 
   private async saveEdit(projectId: string): Promise<void> {
     const path = this.selected();
     if (!path) return;
-    const text = this.draft() ?? this.editOriginal() ?? '';
+    const text = this.session.currentText();
     const result = await this.docs.save(projectId, path, text);
     if (!result.ok) {
-      this.saveError.set(result.error ?? 'the doc could not be saved');
+      this.session.saveError.set(result.error ?? 'the doc could not be saved');
       return;
     }
-    this.showResult(path, text);
+    this.showText(path, text);
     this.resetEditor();
   }
 
   private async saveCreate(projectId: string): Promise<void> {
-    const path = this.pathField().trim();
+    const path = this.session.pathField().trim();
     if (this.entries().some((entry) => entry.path === path)) {
       const overwrite = await this.confirm.confirm({
         title: 'Overwrite this doc?',
@@ -267,10 +211,10 @@ export class DocsComponent {
       });
       if (!overwrite) return;
     }
-    const text = this.draft() ?? CREATE_STARTER;
+    const text = this.session.draft() ?? CREATE_STARTER;
     const result = await this.docs.save(projectId, path, text);
     if (!result.ok) {
-      this.saveError.set(result.error ?? 'the doc could not be saved');
+      this.session.saveError.set(result.error ?? 'the doc could not be saved');
       return;
     }
     this.resetEditor();
@@ -279,14 +223,14 @@ export class DocsComponent {
 
   private async saveRename(projectId: string): Promise<void> {
     const from = this.selected();
-    const to = this.pathField().trim();
+    const to = this.session.pathField().trim();
     if (!from || from === to) {
       this.resetEditor();
       return;
     }
     const result = await this.docs.rename(projectId, from, to);
     if (!result.ok) {
-      this.saveError.set(result.error ?? 'the doc could not be renamed');
+      this.session.saveError.set(result.error ?? 'the doc could not be renamed');
       return;
     }
     this.resetEditor();
@@ -296,7 +240,7 @@ export class DocsComponent {
   protected async deleteSelected(): Promise<void> {
     const projectId = this.projectId();
     const path = this.selected();
-    if (!projectId || !path || this.busy()) return;
+    if (!projectId || !path || this.session.busy()) return;
     const confirmed = await this.confirm.confirm({
       title: `Delete ${path}?`,
       detail: 'the markdown file is removed from the project directory on disk',
@@ -304,7 +248,7 @@ export class DocsComponent {
       danger: true,
     });
     if (!confirmed) return;
-    this.busy.set(true);
+    this.session.busy.set(true);
     try {
       const result = await this.docs.delete(projectId, path);
       if (!result.ok) {
@@ -316,14 +260,21 @@ export class DocsComponent {
       this.rendered.set(null);
       this.content.set(null);
     } finally {
-      this.busy.set(false);
+      this.session.busy.set(false);
     }
   }
 
   // ---- Helpers ----
 
+  private showDoc(doc: Doc): void {
+    this.readError.set(null);
+    const html = doc.markup();
+    this.rendered.set(html);
+    this.content.set(this.sanitizer.bypassSecurityTrustHtml(html));
+  }
+
   /** Shows saved text in the viewer without refetching (the file is it). */
-  private showResult(path: string, text: string): void {
+  private showText(path: string, text: string): void {
     this.selected.set(path);
     this.readError.set(null);
     const html = renderMarkdown(text);
@@ -340,21 +291,14 @@ export class DocsComponent {
     const result = await this.docs.read(projectId, path);
     if (this.selected() !== path) return;
     if (result.ok) {
-      const html = renderMarkdown(result.content);
-      this.rendered.set(html);
-      this.content.set(this.sanitizer.bypassSecurityTrustHtml(html));
+      this.showText(path, result.content);
     } else {
       this.readError.set(result.error);
     }
   }
 
   private resetEditor(): void {
-    this.mode.set('view');
-    this.editorView.set('code');
-    this.draft.set(null);
-    this.editOriginal.set(null);
-    this.pathField.set('');
-    this.saveError.set(null);
+    this.session.reset();
   }
 
   protected async linkDirectory(): Promise<void> {

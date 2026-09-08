@@ -103,7 +103,7 @@ describe('DocsComponent', () => {
   }
 
   function mode(fixture: ComponentFixture<DocsComponent>): string {
-    return (fixture.componentInstance as unknown as { mode(): string }).mode();
+    return fixture.componentInstance.session.mode();
   }
 
   function setPath(fixture: ComponentFixture<DocsComponent>, value: string): void {

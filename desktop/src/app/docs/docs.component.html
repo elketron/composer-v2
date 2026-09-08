@@ -36,8 +36,8 @@
             <button
               type="button"
               class="entry"
-              [class.active]="selected() === entry.path && mode() === 'view'"
-              [class.editing]="selected() === entry.path && mode() !== 'view'"
+              [class.active]="selected() === entry.path && session.mode() === 'view'"
+              [class.editing]="selected() === entry.path && session.mode() !== 'view'"
               (click)="select(entry)"
             >
               <span class="title">{{ entry.title }}</span>
@@ -48,7 +48,7 @@
       </nav>
 
       <section class="viewer">
-        @if (mode() === 'view') {
+        @if (session.mode() === 'view') {
           @if (readError(); as error) {
             <p class="state-error">{{ error }}</p>
           } @else if (selected() === null) {
@@ -79,7 +79,7 @@
         } @else {
           <div class="editor-pane">
             <div class="doc-bar">
-              @if (mode() === 'rename') {
+              @if (session.mode() === 'rename') {
                 <span class="doc-path">rename {{ selected() }} →</span>
                 <input
                   type="text"
@@ -87,8 +87,8 @@
                   autocomplete="off"
                   spellcheck="false"
                   placeholder="new/path.md"
-                  [value]="pathField()"
-                  (input)="pathField.set(renamePath.value)"
+                  [value]="session.pathField()"
+                  (input)="session.pathField.set(renamePath.value)"
                   #renamePath
                 />
                 <span class="doc-actions">
@@ -106,16 +106,16 @@
                   <button type="button" class="action" (click)="cancel()">cancel</button>
                 </span>
               } @else {
-                <span class="doc-path">{{ mode() === 'edit' ? 'editing' : 'new doc' }}</span>
-                @if (mode() === 'create') {
+                <span class="doc-path">{{ session.mode() === 'edit' ? 'editing' : 'new doc' }}</span>
+                @if (session.mode() === 'create') {
                   <input
                     type="text"
                     class="path-input"
                     autocomplete="off"
                     spellcheck="false"
                     placeholder="path/within/docs.md"
-                    [value]="pathField()"
-                    (input)="pathField.set(createPath.value)"
+                    [value]="session.pathField()"
+                    (input)="session.pathField.set(createPath.value)"
                     #createPath
                   />
                 }
@@ -127,13 +127,13 @@
                     <button
                       type="button"
                       class="action toggle"
-                      [class.active]="editorView() === 'code'"
+                      [class.active]="session.editorView() === 'code'"
                       (click)="setEditorView('code')"
                     >code</button>
                     <button
                       type="button"
                       class="action toggle"
-                      [class.active]="editorView() === 'flow'"
+                      [class.active]="session.editorView() === 'flow'"
                       (click)="setEditorView('flow')"
                     >flow</button>
                   </span>
@@ -149,12 +149,12 @@
                 </span>
               }
             </div>
-            @if (saveError(); as error) {
+            @if (session.saveError(); as error) {
               <p class="state-error">{{ error }}</p>
             }
-            @if (mode() === 'rename') {
+            @if (session.mode() === 'rename') {
               <p class="rename-note">the file is renamed on disk; content is untouched</p>
-            } @else if (editorView() === 'flow') {
+            } @else if (session.editorView() === 'flow') {
               <app-flow-editor
                 class="flow-editor"
                 [code]="fenceCode()"
@@ -164,8 +164,8 @@
               @defer (when true) {
                 <app-doc-editor
                   class="editor"
-                  [content]="mode() === 'edit' ? (editOriginal() ?? '') : starterText"
-                  (contentChange)="draft.set($event)"
+                  [content]="session.mode() === 'edit' ? (session.editOriginal() ?? '') : starterText"
+                  (contentChange)="session.draft.set($event)"
                 />
               } @placeholder {
                 <p class="state-empty inline">loading editor…</p>
