@@ -24,7 +24,26 @@ Server side complete (wire frozen throughout; golden untouched):
 - **R6 ✅** — absorbed into R2 (the consumers already shape views through the
   aggregate).
 
-Frontend slices F1–F5 remain.
+Frontend side complete (wire frozen; specs green):
+
+- **F1 ✅** — `EditorDraft` owns the pipeline editor's conversion
+  (newDraft/fromPipeline/toPipeline), validation, stage/step reordering
+  with the forward-path regroup, and id allocation; the 610-line component
+  thins to render + forward.
+- **F2 ✅** — `Doc` (markdown + mermaid-fence repr), `DocEditSession` (the
+  docs editor's state machine), and `KnowledgeEntry` (frontmatter
+  serialize/parse + body repr) move representation off the docs/knowledge
+  components.
+- **F3 ✅** — `AssistantMessage.title`/`markup()`, `ProposalDraft` (the
+  proposal panel's editable copies), and `assistantToolLabel` (the tool
+  strip) move the assistant repr onto models.
+- **F4 ✅** — `runLabel`/`runIcon`/`runElapsed` and
+  `Pipeline.hiddenStageLabel`/`stepSummary` become model getters; the board
+  card, card panel, and run view delegate.
+- **F5 ✅** — `core/rest.ts` is the shared REST client (replacing the
+  hand-rolled fetch in docs/knowledge/settings/dashboard); SettingsService
+  stops writing `shell.model`; `EventsClient` defers its stream open to an
+  explicit `connect()` app.ts calls after constructing the folds.
 
 ## Decisions
 
