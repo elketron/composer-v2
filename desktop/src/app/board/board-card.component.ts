@@ -1,10 +1,11 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
-import { Bot, EyeOff, Lock, MessageSquare, SquareCheck, Terminal } from 'lucide-angular';
+import { EyeOff, Lock, MessageSquare } from 'lucide-angular';
 
 import { AgePipe } from '../core/age.pipe';
 import { Card } from '../core/models/board.models';
+import { runIcon, runLabel } from '../core/models/pipeline.models';
 import { PipelineService } from '../pipelines/pipeline.service';
 import { ShellService } from '../shell/shell.service';
 
@@ -53,50 +54,17 @@ export class BoardCardComponent {
    * Execution inside a hidden stage: the card stays in its previous visible
    * column and this line shows where the run actually is.
    */
-  protected readonly hiddenStageLabel = computed(() => {
-    const card = this.card();
-    const pipeline = this.pipeline();
-    if (pipeline === undefined) return null;
-    if (pipeline.visibleStageOf(card.stageId) === card.stageId) return null;
-    return pipeline.stageById(card.stageId)?.label ?? card.stageId;
-  });
+  protected readonly hiddenStageLabel = computed(
+    () => this.pipeline()?.hiddenStageLabel(this.card().stageId) ?? null,
+  );
 
-  protected readonly currentStepLabel = computed(() => {
-    const run = this.run();
-    const pipeline = this.pipeline();
-    if (run === undefined || pipeline === undefined || run.stepId === undefined) return null;
-    const step = pipeline.stepById(run.stepId);
-    if (step === undefined) return null;
-    if (step.kind === 'human') return 'approval';
-    if (step.kind === 'command') return step.description ?? 'command';
-    return step.agentKind ?? 'agent';
-  });
+  protected readonly currentStepLabel = computed(
+    () => this.pipeline()?.stepSummary(this.run()?.stepId) ?? null,
+  );
 
-  protected readonly runLabel = computed(() => {
-    const run = this.run();
-    if (run === undefined) return null;
-    switch (run.stepKind) {
-      case 'agent':
-        return 'agent';
-      case 'command':
-        return 'command';
-      case 'human':
-        return 'approval';
-      default:
-        return 'queued';
-    }
-  });
+  protected readonly runLabel = computed(() => runLabel(this.run()));
 
-  protected readonly runIcon = computed(() => {
-    switch (this.run()?.stepKind) {
-      case 'command':
-        return Terminal;
-      case 'human':
-        return SquareCheck;
-      default:
-        return Bot;
-    }
-  });
+  protected readonly runIcon = computed(() => runIcon(this.run()));
 
   protected readonly hasStats = computed(() => {
     const stats = this.card().fileStats;

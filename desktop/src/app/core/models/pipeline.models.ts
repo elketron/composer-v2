@@ -5,6 +5,7 @@ import {
   WirePipelineRunStatus,
   WirePipelineStepKind,
 } from '../events/wire';
+import { Bot, SquareCheck, Terminal, type LucideIconData } from 'lucide-angular';
 
 /** The kind of work one pipeline step does (v1 M3, D7). */
 export type PipelineStepKind = WirePipelineStepKind;
@@ -220,6 +221,25 @@ export class Pipeline {
     return this.data.stages.filter((stage) => stage.kanbanVisible);
   }
 
+  /**
+   * Execution inside a hidden stage: the card stays in its previous visible
+   * column and this labels where the run actually is (null = visible).
+   */
+  hiddenStageLabel(stageId: string): string | null {
+    if (this.visibleStageOf(stageId) === stageId) return null;
+    return this.stageById(stageId)?.label ?? stageId;
+  }
+
+  /** The run line's step summary (approval / command / the agent kind). */
+  stepSummary(stepId: string | undefined): string | null {
+    if (stepId === undefined) return null;
+    const step = this.stepById(stepId);
+    if (step === undefined) return null;
+    if (step.kind === 'human') return 'approval';
+    if (step.kind === 'command') return step.description ?? 'command';
+    return step.agentKind ?? 'agent';
+  }
+
   with(changes: Partial<PipelineData>): Pipeline {
     return new Pipeline({ ...this.data, ...changes });
   }
@@ -294,4 +314,44 @@ export interface RunOutcome {
   /** The finished run's agent session (its transcript outlives the run). */
   readonly sessionId?: string;
   readonly error?: string;
+}
+
+// ---- Run representation (the board card's run chip) ----
+
+/** The run chip's label for a run's current step kind. */
+export function runLabel(run: RunProgress | undefined): string | null {
+  if (run === undefined) return null;
+  switch (run.stepKind) {
+    case 'agent':
+      return 'agent';
+    case 'command':
+      return 'command';
+    case 'human':
+      return 'approval';
+    default:
+      return 'queued';
+  }
+}
+
+/** The run chip's icon for a run's current step kind. */
+export function runIcon(run: RunProgress | undefined): LucideIconData {
+  switch (run?.stepKind) {
+    case 'command':
+      return Terminal;
+    case 'human':
+      return SquareCheck;
+    default:
+      return Bot;
+  }
+}
+
+/** mm:ss since the current step started (empty before a step starts). */
+export function runElapsed(run: RunProgress | undefined, now: number): string {
+  const startedIso = run?.stepStartedAt;
+  const started = startedIso ? Date.parse(startedIso) : Number.NaN;
+  if (Number.isNaN(started)) return '';
+  const seconds = Math.max(0, Math.round((now - started) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
 }

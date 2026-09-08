@@ -12,7 +12,7 @@ import {
   CardType,
   StepStateStatus,
 } from '../core/models/board.models';
-import { Pipeline, PipelineStep } from '../core/models/pipeline.models';
+import { Pipeline, PipelineStep, runElapsed } from '../core/models/pipeline.models';
 import { PipelineService } from '../pipelines/pipeline.service';
 import { ShellService } from '../shell/shell.service';
 import { BoardService } from './board.service';
@@ -128,13 +128,7 @@ export class CardPanelComponent {
 
   /** mm:ss since the current step started. */
   protected elapsed(): string {
-    const startedIso = this.run()?.stepStartedAt;
-    const started = startedIso ? Date.parse(startedIso) : Number.NaN;
-    if (Number.isNaN(started)) return '';
-    const seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
-    const minutes = Math.floor(seconds / 60);
-    const rest = seconds % 60;
-    return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+    return runElapsed(this.run(), Date.now());
   }
 
   protected openRunView(): void {

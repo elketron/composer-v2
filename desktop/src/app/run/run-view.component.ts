@@ -5,7 +5,7 @@ import { Router } from '@angular/router';
 import { LucideAngularModule, ArrowLeft, Bot, Square, Wrench } from 'lucide-angular';
 import { interval } from 'rxjs';
 
-import { RunProgress, RunOutcome } from '../core/models/pipeline.models';
+import { RunProgress, RunOutcome, runElapsed } from '../core/models/pipeline.models';
 import { Card } from '../core/models/board.models';
 import { RunTranscriptEntry, PipelineService } from '../pipelines/pipeline.service';
 import { BoardService } from '../board/board.service';
@@ -128,13 +128,7 @@ export class RunViewComponent {
   }
 
   protected elapsed(): string {
-    const startedIso = this.run()?.stepStartedAt;
-    const started = startedIso ? Date.parse(startedIso) : Number.NaN;
-    if (Number.isNaN(started)) return '';
-    const seconds = Math.max(0, Math.round((this.now() - started) / 1000));
-    const minutes = Math.floor(seconds / 60);
-    const rest = seconds % 60;
-    return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+    return runElapsed(this.run(), this.now());
   }
 
   protected stop(): void {
