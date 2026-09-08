@@ -4,6 +4,8 @@
 // messages of one turn must not collide even when the fold lags the
 // (synchronous) emit stream.
 
+import type { ChatMessage } from '../wire/models.js';
+
 /** One past the highest message index on a transcript (v1 `next_message_index`; starts at 1). */
 export function nextMessageIndex(transcript: readonly { index: number }[]): number {
   return transcript.reduce((max, message) => Math.max(max, message.index), 0) + 1;
@@ -12,6 +14,29 @@ export function nextMessageIndex(transcript: readonly { index: number }[]): numb
 /** The number of user messages on a transcript (v1 human_count). */
 export function userMessageCount(transcript: readonly { role: string }[]): number {
   return transcript.filter((message) => message.role === 'user').length;
+}
+
+/** Moves an opposite-role collision past the folded transcript. */
+export function resolveMessageCollision(
+  transcript: readonly ChatMessage[],
+  incoming: ChatMessage,
+): ChatMessage {
+  const occupant = transcript.find((message) => message.index === incoming.index);
+  return occupant !== undefined && occupant.role !== incoming.role
+    ? { ...incoming, index: nextMessageIndex(transcript) }
+    : incoming;
+}
+
+/** Collision-safe immutable upsert for message-only transcripts. */
+export function upsertTranscriptMessage(
+  transcript: readonly ChatMessage[],
+  incoming: ChatMessage,
+): ChatMessage[] {
+  const message = resolveMessageCollision(transcript, incoming);
+  return transcript
+    .filter((existing) => existing.index !== message.index)
+    .concat(structuredClone(message))
+    .sort((a, b) => a.index - b.index);
 }
 
 /**

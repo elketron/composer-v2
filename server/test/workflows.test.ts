@@ -141,6 +141,11 @@ describe('the workflow domain', () => {
     const stopped = await worker('workflow_stop_recording', {});
     expect(stopped.json).toMatchObject({ ok: true, savedPath: 'probe.md' });
 
+    const unauthorized = await worker('workflow_read', { path: 'probe.md' }, 'A-99');
+    expect(unauthorized.json).toEqual({ ok: false, error: 'Unknown agent session A-99' });
+    const workerRead = await worker('workflow_read', { path: 'probe.md' });
+    expect(workerRead.json).toMatchObject({ ok: true, workflow: { path: 'probe.md' } });
+
     const list = await get('/projects/P-1/workflows');
     expect(list.json).toEqual({
       workflows: [expect.objectContaining({ path: 'probe.md', title: 'probe', steps: 1 })],

@@ -23,6 +23,7 @@ import { type State, newState } from './state.js';
 
 export {
   type AgentSessionState,
+  emptyProjectState,
   newState,
   type ProjectState,
   type State,

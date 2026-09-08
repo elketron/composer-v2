@@ -21,7 +21,7 @@ import { OpenCodeEngine } from './engine/opencode.js';
 import { FakeEngine } from './engine/fake.js';
 import { OpenCodeServeEngine } from './engine/serve.js';
 import type { AgentEngine } from './engine/types.js';
-import type { ComposerCaller } from './tools/planner/index.js';
+import type { ComposerCaller } from './agents/planner/index.js';
 
 export interface Config {
   addr: string;
@@ -139,7 +139,7 @@ export async function boot(config: Config): Promise<{
       stopAssistant = () => assistant.stop();
       closeAssistantEngine = () => assistantEngine.close?.();
     }
-    const runner = new PipelineRunner(bus, processor, engine, {
+    const runner = new PipelineRunner(bus, engine, {
       serverUrl: url,
       mcpScriptPath: workerMcpScriptPath(),
       getModel: () => store.getSettings(),

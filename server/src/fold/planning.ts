@@ -4,6 +4,7 @@
 // plan document, and the committed tickets' cards.
 
 import { Card } from '../domain/card.js';
+import { resolveMessageCollision, upsertTranscriptMessage } from '../domain/transcript.js';
 import { projectStateOf, readBody, type FoldHandler, type State } from './state.js';
 import type { EventEnvelope } from '../wire/envelope.js';
 
@@ -51,15 +52,16 @@ function messageFold(state: State, envelope: EventEnvelope, projectId: string): 
   const project = projectStateOf(state, projectId);
   const agentSession = project.agentSessions.get(body.sessionId);
   if (agentSession !== undefined) {
+    const message = resolveMessageCollision(
+      agentSession.transcript.flatMap((entry) => entry.kind === 'message' ? [entry.message] : []),
+      body.message,
+    );
     agentSession.transcript = agentSession.transcript
-      .filter((entry) => !(entry.kind === 'message' && entry.message.index === body.message.index))
-      .concat({ kind: 'message', message: structuredClone(body.message) });
+      .filter((entry) => !(entry.kind === 'message' && entry.message.index === message.index))
+      .concat({ kind: 'message', message: structuredClone(message) });
     return;
   }
   const session = project.planningSessions.get(body.sessionId);
   if (!session) return;
-  session.messages = session.messages
-    .filter((message) => message.index !== body.message.index)
-    .concat(structuredClone(body.message))
-    .sort((a, b) => a.index - b.index);
+  session.messages = upsertTranscriptMessage(session.messages, body.message);
 }

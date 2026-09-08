@@ -1,4 +1,4 @@
-import type { ProjectState, State } from '../fold/index.js';
+import { emptyProjectState, type State } from '../fold/index.js';
 import { Board } from '../domain/board.js';
 import type { Run } from '../domain/run.js';
 import { readGitStatus, type GitStatus } from './git.js';
@@ -69,23 +69,7 @@ export async function dashboardProjects(
   });
 }
 
-/** An absent project folds to an empty board (a dashboard row with no runs). */
-function emptyProjectState(projectId: string): ProjectState {
-  return {
-    projectId,
-    cards: new Map(),
-    automation: new Map(),
-    planningSessions: new Map(),
-    agentSessions: new Map(),
-    pipelines: new Map(),
-    pipelineRevisions: new Map(),
-    deletedPipelines: new Set(),
-    runs: new Map(),
-    activeRuns: new Map(),
-  };
-}
-
-
+/** Maps values with a bounded concurrency (the per-project git reads). */
 async function mapLimit<T, R>(
   values: readonly T[],
   concurrency: number,

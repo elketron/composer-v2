@@ -14,14 +14,11 @@
 
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { WORKER_TOOL_DEFINITIONS } from '../tools/worker/index.js';
-import {
-  serveStdio,
-  toolContent,
-  type JsonRpcMessage,
-  type JsonRpcResponse,
-  type McpToolDefinition,
-} from './stdio.js';
+import { WORKER_TOOL_DEFINITIONS } from '../agents/worker/index.js';
+import { postJson } from './http-caller.js';
+import { toolContent, type JsonRpcMessage, type JsonRpcResponse, type McpToolDefinition } from './protocol.js';
+import { handleMcpMessage } from './server.js';
+import { serveStdio } from './stdio.js';
 
 const TOOLS: McpToolDefinition[] = WORKER_TOOL_DEFINITIONS;
 
@@ -31,42 +28,9 @@ export async function handleMessage(
   caller: WorkerCaller,
   context: { projectId: string; sessionId: string },
 ): Promise<JsonRpcResponse | null> {
-  const { id, method, params } = message;
-  if (method === 'initialize') {
-    return {
-      jsonrpc: '2.0',
-      id: id ?? null,
-      result: {
-        protocolVersion:
-          typeof params?.['protocolVersion'] === 'string' ? params['protocolVersion'] : '2025-06-18',
-        capabilities: { tools: {} },
-        serverInfo: { name: 'composer', version: '0.1.0' },
-      },
-    };
-  }
-  if (method === 'notifications/initialized' || method === 'notifications/cancelled') {
-    return null;
-  }
-  if (method === 'tools/list') {
-    return { jsonrpc: '2.0', id: id ?? null, result: { tools: TOOLS } };
-  }
-  if (method === 'tools/call') {
-    const name = typeof params?.['name'] === 'string' ? params['name'] : '';
-    const args =
-      typeof params?.['arguments'] === 'object' && params?.['arguments'] !== null
-        ? (params['arguments'] as Record<string, unknown>)
-        : {};
-    const result = await caller.call(context.projectId, context.sessionId, name, args);
-    return { jsonrpc: '2.0', id: id ?? null, result: toolContent(result) };
-  }
-  if (id !== undefined && id !== null) {
-    return {
-      jsonrpc: '2.0',
-      id,
-      error: { code: -32601, message: `unknown method ${String(method)}` },
-    };
-  }
-  return null;
+  return handleMcpMessage(message, TOOLS, async (name, args) =>
+    toolContent(await caller.call(context.projectId, context.sessionId, name, args)),
+  );
 }
 
 /** How a tool call reaches composer's validated worker path. */
@@ -86,19 +50,12 @@ export interface WorkerCaller {
 export function httpWorkerCaller(serverUrl: string): WorkerCaller {
   return {
     async call(projectId, sessionId, tool, args) {
-      try {
-        const response = await fetch(`${serverUrl}/mcp/worker`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ projectId, sessionId, tool, args }),
-        });
-        if (!response.ok) {
-          return { ok: false, error: `composer returned ${response.status}` };
-        }
-        return (await response.json()) as unknown;
-      } catch (error) {
-        return { ok: false, error: `composer unreachable: ${String(error)}` };
-      }
+      return postJson<unknown, unknown>(
+        `${serverUrl}/mcp/worker`,
+        { projectId, sessionId, tool, args },
+        'composer',
+        (message) => ({ ok: false, error: message }),
+      );
     },
   };
 }

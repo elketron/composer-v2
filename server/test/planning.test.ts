@@ -158,6 +158,23 @@ describe('planning commands', () => {
     });
   });
 
+  it('an_opposite_role_message_cannot_replace_an_occupied_index', async () => {
+    await processor.execute(projectId, {
+      type: 'requestUserMessage',
+      sessionId,
+      text: 'keep me',
+    });
+    await bus.publish(projectId, 'agentMessageComplete', {
+      sessionId,
+      message: { index: 1, role: 'agent', text: 'late reply', at: '2026-09-05T00:00:00.000000Z' },
+    });
+
+    expect(session(projectId, sessionId).messages).toMatchObject([
+      { index: 1, role: 'user', text: 'keep me' },
+      { index: 2, role: 'agent', text: 'late reply' },
+    ]);
+  });
+
   it('plan_document_update_replaces_the_document_wholesale', async () => {
     const first = await processor.execute(projectId, {
       type: 'requestPlanDocumentUpdate',

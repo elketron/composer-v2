@@ -6,6 +6,10 @@
 // (ephemeral) and land as `agentMessageComplete`; document edits and
 // ticket emissions ride the MCP tools' validated commands, not this path.
 //
+// The shared turn lifecycle (subscription, in-flight lock, engine-session
+// continuity, transcript index reservations, the follower loop) lives in
+// the `TurnCoordinator`; this class supplies the planner-specific hooks.
+//
 // No durable runs (D5): the turn loop is in-process; a restart drops
 // in-flight turns (the queued messages are already in the transcript) and
 // the engine-session continuity map (the next turn starts a fresh runtime
@@ -17,7 +21,8 @@ import { nowIso } from './wire/envelope.js';
 import { ensureAgentFiles, PLANNER_AGENT_NAME } from './agents/index.js';
 import { resolveModel, type ComposerSettings } from './store/settings.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
-import { nextMessageIndex, ReservedIndexes, userMessageCount } from './domain/transcript.js';
+import { nextMessageIndex, userMessageCount } from './domain/transcript.js';
+import { TurnCoordinator, nextQueuedMessage } from './turn.js';
 
 /** The per-agent model for a turn's spec (override, else the default). */
 function modelFor(settings: ComposerSettings, agentName: string): string | undefined {
@@ -39,39 +44,100 @@ export interface PlanningOptions {
   getModel?: () => Promise<{ model?: string }> | { model?: string };
 }
 
+/** The turn id: a session is keyed by (project, session) — ids repeat per project. */
+function turnKey(projectId: string, sessionId: string): string {
+  return `${projectId}/${sessionId}`;
+}
+
+function splitTurnKey(key: string): { projectId: string; sessionId: string } {
+  const at = key.indexOf('/');
+  return { projectId: key.slice(0, at), sessionId: key.slice(at + 1) };
+}
+
 export class PlanningOrchestrator {
   private readonly bus: Bus;
   private readonly engine: AgentEngine;
   private readonly options: Required<Pick<PlanningOptions, 'agentName' | 'timeoutMs'>> & PlanningOptions;
-  /** Session id → user-message count at the in-flight turn's start (v1 InFlight). */
-  private readonly inFlight = new Map<string, number>();
-  /**
-   * Transcript index reservations, keyed by session then engine messageId:
-   * a message's deltas and its completion must agree on one index (the
-   * desktop keys the live bubble on it), and successive messages of one
-   * turn must not collide even when the fold lags the (synchronous) emit
-   * stream.
-   */
-  private readonly indexes = new ReservedIndexes();
-  /** Session id → the runtime's own session id (continuity, process lifetime). */
-  private readonly engineSessions = new Map<string, string>();
-  private unsubscribe: (() => void) | null = null;
+  private readonly coordinator: TurnCoordinator;
 
   constructor(bus: Bus, engine: AgentEngine, options: PlanningOptions = {}) {
     this.bus = bus;
     this.engine = engine;
-    this.options = { agentName: options.agentName ?? 'composer-planner', timeoutMs: options.timeoutMs ?? 600_000, ...options };
-  }
-
-  start(): void {
-    this.unsubscribe = this.bus.subscribe((frame) => {
-      void this.onFrame(frame).catch((error) => console.error('planner:', error));
+    this.options = {
+      agentName: options.agentName ?? 'composer-planner',
+      timeoutMs: options.timeoutMs ?? 600_000,
+      ...options,
+    };
+    this.coordinator = new TurnCoordinator(bus, engine, {
+      label: 'planner',
+      active: (key) => {
+        const { projectId, sessionId } = splitTurnKey(key);
+        const found = this.sessionOf(projectId, sessionId);
+        return found !== undefined && found.session.status === 'drafting';
+      },
+      provision: (key) => {
+        const { projectId, sessionId } = splitTurnKey(key);
+        const directory = this.bus.state.projects.get(projectId)?.directory;
+        if (directory === undefined) return;
+        try {
+          ensureAgentFiles(directory);
+        } catch (error) {
+          console.error(`planner: could not ship agent files to ${directory}:`, error);
+        }
+      },
+      buildSpec: async (key, text, engineSessionId) => {
+        const { projectId, sessionId } = splitTurnKey(key);
+        const found = this.sessionOf(projectId, sessionId)!;
+        const settings = (await this.options.getModel?.()) ?? {};
+        return {
+          projectId,
+          sessionId,
+          ...(found.directory !== undefined ? { projectDirectory: found.directory } : {}),
+          prompt: buildPrompt(found.session.planDocument, text),
+          ...(engineSessionId !== undefined ? { engineSessionId } : {}),
+          serverUrl: this.options.serverUrl ?? '',
+          mcpScriptPath: this.options.mcpScriptPath ?? '',
+          agentName: this.options.agentName ?? PLANNER_AGENT_NAME,
+          ...(modelFor(settings, this.options.agentName ?? PLANNER_AGENT_NAME)
+            ? { model: modelFor(settings, this.options.agentName ?? PLANNER_AGENT_NAME) }
+            : {}),
+          timeoutMs: this.options.timeoutMs,
+        };
+      },
+      onEvent: (key, event) => this.onEngineEvent(key, event),
+      onFailure: async (key, outcome) => {
+        const { projectId, sessionId } = splitTurnKey(key);
+        // The desktop's send-lock clears on the next agent message; a
+        // failed turn publishes the failure as one so the UI unblocks.
+        await this.publishAgentMessage(
+          key,
+          projectId,
+          sessionId,
+          `failure:${sessionId}`,
+          `The planner turn failed: ${outcome.error ?? 'unknown error'}`,
+        );
+      },
+      nextQueued: (key, count) => {
+        const { projectId, sessionId } = splitTurnKey(key);
+        return nextQueuedMessage(() => {
+          const found = this.sessionOf(projectId, sessionId);
+          return found === undefined ? undefined : found.session;
+        }, count);
+      },
+      userCount: (key) => {
+        const { projectId, sessionId } = splitTurnKey(key);
+        const found = this.sessionOf(projectId, sessionId);
+        return found === undefined ? 0 : userMessageCount(found.session.messages);
+      },
     });
   }
 
+  start(): void {
+    this.coordinator.start((frame) => this.onFrame(frame));
+  }
+
   stop(): void {
-    this.unsubscribe?.();
-    this.unsubscribe = null;
+    this.coordinator.stop();
   }
 
   private onFrame(frame: EventFrame): Promise<void> {
@@ -82,106 +148,28 @@ export class PlanningOrchestrator {
   }
 
   private async onUserMessage(projectId: string, sessionId: string, text: string): Promise<void> {
-    const found = this.sessionOf(projectId, sessionId);
-    if (!found || found.session.status !== 'drafting') return;
-    const count = userMessageCount(found.session.messages);
-    if (this.inFlight.has(sessionId)) {
-      // A turn is running; the message is folded and the turn loop serves
-      // it with the follow-up run.
-      return;
-    }
-    this.inFlight.set(sessionId, count);
-    try {
-      await this.turnLoop(projectId, sessionId, count, text);
-    } finally {
-      this.inFlight.delete(sessionId);
-      this.indexes.release(sessionId);
-    }
+    await this.coordinator.runTurn(turnKey(projectId, sessionId), text);
   }
 
-  /** Drives turns until no new user message is queued behind the last one. */
-  private async turnLoop(
-    projectId: string,
-    sessionId: string,
-    count: number,
-    firstText: string,
-  ): Promise<void> {
-    let text = firstText;
-    for (;;) {
-      const found = this.sessionOf(projectId, sessionId);
-      if (!found || found.session.status !== 'drafting') return;
-
-      // The runtime loads the shipped agent from the project directory;
-      // ship it if absent (user-editable, never overwritten).
-      if (found.directory !== undefined) {
-        try {
-          ensureAgentFiles(found.directory);
-        } catch (error) {
-          console.error(`planner: could not ship agent files to ${found.directory}:`, error);
-        }
-      }
-
-      const settings = (await this.options.getModel?.()) ?? {};
-      const spec: AgentTurnSpec = {
-        projectId,
-        sessionId,
-        ...(found.directory !== undefined ? { projectDirectory: found.directory } : {}),
-        prompt: buildPrompt(found.session.planDocument, text),
-        ...(this.engineSessions.get(sessionId) !== undefined
-          ? { engineSessionId: this.engineSessions.get(sessionId) }
-          : {}),
-        serverUrl: this.options.serverUrl ?? '',
-        mcpScriptPath: this.options.mcpScriptPath ?? '',
-        agentName: this.options.agentName ?? PLANNER_AGENT_NAME,
-        ...(modelFor(settings, this.options.agentName ?? PLANNER_AGENT_NAME)
-          ? { model: modelFor(settings, this.options.agentName ?? PLANNER_AGENT_NAME) }
-          : {}),
-        timeoutMs: this.options.timeoutMs,
-      };
-      const outcome = await this.engine.run(spec, (event) =>
-        this.onEngineEvent(projectId, sessionId, event),
-      );
-      if (outcome.engineSessionId !== undefined) {
-        this.engineSessions.set(sessionId, outcome.engineSessionId);
-      }
-      if (!outcome.ok) {
-        // The desktop's send-lock clears on the next agent message; a
-        // failed turn publishes the failure as one so the UI unblocks.
-        await this.publishAgentMessage(
-          projectId,
-          sessionId,
-          `failure:${sessionId}`,
-          `The planner turn failed: ${outcome.error ?? 'unknown error'}`,
-        );
-        return;
-      }
-
-      const now = this.sessionOf(projectId, sessionId);
-      const countNow = now === undefined ? count : userMessageCount(now.session.messages);
-      if (countNow === count) return;
-      // Only a new HUMAN message is a queued turn; pick up its text.
-      const queued = now?.session.messages.filter((message) => message.role === 'user') ?? [];
-      text = queued[queued.length - 1]?.text ?? '';
-      count = countNow;
-    }
-  }
-
-  private onEngineEvent(projectId: string, sessionId: string, event: AgentTurnEvent): void {
+  private onEngineEvent(key: string, event: AgentTurnEvent): void {
     if (event.kind === 'messageDelta') {
+      const { projectId, sessionId } = splitTurnKey(key);
       const found = this.sessionOf(projectId, sessionId);
       if (!found) return;
       void this.bus.publish(projectId, 'agentMessageDelta', {
         sessionId,
-        messageIndex: this.indexes.reserve(sessionId, event.messageId, found.session.messages),
+        messageIndex: this.coordinator.indexes.reserve(key, event.messageId, found.session.messages),
         delta: event.delta,
       });
       return;
     }
     if (event.kind !== 'messageComplete') return;
-    void this.publishAgentMessage(projectId, sessionId, event.messageId, event.text);
+    const { projectId, sessionId } = splitTurnKey(key);
+    void this.publishAgentMessage(key, projectId, sessionId, event.messageId, event.text);
   }
 
   private async publishAgentMessage(
+    key: string,
     projectId: string,
     sessionId: string,
     messageId: string,
@@ -189,7 +177,7 @@ export class PlanningOrchestrator {
   ): Promise<void> {
     const found = this.sessionOf(projectId, sessionId);
     if (!found) return;
-    const index = this.indexes.reserve(sessionId, messageId, found.session.messages);
+    const index = this.coordinator.indexes.reserve(key, messageId, found.session.messages);
     await this.bus.publish(projectId, 'agentMessageComplete', {
       sessionId,
       message: { index, role: 'agent', text, at: nowIso() },

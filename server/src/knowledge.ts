@@ -8,11 +8,14 @@
 // representation (frontmatter parse, serialization, scored match) lives
 // on the domain object (domain/knowledge.ts); this store is the I/O.
 
-import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { KnowledgeEntryInfo } from './wire/models.js';
 import { invalidLibraryPath, slugify, uniqueSlugPath } from './domain/markdown.js';
 import { KnowledgeNote } from './domain/knowledge.js';
+import { captureFile, type MutationResult } from './filesystem/commit.js';
+import { isWithinRoot, writeTextFileContained } from './filesystem/containment.js';
+import { isContainmentFailure, StorageError } from './filesystem/errors.js';
 
 const KNOWLEDGE_DIRNAME = 'knowledge';
 /** 256 KiB per note; knowledge is notes, not file dumps. */
@@ -69,7 +72,7 @@ export class KnowledgeStore {
   }
 
   /** Writes the exact file text (the desktop's edit flow). */
-  saveToFile(path: string, content: string): KnowledgeResult<KnowledgeEntryInfo> {
+  saveToFile(path: string, content: string): MutationResult<KnowledgeEntryInfo> {
     const invalid = invalidKnowledgePath(path);
     if (invalid !== null) return { ok: false, error: invalid };
     const tooBig = checkSize(content);
@@ -82,7 +85,7 @@ export class KnowledgeStore {
    * builds the frontmatter and a unique slug filename, so an agent can
    * never overwrite by accident. Returns the saved path.
    */
-  createEntry(parts: { title: string; tags?: string[]; content: string }): KnowledgeResult<KnowledgeEntryInfo & { path: string }> {
+  createEntry(parts: { title: string; tags?: string[]; content: string }): MutationResult<KnowledgeEntryInfo> {
     const title = parts.title.trim();
     if (title === '') return { ok: false, error: 'a knowledge note needs a title' };
     const tooBig = checkSize(parts.content);
@@ -94,20 +97,26 @@ export class KnowledgeStore {
   }
 
   /** Deletes one note; it must exist. */
-  delete(path: string): KnowledgeResult<null> {
+  delete(path: string): MutationResult<null> {
     const invalid = invalidKnowledgePath(path);
     if (invalid !== null) return { ok: false, error: invalid };
+    let target: string;
     try {
-      statSync(this.resolveContained(path));
+      target = this.resolveContained(path);
+      statSync(target);
     } catch {
       return { ok: false, error: `not a readable note: ${path}` };
     }
+    const rollback = captureFile(target);
     try {
-      rmSync(this.resolveContained(path));
-    } catch {
-      return { ok: false, error: `note '${path}' could not be deleted` };
+      rmSync(target);
+    } catch (error) {
+      if (isContainmentFailure(error)) {
+        return { ok: false, error: `note '${path}' could not be deleted` };
+      }
+      throw new StorageError(`note '${path}' could not be deleted`);
     }
-    return { ok: true, value: null };
+    return { ok: true, value: null, rollback };
   }
 
   /**
@@ -146,32 +155,45 @@ export class KnowledgeStore {
     }
   }
 
-  private writeFile(path: string, content: string): KnowledgeResult<KnowledgeEntryInfo> {
+  private writeFile(path: string, content: string): MutationResult<KnowledgeEntryInfo> {
+    let rootReal: string;
     try {
       mkdirSync(this.root, { recursive: true });
-      // The library is flat: resolve the filename against the real root so
-      // a planted symlink cannot turn a write into an escape.
-      const rootReal = realpathSync(this.root);
-      const target = resolve(rootReal, path);
-      if (!target.startsWith(rootReal + sep)) {
-        return { ok: false, error: 'path escapes the knowledge library' };
+      rootReal = realpathSync(this.root);
+    } catch (error) {
+      if (isContainmentFailure(error)) {
+        return { ok: false, error: `note '${path}' could not be written` };
       }
-      writeFileSync(target, content, 'utf8');
-      const stat = statSync(target);
-      const note = KnowledgeNote.fromFile(path, content);
-      return {
-        ok: true,
-        value: { ...note.info(), size: stat.size, updatedAt: stat.mtime.toISOString() },
-      };
-    } catch {
-      return { ok: false, error: `note '${path}' could not be written` };
+      throw new StorageError(`note '${path}' could not be written`);
     }
+    // The library is flat: resolve the filename against the real root so
+    // a planted symlink cannot turn a write into an escape.
+    const target = resolve(rootReal, path);
+    if (!isWithinRoot(rootReal, target) || target === rootReal) {
+      return { ok: false, error: 'path escapes the knowledge library' };
+    }
+    const rollback = captureFile(target);
+    try {
+      writeTextFileContained(rootReal, target, content);
+    } catch (error) {
+      if (isContainmentFailure(error)) {
+        return { ok: false, error: `note '${path}' could not be written` };
+      }
+      throw new StorageError(`note '${path}' could not be written`);
+    }
+    const stat = statSync(target);
+    const note = KnowledgeNote.fromFile(path, content);
+    return {
+      ok: true,
+      value: { ...note.info(), size: stat.size, updatedAt: stat.mtime.toISOString() },
+      rollback,
+    };
   }
 
   private resolveContained(path: string): string {
     const rootReal = realpathSync(this.root);
     const target = resolve(rootReal, path);
-    if (target !== rootReal && !target.startsWith(rootReal + sep)) {
+    if (!isWithinRoot(rootReal, target)) {
       throw new Error('path escapes the knowledge library');
     }
     return target;
@@ -183,7 +205,7 @@ export function invalidKnowledgePath(path: string): string | null {
   return invalidLibraryPath(path, 'knowledge', 'knowledge notes');
 }
 
-function checkSize(content: string): KnowledgeResult<never> | null {
+function checkSize(content: string): { ok: false; error: string } | null {
   if (Buffer.byteLength(content, 'utf8') > MAX_ENTRY_BYTES) {
     return { ok: false, error: `note exceeds the ${Math.floor(MAX_ENTRY_BYTES / 1024)} KiB limit` };
   }

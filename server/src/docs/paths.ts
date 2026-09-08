@@ -3,8 +3,9 @@
 // (symlink escapes reject). The file I/O lives in index.ts.
 
 import { mkdirSync, realpathSync } from 'node:fs';
-import { basename, isAbsolute, join, resolve, sep } from 'node:path';
-import { docsRoot } from './index.js';
+import { basename, isAbsolute, join, resolve } from 'node:path';
+import { isWithinRoot } from '../filesystem/containment.js';
+import { docsRoot } from './root.js';
 
 export type DocsResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -57,12 +58,12 @@ export function resolveTarget(projectDirectory: string, path: string): DocsResul
       break; // Not created yet — the remaining path is plain resolution.
     }
     depth += 1;
-    if (existing !== rootReal && !existing.startsWith(rootReal + sep)) {
+    if (!isWithinRoot(rootReal, existing)) {
       return { ok: false, error: 'path escapes the docs directory' };
     }
   }
   const target = join(existing, ...segments.slice(depth));
-  if (!target.startsWith(rootReal + sep)) {
+  if (!isWithinRoot(rootReal, target) || target === rootReal) {
     return { ok: false, error: 'path escapes the docs directory' };
   }
   return { ok: true, value: target };
@@ -87,9 +88,8 @@ export function containedExisting(projectDirectory: string, path: string): DocsR
   } catch {
     return { ok: false, error: `not a readable doc: ${path}` };
   }
-  if (real !== rootReal && !real.startsWith(rootReal + sep)) {
+  if (!isWithinRoot(rootReal, real)) {
     return { ok: false, error: 'path escapes the docs directory' };
   }
   return { ok: true, value: real };
 }
-

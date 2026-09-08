@@ -16,6 +16,7 @@
 // callback URL) rides the environment, which the MCP child inherits.
 
 import { spawn } from 'node:child_process';
+import { TextReducer, ToolReducer } from './reduce.js';
 import type {
   AgentEngine,
   AgentTurnEvent,
@@ -45,11 +46,6 @@ interface WireEvent {
     callID?: string;
     state?: { status?: string; input?: unknown; output?: unknown; metadata?: { truncated?: boolean; error?: string } };
   };
-}
-
-interface TextPart {
-  text: string;
-  emitted: number;
 }
 
 export class OpenCodeEngine implements AgentEngine {
@@ -100,8 +96,8 @@ export class OpenCodeEngine implements AgentEngine {
       let engineSessionId: string | undefined;
       let stderr = '';
       let stdoutTail = '';
-      const parts = new Map<string, TextPart>();
-      const tools = new Map<string, ToolCallState>();
+      const parts = new Map<string, TextReducer>();
+      const tools = new Map<string, ToolReducer>();
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
       }, spec.timeoutMs > 0 ? spec.timeoutMs : this.defaultTimeoutMs);
@@ -140,7 +136,7 @@ export class OpenCodeEngine implements AgentEngine {
       child.on('close', (code) => {
         // Flush any part whose complete was never superseded.
         for (const [id, part] of parts) {
-          if (part.text !== '') onEvent({ kind: 'messageComplete', messageId: id, text: part.text });
+          if (part.hasText()) onEvent({ kind: 'messageComplete', messageId: id, text: part.fullText() });
         }
         if (code === 0) {
           settle({ ok: true, engineSessionId });
@@ -164,12 +160,12 @@ export class OpenCodeEngine implements AgentEngine {
 
 function handleEvent(
   event: WireEvent,
-  parts: Map<string, TextPart>,
-  tools: Map<string, ToolCallState>,
+  parts: Map<string, TextReducer>,
+  tools: Map<string, ToolReducer>,
   onEvent: (event: AgentTurnEvent) => void,
 ): void {
   if (event.type === 'tool_use') {
-    handleToolUse(event, parts, tools, onEvent);
+    handleToolUse(event, tools, onEvent);
     return;
   }
   if (event.type !== 'text') return;
@@ -181,23 +177,15 @@ function handleEvent(
     // A new part closes the previous one (the desktop streams one message
     // at a time; each part is its own transcript entry).
     for (const [previousId, previous] of parts) {
-      if (previousId !== id && previous.text !== '') {
-        onEvent({ kind: 'messageComplete', messageId: previousId, text: previous.text });
+      if (previousId !== id && previous.hasText()) {
+        onEvent({ kind: 'messageComplete', messageId: previousId, text: previous.fullText() });
       }
     }
-    part = { text: '', emitted: 0 };
+    part = new TextReducer();
     parts.set(id, part);
   }
-  if (text.length > part.emitted) {
-    onEvent({ kind: 'messageDelta', messageId: id, delta: text.slice(part.emitted) });
-    part.emitted = text.length;
-  }
-  part.text = text;
-}
-
-interface ToolCallState {
-  announced: boolean;
-  settled: boolean;
+  const delta = part.sync(text);
+  if (delta !== null) onEvent({ kind: 'messageDelta', messageId: id, delta });
 }
 
 /**
@@ -207,54 +195,31 @@ interface ToolCallState {
  */
 function handleToolUse(
   event: WireEvent,
-  parts: Map<string, TextPart>,
-  tools: Map<string, ToolCallState>,
+  tools: Map<string, ToolReducer>,
   onEvent: (event: AgentTurnEvent) => void,
 ): void {
   const part = event.part;
   const callId = part?.callID ?? part?.id;
   if (part === undefined || callId === undefined) return;
-  let state = tools.get(callId);
-  if (state === undefined) {
-    state = { announced: false, settled: false };
-    tools.set(callId, state);
+  let tool = tools.get(callId);
+  if (tool === undefined) {
+    tool = new ToolReducer();
+    tools.set(callId, tool);
   }
   const status = part.state?.status;
-  if (!state.announced) {
-    state.announced = true;
-    onEvent({
-      kind: 'toolCall',
+  for (const turn of tool.step(
+    {
       toolCallId: callId,
       toolName: part.tool ?? 'tool',
-      ...(part.state?.input !== undefined ? { args: part.state.input } : {}),
-    });
-    // A first sight already carrying output settles immediately.
-    if (part.state?.output !== undefined) {
-      state.settled = true;
-      onEvent({
-        kind: 'toolResult',
-        toolCallId: callId,
-        content: resultContent(part.state.output, part.state.metadata?.error),
-        isError: status === 'error',
-      });
-    }
-    return;
+      status,
+      input: part.state?.input,
+      output: part.state?.output,
+      error: part.state?.metadata?.error,
+    },
+    true,
+  )) {
+    onEvent(turn);
   }
-  if (!state.settled && (status === 'completed' || status === 'error')) {
-    state.settled = true;
-    onEvent({
-      kind: 'toolResult',
-      toolCallId: callId,
-      content: resultContent(part?.state?.output, part?.state?.metadata?.error),
-      isError: status === 'error',
-    });
-  }
-}
-
-function resultContent(output: unknown, error: string | undefined): string {
-  if (typeof output === 'string') return output;
-  if (output === undefined) return error ?? '';
-  return JSON.stringify(output);
 }
 
 /** One JSON line, or null (banner output and blank lines are skipped). */

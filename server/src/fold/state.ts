@@ -71,22 +71,27 @@ export function newState(): State {
   };
 }
 
+/** A project's slice with no events folded: every map empty. */
+export function emptyProjectState(projectId: string): ProjectState {
+  return {
+    projectId,
+    cards: new Map(),
+    automation: new Map(),
+    planningSessions: new Map(),
+    agentSessions: new Map(),
+    pipelines: new Map(),
+    pipelineRevisions: new Map(),
+    deletedPipelines: new Set(),
+    runs: new Map(),
+    activeRuns: new Map(),
+  };
+}
+
 /** The project's slice, created empty on first touch. */
 export function projectStateOf(state: State, projectId: string): ProjectState {
   let project = state.byProject.get(projectId);
   if (!project) {
-    project = {
-      projectId,
-      cards: new Map(),
-      automation: new Map(),
-      planningSessions: new Map(),
-      agentSessions: new Map(),
-      pipelines: new Map(),
-      pipelineRevisions: new Map(),
-      deletedPipelines: new Set(),
-      runs: new Map(),
-      activeRuns: new Map(),
-    };
+    project = emptyProjectState(projectId);
     state.byProject.set(projectId, project);
   }
   return project;

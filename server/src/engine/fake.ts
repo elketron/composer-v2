@@ -9,8 +9,8 @@ import type {
   AgentTurnOutcome,
   AgentTurnSpec,
 } from './types.js';
-import type { ComposerCaller } from '../tools/planner/index.js';
-import { createTickets, editDocument } from '../tools/planner/index.js';
+import type { ComposerCaller } from '../agents/planner/index.js';
+import { createTickets, editDocument } from '../agents/planner/index.js';
 
 /** The tool surface a scripted turn sees (the planner's MCP tools). */
 export interface FakeTurnTools {

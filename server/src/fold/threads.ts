@@ -5,6 +5,7 @@
 
 import type { AssistantThread, ChatMessage } from '../wire/models.js';
 import type { EventEnvelope } from '../wire/envelope.js';
+import { upsertTranscriptMessage } from '../domain/transcript.js';
 import { readBody, type FoldHandler, type State } from './state.js';
 
 export const threadHandlers: Record<string, FoldHandler> = {
@@ -107,21 +108,5 @@ function userMessageFold(state: State, envelope: EventEnvelope): void {
  * free, so the fold stays idempotent).
  */
 function foldThreadMessage(thread: AssistantThread, incoming: ChatMessage): void {
-  const occupant = thread.messages.find((existing) => existing.index === incoming.index);
-  const message =
-    occupant !== undefined && occupant.role !== incoming.role
-      ? { ...incoming, index: nextThreadMessageIndex(thread) }
-      : incoming;
-  upsertThreadMessage(thread, message);
-}
-
-function upsertThreadMessage(thread: AssistantThread, message: ChatMessage): void {
-  thread.messages = thread.messages
-    .filter((existing) => existing.index !== message.index)
-    .concat(structuredClone(message))
-    .sort((a, b) => a.index - b.index);
-}
-
-function nextThreadMessageIndex(thread: AssistantThread): number {
-  return thread.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
+  thread.messages = upsertTranscriptMessage(thread.messages, incoming);
 }

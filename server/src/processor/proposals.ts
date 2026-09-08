@@ -8,9 +8,9 @@ import { nowIso } from '../wire/envelope.js';
 import type { CommandOutcome } from '../wire/commands.js';
 import { CommandRejection } from '../domain/rejection.js';
 import type { CardProposal, ProposalItem, ProposalOutcome } from '../wire/models.js';
-import { Card } from '../domain/card.js';
 import { Proposal, validateProposalItem } from '../domain/proposal.js';
 import { Thread } from '../domain/thread.js';
+import { allocateCardIds, materializeCards, publishCardBatch } from './card-batch.js';
 import { command, allocateId, ok, rejected, toRejection, type CommandMap } from './helpers.js';
 import type { Processor } from './index.js';
 import { findThread } from './threads.js';
@@ -121,44 +121,14 @@ export async function confirmProposal(p: Processor, proposalId: string, items: P
       }
 
       const cards = p.cardsOf(projectId);
-      const first = Number(allocateId(cards.keys(), 'T').slice(2));
-      const ids: string[] = batch.map((_, offset) => `T-${first + offset}`);
-      const cardIdByKey = new Map<string, string>();
-      batch.forEach((item, offset) => {
-        if (item.key !== undefined) cardIdByKey.set(item.key, ids[offset]!);
-      });
       const pipeline = p.defaultPipelineOf(projectId);
       if (pipeline === undefined) {
         outcomes.push({ projectId, ok: false, error: `project ${projectId} has no pipeline to assign the cards to` });
         continue;
       }
-      const now = nowIso();
-      const created: Card[] = batch.map(
-        (item, offset) =>
-          new Card({
-            id: ids[offset]!,
-            projectId,
-            type: item.cardType,
-            title: item.title,
-            description: item.description,
-            tags: [],
-            pipelineId: pipeline.id,
-            stageId: pipeline.firstStage().id,
-            blockedBy: item.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
-            stepStates: {},
-            createdAt: now,
-            updatedAt: now,
-          }),
-      );
-      await p.bus.publish(projectId, 'cardsCommitted', { cards: created });
-      for (const card of created) {
-        if (card.blockedBy.length === 0) continue;
-        await p.bus.publish(projectId, 'dependencyStateChanged', {
-          cardId: card.id,
-          blocked: true,
-          blockedBy: card.blockedBy,
-        });
-      }
+      const ids = allocateCardIds(cards, batch.length);
+      const created = materializeCards(batch, { projectId, ids, pipeline, now: nowIso() });
+      await publishCardBatch(p.bus, projectId, created);
       outcomes.push({ projectId, ok: true, cardIds: ids });
     }
 

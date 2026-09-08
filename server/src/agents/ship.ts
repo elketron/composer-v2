@@ -4,15 +4,15 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { ASSISTANT_DEFINITION } from './assistant/definition.js';
+import { ASSISTANT_AGENT_NAME, CODER_AGENT_NAME, PLANNER_AGENT_NAME } from './names.js';
+import { PLANNER_DEFINITION } from './planner/definition.js';
 import {
-  ASSISTANT_DEFINITION,
   CODER_DEFINITION,
-  PLANNER_DEFINITION,
   REVIEWER_DEFINITION,
   SECURITY_DEFINITION,
   TESTER_DEFINITION,
-} from './definitions.js';
-import { ASSISTANT_AGENT_NAME, CODER_AGENT_NAME, PLANNER_AGENT_NAME } from './names.js';
+} from './worker/definitions.js';
 
 /** Writes the agent definitions into the project if absent. Idempotent. */
 export function ensureAgentFiles(projectDirectory: string): void {

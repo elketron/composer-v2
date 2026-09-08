@@ -11,11 +11,14 @@
 // serialization, scored match) lives on the domain object
 // (domain/workflow.ts); this library is the I/O.
 
-import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { WorkflowInfo, WorkflowStep } from './wire/models.js';
 import { invalidLibraryPath, slugify, uniqueSlugPath } from './domain/markdown.js';
 import { Workflow, type RecordParts, type RecordedStep } from './domain/workflow.js';
+import { captureFile, type MutationResult } from './filesystem/commit.js';
+import { isWithinRoot, writeTextFileContained } from './filesystem/containment.js';
+import { isContainmentFailure, StorageError } from './filesystem/errors.js';
 
 const WORKFLOWS_DIRNAME = 'workflows';
 const WORKFLOWS_ROOT_DIRNAME = '.composer';
@@ -124,7 +127,7 @@ export function searchWorkflows(
 export function saveWorkflow(
   projectDirectory: string,
   parts: RecordParts,
-): WorkflowResult<WorkflowInfo & { path: string }> {
+): MutationResult<WorkflowInfo & { path: string }> {
   const title = parts.title.trim();
   if (title === '') return { ok: false, error: 'a workflow needs a title' };
   if (parts.steps.length === 0) return { ok: false, error: 'a workflow needs at least one step' };
@@ -136,26 +139,39 @@ export function saveWorkflow(
   const taken = new Set(listWorkflows(projectDirectory).map((info) => info.path.toLowerCase()));
   const path = uniqueSlugPath(taken, slugify(title, 'workflow'));
   const root = workflowsRoot(projectDirectory);
+  let rootReal: string;
   try {
     mkdirSync(root, { recursive: true });
-    const rootReal = realpathSync(root);
-    const target = resolve(rootReal, path);
-    if (!target.startsWith(rootReal + sep)) {
-      return { ok: false, error: 'path escapes the workflows library' };
+    rootReal = realpathSync(root);
+  } catch (error) {
+    if (isContainmentFailure(error)) {
+      return { ok: false, error: `workflow '${path}' could not be written` };
     }
-    writeFileSync(target, content, 'utf8');
-  } catch {
-    return { ok: false, error: `workflow '${path}' could not be written` };
+    throw new StorageError(`workflow '${path}' could not be written`);
+  }
+  const target = resolve(rootReal, path);
+  if (!isWithinRoot(rootReal, target) || target === rootReal) {
+    return { ok: false, error: 'path escapes the workflows library' };
+  }
+  const rollback = captureFile(target);
+  try {
+    writeTextFileContained(rootReal, target, content);
+  } catch (error) {
+    if (isContainmentFailure(error)) {
+      return { ok: false, error: `workflow '${path}' could not be written` };
+    }
+    throw new StorageError(`workflow '${path}' could not be written`);
   }
   const workflow = Workflow.fromFile(path, content);
   return {
     ok: true,
     value: { ...workflow.info(), size: bytes, updatedAt: new Date().toISOString() },
+    rollback,
   };
 }
 
 /** Deletes one workflow; it must exist. */
-export function deleteWorkflow(projectDirectory: string, path: string): WorkflowResult<null> {
+export function deleteWorkflow(projectDirectory: string, path: string): MutationResult<null> {
   const invalid = invalidWorkflowPath(path);
   if (invalid !== null) return { ok: false, error: invalid };
   let target: string;
@@ -165,12 +181,16 @@ export function deleteWorkflow(projectDirectory: string, path: string): Workflow
   } catch {
     return { ok: false, error: `not a readable workflow: ${path}` };
   }
+  const rollback = captureFile(target);
   try {
     rmSync(target);
-  } catch {
-    return { ok: false, error: `workflow '${path}' could not be deleted` };
+  } catch (error) {
+    if (isContainmentFailure(error)) {
+      return { ok: false, error: `workflow '${path}' could not be deleted` };
+    }
+    throw new StorageError(`workflow '${path}' could not be deleted`);
   }
-  return { ok: true, value: null };
+  return { ok: true, value: null, rollback };
 }
 
 // ---- Format ----
@@ -211,7 +231,7 @@ function statWorkflow(root: string, name: string): WorkflowInfo | null {
 function resolveContained(projectDirectory: string, path: string): string {
   const rootReal = realpathSync(workflowsRoot(projectDirectory));
   const target = resolve(rootReal, path);
-  if (target !== rootReal && !target.startsWith(rootReal + sep)) {
+  if (!isWithinRoot(rootReal, target)) {
     throw new Error('path escapes the workflows library');
   }
   return target;

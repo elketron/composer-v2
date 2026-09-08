@@ -4,12 +4,13 @@
 // (S36) whose rules the run's pinned revision owns.
 
 import { Pipeline } from '../domain/pipeline.js';
-import { Board } from '../domain/board.js';
+import { sameDefinition, validateDraft } from '../domain/pipeline-draft.js';
+import { RunPolicy } from '../domain/run-policy.js';
 import type { Run } from '../domain/run.js';
 import { nowIso } from '../wire/envelope.js';
 import type { CommandOutcome } from '../wire/commands.js';
 import type { Pipeline as PipelineJson, PipelineStage as PipelineStageJson } from '../wire/models.js';
-import { PIPELINE_AGENT_KINDS } from '../agents/index.js';
+import { PIPELINE_AGENT_KINDS } from '../agents/names.js';
 import { command, allocateId, ok, rejected, toRejection, type CommandMap } from './helpers.js';
 import type { Processor } from './index.js';
 
@@ -27,14 +28,14 @@ export async function savePipeline(p: Processor, scope: string | undefined, pipe
     }
     let stages: PipelineStageJson[];
     try {
-      stages = Pipeline.validateDraft(pipeline);
+      stages = validateDraft(pipeline);
     } catch (error) {
       return toRejection(error);
     }
     const name = pipeline.name.trim();
     const id = pipeline.id.trim() !== '' ? pipeline.id.trim() : allocateId(p.pipelinesOf(scope).keys(), 'PL');
     const current = p.pipelinesOf(scope).get(id);
-    if (current !== undefined && Pipeline.sameDefinition(current, pipeline, name)) {
+    if (current !== undefined && sameDefinition(current, pipeline, name)) {
       return ok();
     }
     const saved: PipelineJson = {
@@ -95,13 +96,14 @@ export async function runPipeline(p: Processor, scope: string | undefined, cardI
     if (scope === undefined || !p.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
-    const board = p.boardOf(scope);
-    if (board === undefined) {
+    const state = p.bus.state.byProject.get(scope);
+    if (state === undefined) {
       return rejected('unknownCard', `Unknown card ${cardId}`);
     }
+    const policy = RunPolicy.of(state);
     let pipeline: Pipeline;
     try {
-      ({ pipeline } = board.requireRunnableCard(cardId));
+      ({ pipeline } = policy.requireRunnableCard(cardId));
     } catch (error) {
       return toRejection(error);
     }
@@ -109,7 +111,7 @@ export async function runPipeline(p: Processor, scope: string | undefined, cardI
       return rejected('invalidCommand', `Project ${scope} has no directory set`);
     }
     try {
-      board.requireStartable(cardId, pipeline);
+      policy.requireStartable(cardId, pipeline);
     } catch (error) {
       return toRejection(error);
     }
@@ -143,13 +145,13 @@ export async function stopPipeline(p: Processor, scope: string | undefined, card
     if (scope === undefined) {
       return unknownCardOrNotRunning(p, scope, cardId);
     }
-    const board = p.boardOf(scope);
-    if (board === undefined) {
+    const state = p.bus.state.byProject.get(scope);
+    if (state === undefined) {
       return rejected('unknownCard', `Unknown card ${cardId}`);
     }
     let run: Run;
     try {
-      run = board.requireStoppable(cardId);
+      run = RunPolicy.of(state).requireStoppable(cardId);
     } catch (error) {
       return toRejection(error);
     }
@@ -184,13 +186,13 @@ export async function gateRespond(
     if (scope === undefined) {
       return unknownCardOrNotRunning(p, scope, cardId);
     }
-    const board = p.boardOf(scope);
-    if (board === undefined) {
+    const state = p.bus.state.byProject.get(scope);
+    if (state === undefined) {
       return rejected('unknownCard', `Unknown card ${cardId}`);
     }
     let run: Run;
     try {
-      run = board.requireGateWait(cardId);
+      run = RunPolicy.of(state).requireGateWait(cardId);
     } catch (error) {
       return toRejection(error);
     }
@@ -243,19 +245,20 @@ export async function reportOutcome(
     if (scope === undefined || !p.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
-    const board = p.boardOf(scope);
-    const session = p.bus.state.byProject.get(scope)?.agentSessions.get(sessionId);
-    if (board === undefined || session === undefined) {
+    const state = p.bus.state.byProject.get(scope);
+    const session = state?.agentSessions.get(sessionId);
+    if (state === undefined || session === undefined) {
       return rejected('unknownSession', `Unknown session ${sessionId}`);
     }
     if (session.status !== 'running') {
       return rejected('invalidCommand', `Session ${sessionId} is not running`);
     }
     const cardId = session.cardId;
+    const policy = RunPolicy.of(state);
     let run: Run;
     try {
-      run = board.requireAgentStepRun(cardId);
-      const { rule, name } = board.outcomeRule(run, outcome);
+      run = policy.requireAgentStepRun(cardId);
+      const { rule, name } = policy.outcomeRule(run, outcome);
       const trimmedNote = note?.trim();
       await p.bus.publish(scope, 'pipelineOutcomeReported', {
         runId: run.id,
@@ -265,7 +268,7 @@ export async function reportOutcome(
         outcome: name,
         ...(trimmedNote !== undefined && trimmedNote !== '' ? { note: trimmedNote } : {}),
       });
-      return { ok: true, transition: board.outcomeTransitionText(run, rule) };
+      return { ok: true, transition: policy.outcomeTransitionText(run, rule) };
     } catch (error) {
       return toRejection(error);
     }

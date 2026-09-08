@@ -5,7 +5,6 @@
 
 import type { Command, CommandOutcome, Rejection } from '../wire/commands.js';
 import { CommandRejection } from '../domain/rejection.js';
-import type { Board } from '../domain/board.js';
 import type { Processor } from './index.js';
 
 /** A command handler: one entry of the processor's dispatch map. */
@@ -38,7 +37,8 @@ export function toRejection(error: unknown): CommandOutcome {
   throw error;
 }
 
-export function isOutcome(value: Board | CommandOutcome): value is CommandOutcome {
+/** A lookup that returned a wire outcome instead of a domain object. */
+export function isOutcome(value: object): value is CommandOutcome {
   return 'ok' in value;
 }
 

@@ -3,15 +3,10 @@
 // The framing is shared; each server owns its tool list and handlers.
 
 import { createInterface } from 'node:readline';
+import type { JsonRpcMessage, JsonRpcResponse } from './protocol.js';
 
-export interface JsonRpcMessage {
-  jsonrpc: '2.0';
-  id?: number | string | null;
-  method?: string;
-  params?: Record<string, unknown>;
-}
-
-export type JsonRpcResponse = Record<string, unknown> | null;
+export { toolContent } from './protocol.js';
+export type { JsonRpcMessage, JsonRpcResponse, McpToolDefinition } from './protocol.js';
 
 /**
  * Reads newline-delimited JSON-RPC messages from stdin, hands each to
@@ -39,18 +34,4 @@ export function serveStdio(
       if (response !== null) send(response);
     });
   });
-}
-
-export interface McpToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-}
-
-/** The response envelope every tools/call result rides. */
-export function toolContent(result: unknown): {
-  content: { type: string; text: string }[];
-  isError: boolean;
-} {
-  return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false };
 }

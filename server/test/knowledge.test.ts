@@ -3,7 +3,7 @@
 // the knowledge command (exact file), scored search over REST and MCP,
 // tombstones — and the metadata-only events on the global stream.
 
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -99,6 +99,22 @@ describe('the knowledge domain', () => {
     ).toEqual({ status: 200, json: { ok: true } });
     const gone = await get('/knowledge/content?path=editing-notes.md');
     expect(gone.json).toMatchObject({ error: expect.stringContaining('not a readable note') });
+  });
+
+  it('a_symlinked_file_cannot_redirect_a_knowledge_write', async () => {
+    const outside = join(dir, 'outside.md');
+    mkdirSync(join(dir, 'knowledge'));
+    writeFileSync(outside, '# unchanged\n');
+    symlinkSync(outside, join(dir, 'knowledge', 'linked.md'));
+
+    const saved = await action({
+      type: 'create',
+      on: 'knowledge',
+      body: { path: 'linked.md', content: '# overwritten\n' },
+    });
+
+    expect(saved.json).toMatchObject({ ok: false, rejectionCode: 'invalidCommand' });
+    expect(readFileSync(outside, 'utf8')).toBe('# unchanged\n');
   });
 
   it('search_ranks_title_above_body_and_requires_every_token', async () => {

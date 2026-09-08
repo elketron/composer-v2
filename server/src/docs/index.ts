@@ -6,24 +6,20 @@
 // (symlink escapes reject), the same rule the assistant file tools use.
 // The path rules and containment live in paths.ts; this module is the I/O.
 
-import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DocInfo } from '../wire/models.js';
+import { looksBinary } from '../filesystem/binary.js';
+import { captureFile, type MutationResult } from '../filesystem/commit.js';
+import { writeTextFileContained } from '../filesystem/containment.js';
+import { isContainmentFailure, StorageError } from '../filesystem/errors.js';
+import { MAX_DOC_BYTES, MAX_LIST_ENTRIES } from './constants.js';
 import { docTitle, containedExisting, resolveTarget, invalidDocPath, type DocsResult } from './paths.js';
+import { docsRoot } from './root.js';
 
+export { DOCS_DIRNAME, MAX_DOC_BYTES, MAX_LIST_ENTRIES } from './constants.js';
 export { docTitle, invalidDocPath, type DocsResult } from './paths.js';
-
-export const DOCS_DIRNAME = 'docs';
-
-/** 256 KiB per doc; larger files are read-model territory, not docs. */
-export const MAX_DOC_BYTES = 256 * 1024;
-/** List cap (matches the assistant file tools' bound). */
-export const MAX_LIST_ENTRIES = 500;
-
-/** The docs root of a project directory (not required to exist yet). */
-export function docsRoot(projectDirectory: string): string {
-  return join(projectDirectory, DOCS_DIRNAME);
-}
+export { docsRoot } from './root.js';
 
 /**
  * Lists every markdown doc under the project's docs root (recursive,
@@ -85,7 +81,7 @@ export function readDoc(projectDirectory: string, path: string): DocsResult<{ in
   }
   const buffer = readFileSync(real);
   const head = buffer.subarray(0, 8192);
-  if (head.includes(0) || (head.length > 0 && nonPrintableRatio(head) > 0.3)) {
+  if (looksBinary(head)) {
     return { ok: false, error: `not a text file: ${path}` };
   }
   const content = buffer.toString('utf8');
@@ -112,7 +108,7 @@ export function saveDoc(
   projectDirectory: string,
   path: string,
   content: string,
-): DocsResult<DocInfo> {
+): MutationResult<DocInfo> {
   const invalid = invalidDocPath(path);
   if (invalid !== null) return { ok: false, error: invalid };
   const bytes = Buffer.byteLength(content, 'utf8');
@@ -121,11 +117,15 @@ export function saveDoc(
   }
   const target = resolveTarget(projectDirectory, path);
   if (!target.ok) return target;
+  const rollback = captureFile(target.value);
   try {
     mkdirSync(dirname(target.value), { recursive: true });
-    writeFileSync(target.value, content, 'utf8');
-  } catch {
-    return { ok: false, error: `doc '${path}' could not be written` };
+    writeTextFileContained(docsRoot(projectDirectory), target.value, content);
+  } catch (error) {
+    if (isContainmentFailure(error)) {
+      return { ok: false, error: `doc '${path}' could not be written` };
+    }
+    throw new StorageError(`doc '${path}' could not be written`);
   }
   const stat = statSync(target.value);
   return {
@@ -136,6 +136,7 @@ export function saveDoc(
       size: stat.size,
       updatedAt: stat.mtime.toISOString(),
     },
+    rollback,
   };
 }
 
@@ -148,7 +149,7 @@ export function renameDoc(
   projectDirectory: string,
   path: string,
   to: string,
-): DocsResult<DocInfo> {
+): MutationResult<DocInfo> {
   const invalidFrom = invalidDocPath(path);
   if (invalidFrom !== null) return { ok: false, error: invalidFrom };
   const invalidTo = invalidDocPath(to);
@@ -167,28 +168,42 @@ export function renameDoc(
   try {
     mkdirSync(dirname(target.value), { recursive: true });
     renameSync(source.value, target.value);
-  } catch {
-    return { ok: false, error: `doc '${path}' could not be renamed to '${to}'` };
+  } catch (error) {
+    if (isContainmentFailure(error)) {
+      return { ok: false, error: `doc '${path}' could not be renamed to '${to}'` };
+    }
+    throw new StorageError(`doc '${path}' could not be renamed to '${to}'`);
   }
   const info = statInfo(target.value, to);
   if (info === null) {
     return { ok: false, error: `doc '${to}' could not be read back` };
   }
-  return { ok: true, value: info };
+  const rollback = () => {
+    try {
+      renameSync(target.value, source.value);
+    } catch {
+      // Best-effort undo; the original error must win.
+    }
+  };
+  return { ok: true, value: info, rollback };
 }
 
 /** Deletes one doc (the processor's command path); it must exist. */
-export function deleteDoc(projectDirectory: string, path: string): DocsResult<null> {
+export function deleteDoc(projectDirectory: string, path: string): MutationResult<null> {
   const invalid = invalidDocPath(path);
   if (invalid !== null) return { ok: false, error: invalid };
   const contained = containedExisting(projectDirectory, path);
   if (!contained.ok) return contained;
+  const rollback = captureFile(contained.value);
   try {
     rmSync(contained.value);
-  } catch {
-    return { ok: false, error: `doc '${path}' could not be deleted` };
+  } catch (error) {
+    if (isContainmentFailure(error)) {
+      return { ok: false, error: `doc '${path}' could not be deleted` };
+    }
+    throw new StorageError(`doc '${path}' could not be deleted`);
   }
-  return { ok: true, value: null };
+  return { ok: true, value: null, rollback };
 }
 
 // ---- Internals ----
@@ -219,12 +234,4 @@ function statInfo(realPath: string, relPath: string): DocInfo | null {
   } catch {
     return null;
   }
-}
-
-function nonPrintableRatio(buffer: Buffer): number {
-  let nonPrintable = 0;
-  for (const byte of buffer) {
-    if (byte < 9 || (byte > 13 && byte < 32)) nonPrintable += 1;
-  }
-  return nonPrintable / buffer.length;
 }

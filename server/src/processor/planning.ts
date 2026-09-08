@@ -6,8 +6,8 @@
 import { nowIso } from '../wire/envelope.js';
 import type { ChatMessage, PlanningSession } from '../wire/models.js';
 import type { CommandOutcome, TicketEmission } from '../wire/commands.js';
-import { Card } from '../domain/card.js';
 import { Planning } from '../domain/planning.js';
+import { allocateCardIds, materializeCards, publishCardBatch } from './card-batch.js';
 import { command, allocateId, ok, rejected, toRejection, type CommandMap } from './helpers.js';
 import type { Processor } from './index.js';
 
@@ -117,46 +117,19 @@ export async function createTickets(
       return toRejection(error);
     }
 
-    const first = Number(allocateId(cards.keys(), 'T').slice(2));
-    const cardIdByKey = new Map<string, string>();
-    const ids: string[] = tickets.map((_, offset) => `T-${first + offset}`);
-    tickets.forEach((ticket, offset) => {
-      if (ticket.key !== undefined) cardIdByKey.set(ticket.key, ids[offset]!);
-    });
-
     const pipeline = p.defaultPipelineOf(found.projectId);
     if (pipeline === undefined) {
       return rejected('invalidCommand', `Project ${found.projectId} has no pipeline to assign the tickets to`);
     }
-    const now = nowIso();
-    const emitted: Card[] = tickets.map(
-      (ticket, offset) =>
-        new Card({
-          id: ids[offset]!,
-          projectId: found.projectId,
-          type: ticket.cardType,
-          title: ticket.title,
-          description: ticket.description,
-          tags: [],
-          pipelineId: pipeline.id,
-          stageId: pipeline.firstStage().id,
-          blockedBy: ticket.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
-          stepStates: {},
-          sessionId: found.session.id,
-          createdAt: now,
-          updatedAt: now,
-        }),
-    );
-
-    await p.bus.publish(found.projectId, 'cardsCommitted', { cards: emitted });
-    for (const card of emitted) {
-      if (card.blockedBy.length === 0) continue;
-      await p.bus.publish(found.projectId, 'dependencyStateChanged', {
-        cardId: card.id,
-        blocked: true,
-        blockedBy: card.blockedBy,
-      });
-    }
+    const ids = allocateCardIds(cards, tickets.length);
+    const emitted = materializeCards(tickets, {
+      projectId: found.projectId,
+      ids,
+      pipeline,
+      now: nowIso(),
+      sessionId: found.session.id,
+    });
+    await publishCardBatch(p.bus, found.projectId, emitted);
     await p.bus.publish(found.projectId, 'planningSessionCompleted', {
       sessionId: found.session.id,
     });

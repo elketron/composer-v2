@@ -169,6 +169,22 @@ describe('the docs domain', () => {
     expect(saved.json).toMatchObject({ ok: false, rejectionCode: 'invalidCommand' });
   });
 
+  it('a_symlinked_file_cannot_redirect_a_doc_write', async () => {
+    const outside = join(dir, 'outside.md');
+    mkdirSync(join(projectDir, 'docs'));
+    writeFileSync(outside, '# unchanged\n');
+    symlinkSync(outside, join(projectDir, 'docs', 'linked.md'));
+
+    const saved = await action({
+      type: 'create',
+      on: 'doc',
+      body: { path: 'linked.md', content: '# overwritten\n' },
+    });
+
+    expect(saved.json).toMatchObject({ ok: false, rejectionCode: 'invalidCommand' });
+    expect(readFileSync(outside, 'utf8')).toBe('# unchanged\n');
+  });
+
   it('a_binary_file_and_oversized_content_reject', async () => {
     mkdirSync(join(projectDir, 'docs'));
     writeFileSync(join(projectDir, 'docs', 'blob.md'), Buffer.from([0x89, 0x50, 0x00, 0x0a]));
@@ -263,4 +279,3 @@ async function openEventStream(): Promise<{
     },
   };
 }
-

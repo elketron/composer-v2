@@ -13,10 +13,13 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { CommandOutcome } from '../wire/commands.js';
-import { createTickets, editDocument, PLANNER_MCP_TOOLS, type ComposerCaller } from '../tools/planner/index.js';
-import { serveStdio, type JsonRpcMessage, type McpToolDefinition } from './stdio.js';
+import { createTickets, editDocument, PLANNER_MCP_TOOLS, type ComposerCaller } from '../agents/planner/index.js';
+import { postJson } from './http-caller.js';
+import { toolContent, type JsonRpcMessage, type McpToolDefinition } from './protocol.js';
+import { handleMcpMessage } from './server.js';
+import { serveStdio } from './stdio.js';
 
-export type { JsonRpcMessage, McpToolDefinition };
+export type { JsonRpcMessage, McpToolDefinition } from './protocol.js';
 
 const TOOLS: McpToolDefinition[] = PLANNER_MCP_TOOLS;
 
@@ -29,41 +32,7 @@ export async function handleMessage(
   caller: ComposerCaller,
   context: { projectId: string; sessionId: string },
 ): Promise<Record<string, unknown> | null> {
-  const { id, method, params } = message;
-  if (method === 'initialize') {
-    return {
-      jsonrpc: '2.0',
-      id: id ?? null,
-      result: {
-        protocolVersion:
-          typeof params?.['protocolVersion'] === 'string' ? params['protocolVersion'] : '2025-06-18',
-        capabilities: { tools: {} },
-        serverInfo: { name: 'composer', version: '0.1.0' },
-      },
-    };
-  }
-  if (method === 'notifications/initialized' || method === 'notifications/cancelled') {
-    return null;
-  }
-  if (method === 'tools/list') {
-    return { jsonrpc: '2.0', id: id ?? null, result: { tools: TOOLS } };
-  }
-  if (method === 'tools/call') {
-    const name = typeof params?.['name'] === 'string' ? params['name'] : '';
-    const rawArgs = params?.['arguments'];
-    const args: Record<string, unknown> =
-      typeof rawArgs === 'object' && rawArgs !== null ? (rawArgs as Record<string, unknown>) : {};
-    const result = await callTool(name, args, caller, context);
-    return { jsonrpc: '2.0', id: id ?? null, result };
-  }
-  if (id !== undefined && id !== null) {
-    return {
-      jsonrpc: '2.0',
-      id,
-      error: { code: -32601, message: `unknown method ${String(method)}` },
-    };
-  }
-  return null;
+  return handleMcpMessage(message, TOOLS, (name, args) => callTool(name, args, caller, context));
 }
 
 async function callTool(
@@ -87,7 +56,7 @@ async function callTool(
   } else {
     result = { committed: false, rejection: `unknown tool ${name}` };
   }
-  return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false };
+  return toolContent(result);
 }
 
 /**
@@ -98,19 +67,12 @@ async function callTool(
 export function httpCaller(serverUrl: string): ComposerCaller {
   return {
     async execute(projectId: string, command): Promise<CommandOutcome> {
-      try {
-        const response = await fetch(`${serverUrl}/mcp/command`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ projectId, command }),
-        });
-        if (!response.ok) {
-          return { ok: false, rejection: { code: 'invalidCommand', message: `composer returned ${response.status}` } };
-        }
-        return (await response.json()) as CommandOutcome;
-      } catch (error) {
-        return { ok: false, rejection: { code: 'invalidCommand', message: `composer unreachable: ${String(error)}` } };
-      }
+      return postJson<CommandOutcome, CommandOutcome>(
+        `${serverUrl}/mcp/command`,
+        { projectId, command },
+        'composer',
+        (message) => ({ ok: false, rejection: { code: 'invalidCommand', message } }),
+      );
     },
   };
 }

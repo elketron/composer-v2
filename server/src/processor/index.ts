@@ -1,12 +1,12 @@
 // The processor: the one validated write path (v1 architecture.md §Server
 // command validation). The command handlers live in the domain modules
 // beside their objects — projects, cards, pipelines, planning, threads,
-// proposals, files — and this class is the composition root: the state the
-// handlers share (the bus, the knowledge store, the open workflow
-// recordings), the lookup helpers, and the dispatch. The dispatch is a
-// map of command type → handler, not a switch; each handler returns the
-// wire outcome, and its rejections carry the same codes and messages the
-// validation rules on the objects emit.
+// proposals, docs, knowledge, workflows — and this class is the composition
+// root: the state the handlers share (the bus, the knowledge store, the
+// file repositories, the workflow recordings), the lookup helpers, and the
+// dispatch. The dispatch is a map of command type → handler, not a switch;
+// each handler returns the wire outcome, and its rejections carry the same
+// codes and messages the validation rules on the objects emit.
 
 import type { Bus } from '../bus.js';
 import type { Command, CommandOutcome } from '../wire/commands.js';
@@ -14,19 +14,24 @@ import type {
   AssistantThread,
   PlanningSession,
 } from '../wire/models.js';
-import type { WorkflowStep } from '../wire/models.js';
 import { Card } from '../domain/card.js';
 import { Pipeline } from '../domain/pipeline.js';
 import type { Run } from '../domain/run.js';
 import { Board } from '../domain/board.js';
+import { deleteDoc, renameDoc, saveDoc } from '../docs/index.js';
+import { deleteWorkflow, saveWorkflow } from '../workflows.js';
 import { rejected } from './helpers.js';
 import { cardCommands } from './cards.js';
-import { fileCommands } from './files.js';
+import { docCommands } from './docs.js';
+import { knowledgeCommands } from './knowledge.js';
 import { pipelineCommands } from './pipelines.js';
 import { planningCommands } from './planning.js';
 import { projectCommands } from './projects.js';
 import { proposalCommands } from './proposals.js';
 import { threadCommands } from './threads.js';
+import { workflowCommands } from './workflows.js';
+import { WorkflowRecordings } from './recordings.js';
+import type { FileRepositories } from './ports.js';
 import type { KnowledgeStore } from '../knowledge.js';
 
 /** Every registered command type → its handler. */
@@ -37,7 +42,9 @@ const commands = new Map<string, (p: Processor, scope: string | undefined, comma
   ...pipelineCommands,
   ...threadCommands,
   ...proposalCommands,
-  ...fileCommands,
+  ...docCommands,
+  ...knowledgeCommands,
+  ...workflowCommands,
 ]);
 
 export class Processor {
@@ -45,20 +52,24 @@ export class Processor {
   readonly bus: Bus;
   /** The knowledge library (Phase 9); absent only in narrow unit tests. */
   readonly knowledge?: KnowledgeStore;
-  /**
-   * One open workflow recording per `<projectId>/<sessionId>` (S34): the
-   * processor's in-memory state between the agent's start and stop tool
-   * calls. A restart (or a crashed run) drops it — only a stopped
-   * recording is durable.
-   */
-  readonly workflowRecordings = new Map<
-    string,
-    { title: string; description: string; tags: string[]; source?: string; agent?: string; steps: WorkflowStep[]; startedAt: string }
-  >();
+  /** The docs and workflow repositories (ports, not concrete filesystems). */
+  readonly files: FileRepositories;
+  /** The open workflow recordings (S34), keyed by `<projectId>/<sessionId>`. */
+  readonly recordings: WorkflowRecordings;
 
-  constructor(bus: Bus, knowledge?: KnowledgeStore) {
+  constructor(
+    bus: Bus,
+    knowledge?: KnowledgeStore,
+    files?: FileRepositories,
+    recordings?: WorkflowRecordings,
+  ) {
     this.bus = bus;
     this.knowledge = knowledge;
+    this.files = files ?? {
+      docs: { save: saveDoc, rename: renameDoc, remove: deleteDoc },
+      workflows: { save: saveWorkflow, remove: deleteWorkflow },
+    };
+    this.recordings = recordings ?? new WorkflowRecordings();
   }
 
   /**

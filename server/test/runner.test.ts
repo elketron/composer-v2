@@ -335,7 +335,7 @@ describe('the pipeline runner', () => {
     projectId = await createProject();
     cardId = await createCard(projectId);
     engine = new FakeEngine(processor);
-    runner = new PipelineRunner(bus, processor, engine, { serverUrl: 'http://127.0.0.1:0' });
+    runner = new PipelineRunner(bus, engine, { serverUrl: 'http://127.0.0.1:0' });
     runner.start();
   });
 
