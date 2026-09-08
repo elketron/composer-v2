@@ -2,7 +2,7 @@
 // card-bound agent session, streams the engine's turn as events, and
 // collects the reported outcome (S36) for the drive loop to apply.
 
-import { allocateId } from '../processor.js';
+import { allocateId } from '../processor/helpers.js';
 import { nowIso } from '../wire/envelope.js';
 import { ensureAgentFiles } from '../agents/index.js';
 import { resolveModel } from '../store/settings.js';

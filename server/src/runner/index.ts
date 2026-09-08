@@ -25,7 +25,7 @@
 // prompts (prompts.ts), and the drive loop here.
 
 import type { Bus } from '../bus.js';
-import type { Processor } from '../processor.js';
+import type { Processor } from '../processor/index.js';
 import type { EventFrame } from '../wire/envelope.js';
 import { Board } from '../domain/board.js';
 import type { AgentEngine } from '../engine/types.js';

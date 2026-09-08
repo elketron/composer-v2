@@ -11,7 +11,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Bus } from '../bus.js';
-import type { Processor } from '../processor.js';
+import type { Processor } from '../processor/index.js';
 import type { EventStore } from '../store/index.js';
 import type { KnowledgeStore } from '../knowledge.js';
 import { registerActionRoute } from './action.js';

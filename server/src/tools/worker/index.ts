@@ -1,5 +1,5 @@
 import type { Bus } from '../../bus.js';
-import type { Processor } from '../../processor.js';
+import type { Processor } from '../../processor/index.js';
 import type { CommandOutcome } from '../../wire/commands.js';
 import { normalizeLinks, readWorkflow, searchWorkflows } from '../../workflows.js';
 

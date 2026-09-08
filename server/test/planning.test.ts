@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Bus } from '../src/bus.js';
-import { Processor } from '../src/processor.js';
+import { Processor } from '../src/processor/index.js';
 import { apply, newState, type State } from '../src/fold/index.js';
 import { snapshotEvents } from '../src/snapshot.js';
 import { PlanningOrchestrator, resumeStrandedTurns } from '../src/planning.js';

@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { Bus } from './bus.js';
 import { EventStore } from './store/index.js';
-import { Processor } from './processor.js';
+import { Processor } from './processor/index.js';
 import { router } from './http/index.js';
 import { KnowledgeStore } from './knowledge.js';
 import { PlanningOrchestrator, resumeStrandedTurns } from './planning.js';
