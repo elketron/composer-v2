@@ -14,8 +14,8 @@
 import type { Bus } from './bus.js';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
-import { ensureAgentFiles, PLANNER_AGENT_NAME } from './agents.js';
-import { resolveModel, type ComposerSettings } from './store.js';
+import { ensureAgentFiles, PLANNER_AGENT_NAME } from './agents/index.js';
+import { resolveModel, type ComposerSettings } from './store/settings.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
 import { nextMessageIndex, ReservedIndexes, userMessageCount } from './domain/transcript.js';
 

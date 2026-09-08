@@ -6,7 +6,7 @@
 // the runner, the snapshot, and the view shaping all read these rules from
 // here instead of re-deriving them from the maps.
 
-import type { ProjectState } from '../fold.js';
+import type { ProjectState } from '../fold/index.js';
 import { DEFAULT_PIPELINE_ID } from '../pipelines.js';
 import type { Assignee, StageOutcomeRule } from '../wire/models.js';
 import { CommandRejection, event, type PendingEvent } from './rejection.js';

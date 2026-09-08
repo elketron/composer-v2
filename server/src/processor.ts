@@ -33,8 +33,8 @@ import { Planning } from './domain/planning.js';
 import { Proposal, validateProposalItem } from './domain/proposal.js';
 import { CommandRejection, type PendingEvent } from './domain/rejection.js';
 import { Thread } from './domain/thread.js';
-import { PIPELINE_AGENT_KINDS } from './agents.js';
-import { deleteDoc as deleteDocFile, renameDoc as renameDocFile, saveDoc as saveDocFile } from './docs.js';
+import { PIPELINE_AGENT_KINDS } from './agents/index.js';
+import { deleteDoc as deleteDocFile, renameDoc as renameDocFile, saveDoc as saveDocFile } from './docs/index.js';
 import { deleteWorkflow as deleteWorkflowFile, saveWorkflow, MAX_WORKFLOW_STEPS } from './workflows.js';
 import type { KnowledgeStore } from './knowledge.js';
 

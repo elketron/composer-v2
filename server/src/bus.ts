@@ -8,9 +8,9 @@ import type { EventEnvelope, EventFrame } from './wire/envelope.js';
 import { makeFrame, nowIso } from './wire/envelope.js';
 import type { EventName } from './wire/events.js';
 import { EPHEMERAL } from './wire/events.js';
-import type { State } from './fold.js';
-import { apply as applyFold, newState } from './fold.js';
-import type { EventStore } from './store.js';
+import type { State } from './fold/index.js';
+import { apply as applyFold, newState } from './fold/index.js';
+import type { EventStore } from './store/index.js';
 
 export type Subscriber = (frame: EventFrame) => void;
 

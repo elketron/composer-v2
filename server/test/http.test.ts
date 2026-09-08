@@ -388,7 +388,7 @@ describe('the boot contract', () => {
     execFileSync(
       process.execPath,
       ['--import', 'tsx', '--input-type=module', '-e', `
-        import { EventStore } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'))};
+        import { EventStore } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'store', 'index.ts'))};
         const store = new EventStore();
         await store.connect(${JSON.stringify(restartDir)});
         await store.append(

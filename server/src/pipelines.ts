@@ -6,7 +6,7 @@
 // requested rework returns the card to Implementation.
 
 import type { Bus } from './bus.js';
-import type { State } from './fold.js';
+import type { State } from './fold/index.js';
 import type { Pipeline } from './wire/models.js';
 
 export const DEFAULT_PIPELINE_ID = 'PL-1';

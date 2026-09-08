@@ -1,17 +1,9 @@
-// The agent definitions composer ships into each project (D2): markdown
-// files under `.opencode/agent/`, written once — user-editable, never
-// overwritten. The planner's brief carries the v1 prompt discipline (v1
-// planner mod.rs PLANNER_GOAL): the document is the artifact; tickets are
-// emitted only on approval; every turn commits the document.
+// The shipped agent definitions (D2): the planner's brief carries the v1
+// prompt discipline (v1 planner mod.rs PLANNER_GOAL) — the document is the
+// artifact, tickets are emitted only on approval, every turn commits the
+// document. The workers carry the outcome paragraph (S36).
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-export const PLANNER_AGENT_NAME = 'composer-planner';
-export const CODER_AGENT_NAME = 'composer-coder';
-export const ASSISTANT_AGENT_NAME = 'composer-assistant';
-
-const PLANNER_DEFINITION = `---
+export const PLANNER_DEFINITION = `---
 description: Composer's planning agent — refines the plan document and emits tickets on approval
 mode: primary
 tools:
@@ -50,14 +42,14 @@ than repeating it.
  * stages may define named outcomes, and the agent signals its verdict
  * through the outcome tool instead of leaving it implicit.
  */
-const WORKER_OUTCOMES = `
+export const WORKER_OUTCOMES = `
 Outcomes: when your task message lists stage outcomes, report your verdict
 before finishing — call \`composer_report_outcome\` with exactly one of the
 listed outcome names, plus a note describing what a returned card still
 needs. A stage that requires the outcome fails the step without the call.
 `;
 
-const CODER_DEFINITION = `---
+export const CODER_DEFINITION = `---
 description: Composer's coder — implements one card in the project directory
 mode: primary
 ---
@@ -85,7 +77,7 @@ command), \`composer_workflow_stop_recording\` with links to the docs and
 knowledge you used. Never record one-off fixes.
 ${WORKER_OUTCOMES}`;
 
-const TESTER_DEFINITION = `---
+export const TESTER_DEFINITION = `---
 description: Composer's tester — verifies one implemented card in the project directory
 mode: primary
 ---
@@ -113,7 +105,7 @@ project's tests are run, seeded, or simulated), record it with
 (\`composer_workflow_search\`) and follow an existing one when it applies.
 ${WORKER_OUTCOMES}`;
 
-const REVIEWER_DEFINITION = `---
+export const REVIEWER_DEFINITION = `---
 description: Composer's reviewer — reviews one card's change in the project directory
 mode: primary
 tools:
@@ -141,7 +133,7 @@ Workflows: if your review followed a repeatable checklist, record it with
 workflow (\`composer_workflow_search\`) instead of improvising one.
 ${WORKER_OUTCOMES}`;
 
-const SECURITY_DEFINITION = `---
+export const SECURITY_DEFINITION = `---
 description: Composer's security agent — security-reviews one card's change
 mode: primary
 tools:
@@ -170,36 +162,7 @@ Workflows: if your review followed a repeatable procedure, record it with
 workflow (\`composer_workflow_search\`) instead of improvising one.
 ${WORKER_OUTCOMES}`;
 
-/**
- * The agent kinds a pipeline's agent step may name (S33): the coder and
- * the board's other workers. The processor's run gate and the runner's
- * lane/stage/prompt mapping both read this list.
- */
-export const PIPELINE_AGENT_KINDS: readonly string[] = ['coder', 'tester', 'reviewer', 'security'];
-
-/** Writes the agent definitions into the project if absent. Idempotent. */
-export function ensureAgentFiles(projectDirectory: string): void {
-  const agentDirectory = join(projectDirectory, '.opencode', 'agent');
-  mkdirSync(agentDirectory, { recursive: true });
-  writeIfAbsent(agentDirectory, `${PLANNER_AGENT_NAME}.md`, PLANNER_DEFINITION);
-  writeIfAbsent(agentDirectory, `${CODER_AGENT_NAME}.md`, CODER_DEFINITION);
-  writeIfAbsent(agentDirectory, 'composer-tester.md', TESTER_DEFINITION);
-  writeIfAbsent(agentDirectory, 'composer-reviewer.md', REVIEWER_DEFINITION);
-  writeIfAbsent(agentDirectory, 'composer-security.md', SECURITY_DEFINITION);
-}
-
-/**
- * The global assistant's agent definition (Phase 6): threads are global, so
- * the definition lives in composer's own workspace (a scratch directory in
- * the data dir) — never inside a project the assistant only reads.
- */
-export function ensureAssistantWorkspace(workspaceDirectory: string): void {
-  const agentDirectory = join(workspaceDirectory, '.opencode', 'agent');
-  mkdirSync(agentDirectory, { recursive: true });
-  writeIfAbsent(agentDirectory, `${ASSISTANT_AGENT_NAME}.md`, ASSISTANT_DEFINITION);
-}
-
-const ASSISTANT_DEFINITION = `---
+export const ASSISTANT_DEFINITION = `---
 description: Composer's global assistant — reads projects and answers; never edits
 mode: primary
 tools:
@@ -229,9 +192,3 @@ yet.
 Reply with a short, direct answer: what needs attention, where, and why.
 `;
 
-function writeIfAbsent(directory: string, name: string, definition: string): void {
-  const path = join(directory, name);
-  if (!existsSync(path)) {
-    writeFileSync(path, definition, { flag: 'wx' });
-  }
-}

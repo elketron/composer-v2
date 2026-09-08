@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { dashboardProjects, readGitStatus, type GitRunner } from '../src/dashboard.js';
-import { newState, type ProjectState } from '../src/fold.js';
+import { dashboardProjects, readGitStatus, type GitRunner } from '../src/dashboard/index.js';
+import { newState, type ProjectState } from '../src/fold/index.js';
 
 const dirs: string[] = [];
 

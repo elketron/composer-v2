@@ -3,11 +3,11 @@
 // the one place that maps them onto the command union, leaning on the
 // domain objects' lenient `fromAction` parses for the payload shapes.
 
-import type { Command } from './wire/commands.js';
-import { Card, parseCardType, parseSubStateStatus } from './domain/card.js';
-import { Pipeline } from './domain/pipeline.js';
-import { proposalItemFromAction } from './domain/proposal.js';
-import { readObject, readString, asRecord } from './wire/read.js';
+import type { Command } from '../wire/commands.js';
+import { Card, parseCardType, parseSubStateStatus } from '../domain/card.js';
+import { Pipeline } from '../domain/pipeline.js';
+import { proposalItemFromAction } from '../domain/proposal.js';
+import { readObject, readString, asRecord } from '../wire/read.js';
 
 export function fromAction(action: unknown, scopeProjectId?: string): Command | null {
   if (typeof action !== 'object' || action === null) return null;
@@ -23,14 +23,21 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
     return typeof value === 'boolean' ? value : undefined;
   };
 
-  switch (`${type}:${on}`) {
-    case 'create:project':
+  /**
+   * The action parsers, keyed `type:on` — a map, not a switch. Each entry
+   * turns the action body into its command; the bodies are the original
+   * case blocks, verbatim.
+   */
+  const parsers: Record<string, () => Command | null> = {
+    'create:project': () => {
       return {
         type: 'requestProjectCreate',
         name: str('name') ?? '',
         ...(str('directory') !== undefined ? { directory: str('directory') } : {}),
       };
-    case 'update:project': {
+    },
+    'update:project': () => {
+{
       const projectId = str('id') ?? '';
       if (str('directory') !== undefined) {
         return { type: 'requestProjectSetDirectory', projectId, directory: str('directory') ?? '' };
@@ -43,11 +50,15 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
       }
       return null;
     }
-    case 'delete:project': {
+    },
+    'delete:project': () => {
+{
       const projectId = str('id') ?? '';
       return { type: 'requestProjectArchive', projectId };
     }
-    case 'create:card': {
+    },
+    'create:card': () => {
+{
       // A single card object, or { cards: [...] } for bulk.
       const cards = body['cards'];
       if (Array.isArray(cards)) {
@@ -55,7 +66,9 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
       }
       return { type: 'requestCardCreate', card: Card.fromAction(body, scopeProjectId) };
     }
-    case 'update:card': {
+    },
+    'update:card': () => {
+{
       const id = str('id') ?? scopeProjectId;
       if (id === undefined) return null;
       const hasStage = 'stageId' in body;
@@ -120,38 +133,47 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
         ),
       };
     }
-    case 'delete:card':
+    },
+    'delete:card': () => {
       return { type: 'requestCardArchive', cardId: str('id') ?? '' };
-    case 'update:automation':
+    },
+    'update:automation': () => {
       return {
         type: 'requestAutomationToggle',
         pipelineId: str('pipelineId') ?? '',
         stageId: str('stageId') ?? '',
         on: bool('on') ?? false,
       };
-    case 'create:planningSession':
+    },
+    'create:planningSession': () => {
       return {
         type: 'requestPlanningSessionCreate',
         projectId: scopeProjectId ?? str('projectId') ?? '',
       };
-    case 'create:chatMessage':
+    },
+    'create:chatMessage': () => {
       return {
         type: 'requestUserMessage',
         sessionId: str('sessionId') ?? '',
         text: str('text') ?? '',
       };
-    case 'create:pipeline':
+    },
+    'create:pipeline': () => {
       return { type: 'requestPipelineSave', pipeline: Pipeline.draftFromAction(body, scopeProjectId) };
-    case 'delete:pipeline':
+    },
+    'delete:pipeline': () => {
       return { type: 'requestPipelineDelete', pipelineId: str('id') ?? '' };
-    case 'start:pipeline':
+    },
+    'start:pipeline': () => {
       return {
         type: 'requestPipelineRun',
         cardId: str('cardId') ?? '',
       };
-    case 'stop:pipeline':
+    },
+    'stop:pipeline': () => {
       return { type: 'requestPipelineStop', cardId: str('cardId') ?? '' };
-    case 'update:pipelineGate':
+    },
+    'update:pipelineGate': () => {
       return {
         type: 'requestPipelineGateRespond',
         cardId: str('cardId') ?? '',
@@ -159,27 +181,33 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
         ...(str('comment') !== undefined ? { comment: str('comment') } : {}),
       };
     // Global assistant commands (Phase 6): no project scope.
-    case 'create:assistantThread':
+    },
+    'create:assistantThread': () => {
       return {
         type: 'requestAssistantThreadCreate',
         ...(str('name') !== undefined ? { name: str('name') } : {}),
       };
-    case 'delete:assistantThread':
+    },
+    'delete:assistantThread': () => {
       return { type: 'requestAssistantThreadArchive', threadId: str('id') ?? '' };
-    case 'create:assistantMessage':
+    },
+    'create:assistantMessage': () => {
       return {
         type: 'requestAssistantMessage',
         threadId: str('threadId') ?? '',
         text: str('text') ?? '',
       };
-    case 'create:assistantResend':
+    },
+    'create:assistantResend': () => {
       return {
         type: 'requestAssistantResend',
         threadId: str('threadId') ?? '',
         messageId: str('messageId') ?? '',
         text: str('text') ?? '',
       };
-    case 'update:assistantThread': {
+    },
+    'update:assistantThread': () => {
+{
       const threadId = str('id') ?? '';
       if (bool('archived') === false) {
         return { type: 'requestAssistantThreadRestore', threadId };
@@ -197,11 +225,15 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
       }
       return null;
     }
-    case 'stop:assistantThread':
+    },
+    'stop:assistantThread': () => {
       return { type: 'requestAssistantThreadStop', threadId: str('id') ?? '' };
-    case 'retry:assistantThread':
+    },
+    'retry:assistantThread': () => {
       return { type: 'requestAssistantRetry', threadId: str('id') ?? '' };
-    case 'update:proposal': {
+    },
+    'update:proposal': () => {
+{
       const items = body['items'];
       if (!Array.isArray(items)) return null;
       return {
@@ -210,26 +242,32 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
         items: items.map((item) => proposalItemFromAction(item)),
       };
     }
-    case 'delete:proposal':
+    },
+    'delete:proposal': () => {
       return { type: 'requestProposalDiscard', proposalId: str('id') ?? '' };
     // Docs (Phase 9): save is an upsert by path; content rides the body.
     // Rename is one transaction (never overwrites); delete is a tombstone.
-    case 'create:doc':
+    },
+    'create:doc': () => {
       return {
         type: 'requestDocSave',
         path: str('path') ?? '',
         content: str('content') ?? '',
       };
-    case 'update:doc':
+    },
+    'update:doc': () => {
       return {
         type: 'requestDocRename',
         path: str('path') ?? '',
         to: str('to') ?? '',
       };
-    case 'delete:doc':
+    },
+    'delete:doc': () => {
       return { type: 'requestDocDelete', path: str('path') ?? '' };
     // Knowledge (Phase 9): global writes over the data-dir library.
-    case 'create:knowledge': {
+    },
+    'create:knowledge': () => {
+{
       const path = str('path');
       const title = str('title');
       const tags = body['tags'];
@@ -243,15 +281,18 @@ export function fromAction(action: unknown, scopeProjectId?: string): Command | 
         content: str('content') ?? '',
       };
     }
-    case 'delete:knowledge':
+    },
+    'delete:knowledge': () => {
       return { type: 'requestKnowledgeDelete', path: str('path') ?? '' };
     // Agent workflows (S34): the delete path is the human/REST one; the
     // recording commands are MCP-only (the session binding rides them).
-    case 'delete:workflow':
+    },
+    'delete:workflow': () => {
       return { type: 'requestWorkflowDelete', path: str('path') ?? '' };
-    default:
-      return null;
-  }
+    },
+  };
+  const parser = parsers[`${type}:${on}`];
+  return parser !== undefined ? parser() : null;
 }
 
 export function readScope(action: unknown): string | undefined {

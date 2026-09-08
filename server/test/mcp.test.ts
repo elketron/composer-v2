@@ -2,9 +2,9 @@
 // each call must land as the exact validated command the processor takes.
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { handleMessage, httpCaller } from '../src/mcp.js';
-import { handleMessage as assistantHandleMessage } from '../src/assistant-mcp.js';
-import { handleMessage as workerHandleMessage } from '../src/worker-mcp.js';
+import { handleMessage, httpCaller } from '../src/mcp/planner.js';
+import { handleMessage as assistantHandleMessage } from '../src/mcp/assistant.js';
+import { handleMessage as workerHandleMessage } from '../src/mcp/worker.js';
 import type { Command, CommandOutcome } from '../src/wire/commands.js';
 
 const context = { projectId: 'P-1', sessionId: 'S-1' };

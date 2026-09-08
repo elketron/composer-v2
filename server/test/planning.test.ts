@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Bus } from '../src/bus.js';
 import { Processor } from '../src/processor.js';
-import { apply, newState, type State } from '../src/fold.js';
+import { apply, newState, type State } from '../src/fold/index.js';
 import { snapshotEvents } from '../src/snapshot.js';
 import { PlanningOrchestrator, resumeStrandedTurns } from '../src/planning.js';
 import { FakeEngine } from '../src/engine/fake.js';
@@ -16,7 +16,7 @@ import type { EventFrame } from '../src/wire/envelope.js';
 import type { TicketEmission } from '../src/wire/commands.js';
 
 let dir: string;
-let store: InstanceType<typeof import('../src/store.js').EventStore>;
+let store: InstanceType<typeof import('../src/store/index.js').EventStore>;
 let bus: Bus;
 let processor: Processor;
 let projectsCreated = 0;
@@ -26,7 +26,7 @@ beforeEach(async () => {
   recorded.length = 0;
   projectsCreated = 0;
   dir = mkdtempSync(join(tmpdir(), 'composer-plan-'));
-  const { EventStore } = await import('../src/store.js');
+  const { EventStore } = await import('../src/store/index.js');
   store = new EventStore();
   await store.connect(dir);
   bus = new Bus(store);

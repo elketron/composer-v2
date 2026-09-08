@@ -12,11 +12,11 @@ import {
   executeAssistantTool,
   isPublicAddress,
   type AssistantToolEnv,
-} from '../src/assistant-tools.js';
+} from '../src/tools/assistant/index.js';
 import type { EventFrame } from '../src/wire/envelope.js';
 
 let dir: string;
-let store: InstanceType<typeof import('../src/store.js').EventStore>;
+let store: InstanceType<typeof import('../src/store/index.js').EventStore>;
 let bus: Bus;
 let processor: Processor;
 let projectsCreated = 0;
@@ -36,7 +36,7 @@ beforeEach(async () => {
   recorded.length = 0;
   projectsCreated = 0;
   dir = mkdtempSync(join(tmpdir(), 'composer-atools-'));
-  const { EventStore } = await import('../src/store.js');
+  const { EventStore } = await import('../src/store/index.js');
   store = new EventStore();
   await store.connect(dir);
   bus = new Bus(store);

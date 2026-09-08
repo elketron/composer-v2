@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { EventStore } from '../src/store.js';
+import { EventStore } from '../src/store/index.js';
 
 let dir: string;
 let store: EventStore;
@@ -73,7 +73,7 @@ describe('EventStore', () => {
     execFileSync(
       process.execPath,
       ['--input-type=module', '-e', `
-        import { EventStore } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'))};
+        import { EventStore } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'store', 'index.ts'))};
         const store = new EventStore();
         await store.connect(${JSON.stringify(dir)});
         await store.append(

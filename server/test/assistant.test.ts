@@ -8,14 +8,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Bus } from '../src/bus.js';
 import { Processor } from '../src/processor.js';
-import { apply, newState, type State } from '../src/fold.js';
+import { apply, newState, type State } from '../src/fold/index.js';
 import { snapshotEvents } from '../src/snapshot.js';
 import { AssistantOrchestrator, resumeStrandedThreads } from '../src/assistant.js';
 import { FakeEngine } from '../src/engine/fake.js';
 import type { EventFrame } from '../src/wire/envelope.js';
 
 let dir: string;
-let store: InstanceType<typeof import('../src/store.js').EventStore>;
+let store: InstanceType<typeof import('../src/store/index.js').EventStore>;
 let bus: Bus;
 let processor: Processor;
 let projectsCreated = 0;
@@ -25,7 +25,7 @@ beforeEach(async () => {
   recorded.length = 0;
   projectsCreated = 0;
   dir = mkdtempSync(join(tmpdir(), 'composer-assistant-'));
-  const { EventStore } = await import('../src/store.js');
+  const { EventStore } = await import('../src/store/index.js');
   store = new EventStore();
   await store.connect(dir);
   bus = new Bus(store);
@@ -378,7 +378,7 @@ describe('assistant thread commands', () => {
           '--input-type=module',
           '-e',
           `
-          import { EventStore } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'))};
+          import { EventStore } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'store', 'index.ts'))};
           const store = new EventStore();
           await store.connect(${JSON.stringify(restartDir)});
           await store.append(
@@ -400,7 +400,7 @@ describe('assistant thread commands', () => {
         { stdio: 'inherit' },
       );
 
-      const { EventStore } = await import('../src/store.js');
+      const { EventStore } = await import('../src/store/index.js');
       const reopened = new EventStore();
       await reopened.connect(restartDir);
       const bus2 = new Bus(reopened);

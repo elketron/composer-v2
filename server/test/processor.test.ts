@@ -9,14 +9,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Bus } from '../src/bus.js';
 import { Processor } from '../src/processor.js';
-import { apply } from '../src/fold.js';
+import { apply } from '../src/fold/index.js';
 import { snapshotEvents } from '../src/snapshot.js';
-import { newState, type State } from '../src/fold.js';
+import { newState, type State } from '../src/fold/index.js';
 import { type Card, type CardType, type Pipeline } from '../src/wire/models.js';
 import type { EventFrame } from '../src/wire/envelope.js';
 
 let dir: string;
-let store: InstanceType<typeof import('../src/store.js').EventStore>;
+let store: InstanceType<typeof import('../src/store/index.js').EventStore>;
 let bus: Bus;
 let processor: Processor;
 const recorded: EventFrame[] = [];
@@ -24,7 +24,7 @@ const recorded: EventFrame[] = [];
 beforeEach(async () => {
   recorded.length = 0;
   dir = mkdtempSync(join(tmpdir(), 'composer-proc-'));
-  const { EventStore } = await import('../src/store.js');
+  const { EventStore } = await import('../src/store/index.js');
   store = new EventStore();
   await store.connect(dir);
   bus = new Bus(store);

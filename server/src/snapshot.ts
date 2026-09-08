@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
 import type { EventName } from './wire/events.js';
-import type { ProjectState, State } from './fold.js';
+import type { ProjectState, State } from './fold/index.js';
 import { Board } from './domain/board.js';
 
 /** Terminal runs replayed per card (older attempts stay in the log). */

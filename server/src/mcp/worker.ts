@@ -14,98 +14,16 @@
 
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { WORKER_TOOL_DEFINITIONS } from '../tools/worker/index.js';
 import {
   serveStdio,
   toolContent,
   type JsonRpcMessage,
   type JsonRpcResponse,
   type McpToolDefinition,
-} from './mcp-stdio.js';
+} from './stdio.js';
 
-const TOOLS: McpToolDefinition[] = [
-  {
-    name: 'report_outcome',
-    description:
-      'Reports your stage outcome for the current pipeline step — required when your task message lists stage outcomes. Pass exactly one of the listed outcome names; the pipeline applies the transition (proceed to the next step, or return the card to an earlier stage). Add a note when the card must go back: what the next attempt still needs.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        outcome: { type: 'string', description: "One of the stage's named outcomes, e.g. 'approved'" },
-        note: { type: 'string', description: 'Optional verdict note — what a returned card still needs' },
-      },
-      required: ['outcome'],
-    },
-  },
-  {
-    name: 'workflow_start_recording',
-    description:
-      'Opens a workflow recording for this session: the repeatable procedure you are performing, to be saved into the project (.composer/workflows/) when you stop. Search existing workflows first and follow one when it applies; record a new one only when the procedure is reusable. Give the procedure a short title, a description of when it applies, and tags for later search.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: 'Short procedure title, e.g. "Add an HTTP endpoint"' },
-        description: { type: 'string', description: 'When this procedure applies (one line)' },
-        tags: { type: 'array', items: { type: 'string' }, description: 'Keywords for later search' },
-      },
-      required: ['title'],
-    },
-  },
-  {
-    name: 'workflow_add_step',
-    description:
-      'Appends one step to the open workflow recording — a step you actually performed. Title stays short ("Run the test suite"); detail carries the nuance (which files, which flags, what to watch for); command carries the exact shell command when there is one. Record steps in the order a future agent should do them.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        step: {
-          type: 'object',
-          properties: {
-            title: { type: 'string', description: 'Short step title' },
-            detail: { type: 'string', description: 'How to do it: files, flags, caveats' },
-            command: { type: 'string', description: 'The exact shell command, when there is one' },
-          },
-          required: ['title'],
-        },
-      },
-      required: ['step'],
-    },
-  },
-  {
-    name: 'workflow_stop_recording',
-    description:
-      'Finalizes the open recording: writes the workflow file and returns its path. Pass links to what the procedure draws on — project docs paths (docs/…), knowledge note names, card ids. The recording must have at least one step.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        links: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Referenced artifacts: docs paths, knowledge note names, card ids',
-        },
-      },
-    },
-  },
-  {
-    name: 'workflow_search',
-    description:
-      'Searches this project\'s recorded workflows — procedures earlier agents captured (titles, tags, steps). Search at the start of a task and follow a matching workflow instead of rediscovering the procedure.',
-    inputSchema: {
-      type: 'object',
-      properties: { query: { type: 'string', description: 'Whitespace-split keywords, AND-matched' } },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'workflow_read',
-    description:
-      'Reads one recorded workflow in full — its frontmatter and its ordered steps. Follow its steps, adapting to the task at hand.',
-    inputSchema: {
-      type: 'object',
-      properties: { path: { type: 'string', description: 'The workflow file name, e.g. add-an-http-endpoint.md' } },
-      required: ['path'],
-    },
-  },
-];
+const TOOLS: McpToolDefinition[] = WORKER_TOOL_DEFINITIONS;
 
 /** Handles one JSON-RPC message; every tools/call reaches the server's worker route. */
 export async function handleMessage(

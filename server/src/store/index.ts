@@ -11,8 +11,8 @@ import { Surreal } from 'surrealdb';
 import { createNodeEngines } from '@surrealdb/node';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
-import type { EventEnvelope } from './wire/envelope.js';
-import type { EventName } from './wire/events.js';
+import type { EventEnvelope } from '../wire/envelope.js';
+import type { EventName } from '../wire/events.js';
 
 interface EventRow {
   id: string;
@@ -28,25 +28,11 @@ interface EventRow {
   ephemeral: boolean;
 }
 
-/** Global (not per-project) app settings. */
-export interface ComposerSettings {
-  /** The model every agent loads when no per-agent override exists. */
-  model?: string;
-  /** Per-agent model overrides, keyed by the bare agent kind (planner, coder, …). */
-  models?: Record<string, string>;
-}
-
-/** A settings update: a value sets the field, null clears it, absent leaves it.
- * `models` (when present) replaces the whole per-agent map. */
-export interface SettingsPatch {
-  model?: string | null;
-  models?: Record<string, string | null>;
-}
-
-/** The model an agent kind loads: its override, else the global default. */
-export function resolveModel(settings: ComposerSettings, agentKind: string): string | undefined {
-  return settings.models?.[agentKind] ?? settings.model;
-}
+// The settings types ride store/settings.js as type-only imports: this
+// module must stay loadable by a raw `node` (the restart tests' child
+// processes import it directly), where only type-only relative imports
+// are erased.
+import type { ComposerSettings, SettingsPatch } from './settings.js';
 
 export class EventStore {
   private db!: Surreal;

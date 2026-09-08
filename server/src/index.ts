@@ -9,19 +9,19 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { Bus } from './bus.js';
-import { EventStore } from './store.js';
+import { EventStore } from './store/index.js';
 import { Processor } from './processor.js';
-import { router } from './http.js';
+import { router } from './http/index.js';
 import { KnowledgeStore } from './knowledge.js';
 import { PlanningOrchestrator, resumeStrandedTurns } from './planning.js';
 import { AssistantOrchestrator, resumeStrandedThreads } from './assistant.js';
-import { PipelineRunner } from './runner.js';
+import { PipelineRunner } from './runner/index.js';
 import { cancelInterruptedRuns, seedDefaultPipelines } from './pipelines.js';
 import { OpenCodeEngine } from './engine/opencode.js';
 import { FakeEngine } from './engine/fake.js';
 import { OpenCodeServeEngine } from './engine/serve.js';
 import type { AgentEngine } from './engine/types.js';
-import type { ComposerCaller } from './engine/planner-tools.js';
+import type { ComposerCaller } from './tools/planner/index.js';
 
 export interface Config {
   addr: string;
@@ -174,24 +174,24 @@ export async function boot(config: Config): Promise<{
   };
 }
 
-/** The MCP child script (dist/mcp.js) — resolved from either the src or dist layout. */
+/** The planner's MCP child script (dist/mcp/planner.js) — resolved from the src or dist layout. */
 function mcpScriptPath(): string {
-  return process.env['COMPOSER_MCP_SCRIPT'] ?? fileURLToPath(new URL('../dist/mcp.js', import.meta.url));
+  return process.env['COMPOSER_MCP_SCRIPT'] ?? fileURLToPath(new URL('../dist/mcp/planner.js', import.meta.url));
 }
 
-/** The assistant's MCP child script (dist/assistant-mcp.js). */
+/** The assistant's MCP child script (dist/mcp/assistant.js). */
 function assistantMcpScriptPath(): string {
   return (
     process.env['COMPOSER_ASSISTANT_MCP_SCRIPT'] ??
-    fileURLToPath(new URL('../dist/assistant-mcp.js', import.meta.url))
+    fileURLToPath(new URL('../dist/mcp/assistant.js', import.meta.url))
   );
 }
 
-/** The workers' MCP child script (dist/worker-mcp.js). */
+/** The workers' MCP child script (dist/mcp/worker.js). */
 function workerMcpScriptPath(): string {
   return (
     process.env['COMPOSER_WORKER_MCP_SCRIPT'] ??
-    fileURLToPath(new URL('../dist/worker-mcp.js', import.meta.url))
+    fileURLToPath(new URL('../dist/mcp/worker.js', import.meta.url))
   );
 }
 

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { boot } from '../src/index.js';
-import { docTitle, invalidDocPath, listDocs, readDoc, saveDoc } from '../src/docs.js';
+import { docTitle, invalidDocPath, listDocs, readDoc, saveDoc } from '../src/docs/index.js';
 let dir: string;
 let projectDir: string;
 let server: Awaited<ReturnType<typeof boot>>;
