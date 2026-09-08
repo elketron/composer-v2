@@ -14,10 +14,27 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isAbsolute, resolve, sep } from 'node:path';
-import type { State } from './fold.js';
+import type { ProjectState, State } from './fold.js';
+import { Board } from './domain/board.js';
 import type { Run } from './domain/run.js';
 import { readGitStatus, type GitRunner } from './dashboard.js';
 import type { KnowledgeStore } from './knowledge.js';
+
+/** An absent project folds to an empty board (a tool read with no state). */
+function emptyProjectState(projectId: string): ProjectState {
+  return {
+    projectId,
+    cards: new Map(),
+    automation: new Map(),
+    planningSessions: new Map(),
+    agentSessions: new Map(),
+    pipelines: new Map(),
+    pipelineRevisions: new Map(),
+    deletedPipelines: new Set(),
+    runs: new Map(),
+    activeRuns: new Map(),
+  };
+}
 
 /** One tool result, tool-shaped either way (rejections are content, not transport errors). */
 export type ToolResult = { ok: true; content: string } | { ok: false; error: string };
@@ -143,29 +160,26 @@ function composerOverview(state: State, scope: string[], projectId: string | und
   }
 
   const body = projects.map((project) => {
-    const projectState = state.byProject.get(project.id);
-    const cards = [...(projectState?.cards.values() ?? [])];
+    const board = Board.of(state.byProject.get(project.id) ?? emptyProjectState(project.id));
+    const cards = [...board.cards.values()];
     const byStage: Record<string, number> = {};
     for (const card of cards) {
-      const pipeline = projectState?.pipelines.get(card.pipelineId);
-      const label = pipeline?.stages.find((stage) => stage.id === card.stageId)?.label ?? card.stageId;
+      const label = board.pipelineOf(card)?.stageById(card.stageId)?.label ?? card.stageId;
       byStage[label] = (byStage[label] ?? 0) + 1;
     }
-    const latestRunByCard = new Map<string, Run>();
-    for (const run of projectState?.runs.values() ?? []) {
-      const latest = latestRunByCard.get(run.cardId);
-      if (latest === undefined || run.startedAt >= latest.startedAt) latestRunByCard.set(run.cardId, run);
-    }
-    const runs = [...latestRunByCard.values()].map((run) => ({
-      runId: run.id,
-      cardId: run.cardId,
-      cardTitle: projectState?.cards.get(run.cardId)?.title ?? run.cardId,
-      pipelineId: run.pipelineId,
-      status: run.status,
-      ...(run.error !== undefined ? { error: run.error } : {}),
-    }));
-    const activeRuns = [...(projectState?.runs.values() ?? [])]
-      .filter((run) => run.status === 'running' || run.status === 'waiting')
+    const latestRuns = [...new Set([...board.runs.values()].map((run) => run.cardId))]
+      .map((cardId) => board.latestRunOf(cardId))
+      .filter((run): run is Run => run !== undefined)
+      .map((run) => ({
+        runId: run.id,
+        cardId: run.cardId,
+        cardTitle: board.card(run.cardId)?.title ?? run.cardId,
+        pipelineId: run.pipelineId,
+        status: run.status,
+        ...(run.error !== undefined ? { error: run.error } : {}),
+      }));
+    const activeRuns = [...board.runs.values()]
+      .filter((run) => run.isActive)
       .map((run) => ({
         runId: run.id,
         cardId: run.cardId,
@@ -173,7 +187,8 @@ function composerOverview(state: State, scope: string[], projectId: string | und
         status: run.status,
         stepKind: run.stepKind,
       }));
-    const sessions = [...(projectState?.planningSessions.values() ?? [])].map((session) => ({
+    const planningSessions = state.byProject.get(project.id)?.planningSessions ?? new Map();
+    const sessions = [...planningSessions.values()].map((session) => ({
       id: session.id,
       status: session.status,
       messages: session.messages.length,
@@ -183,7 +198,7 @@ function composerOverview(state: State, scope: string[], projectId: string | und
       project: { id: project.id, name: project.name, ...(project.directory ? { directory: project.directory } : {}) },
       cards: { total: cards.length, byStage },
       activeRuns,
-      latestRuns: runs,
+      latestRuns,
       planningSessions: sessions,
     };
   });
@@ -193,17 +208,13 @@ function composerOverview(state: State, scope: string[], projectId: string | und
 function composerCard(state: State, scope: string[], projectId: string, cardId: string): ToolResult {
   const scopeError = scoped(scope, projectId);
   if (scopeError) return scopeError;
-  const projectState = state.byProject.get(projectId);
-  const card = projectState?.cards.get(cardId);
+  const board = Board.of(state.byProject.get(projectId) ?? emptyProjectState(projectId));
+  const card = board.card(cardId);
   if (!card) {
     return { ok: false, error: `unknown card ${cardId}` };
   }
-  let latestRun: Run | undefined;
-  for (const run of projectState?.runs.values() ?? []) {
-    if (run.cardId !== cardId) continue;
-    if (latestRun === undefined || run.startedAt >= latestRun.startedAt) latestRun = run;
-  }
-  const transcriptSessions = [...(projectState?.agentSessions.values() ?? [])]
+  const latestRun = board.latestRunOf(cardId);
+  const transcriptSessions = [...(state.byProject.get(projectId)?.agentSessions.values() ?? [])]
     .filter((session) => session.cardId === cardId)
     .map((session) => ({
       id: session.id,

@@ -29,7 +29,8 @@ import {
 import { Card, isBlockedIn } from './domain/card.js';
 import type { Pipeline } from './domain/pipeline.js';
 import type { Run } from './domain/run.js';
-import { defaultPipeline, DEFAULT_PIPELINE_ID } from './pipelines.js';
+import { defaultPipeline } from './pipelines.js';
+import { Board } from './domain/board.js';
 import { PIPELINE_AGENT_KINDS } from './agents.js';
 import { deleteDoc as deleteDocFile, renameDoc as renameDocFile, saveDoc as saveDocFile } from './docs.js';
 import { deleteWorkflow as deleteWorkflowFile, saveWorkflow, MAX_WORKFLOW_STEPS } from './workflows.js';
@@ -1055,9 +1056,7 @@ export class Processor {
     }
     // The run's pinned revision owns the stage semantics — an edited
     // pipeline never changes a live run's rules.
-    const pipeline =
-      project?.pipelineRevisions.get(run.pipelineId)?.get(run.revision) ??
-      this.pipelinesOf(scope).get(run.pipelineId);
+    const pipeline = this.boardOf(scope)?.pipelineOfRun(run);
     const stage = pipeline?.stages.find((candidate) => candidate.id === run.stageId);
     if (pipeline === undefined || stage === undefined) {
       return rejected('unknownPipeline', `Run ${run.id} names an unknown pipeline or stage`);
@@ -1104,20 +1103,20 @@ export class Processor {
     return this.bus.state.byProject.get(projectId)?.runs ?? new Map();
   }
 
+  /** The project's board (the aggregate the link rules are answered from). */
+  private boardOf(projectId: string): Board | undefined {
+    const project = this.bus.state.byProject.get(projectId);
+    return project !== undefined ? Board.of(project) : undefined;
+  }
+
   /** The card's active run, if any (at most one). */
   private activeRunOf(projectId: string | undefined, cardId: string): Run | null {
-    if (projectId === undefined) return null;
-    const project = this.bus.state.byProject.get(projectId);
-    const runId = project?.activeRuns.get(cardId);
-    return (runId !== undefined ? project?.runs.get(runId) : undefined) ?? null;
+    return this.boardOf(projectId ?? '')?.activeRun(cardId) ?? null;
   }
 
   /** The project's default pipeline: PL-1 when present, else the first by id. */
   private defaultPipelineOf(projectId: string): Pipeline | undefined {
-    const pipelines = this.pipelinesOf(projectId);
-    if (pipelines.size === 0) return undefined;
-    if (pipelines.has(DEFAULT_PIPELINE_ID)) return pipelines.get(DEFAULT_PIPELINE_ID);
-    return pipelines.get([...pipelines.keys()].sort()[0]!);
+    return this.boardOf(projectId)?.defaultPipeline();
   }
 
   // ---- Global assistant (Phase 6): commands without a project scope ----

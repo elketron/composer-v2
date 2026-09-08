@@ -2,7 +2,8 @@ import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
-import type { State } from './fold.js';
+import type { ProjectState, State } from './fold.js';
+import { Board } from './domain/board.js';
 import type { Run } from './domain/run.js';
 
 const execFileAsync = promisify(execFile);
@@ -89,29 +90,26 @@ export async function dashboardProjects(
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   return mapLimit(projects, 4, async (project) => {
-    const projectState = state.byProject.get(project.id);
-    const waitingApprovals = [...(projectState?.runs.values() ?? [])]
+    const board = Board.of(state.byProject.get(project.id) ?? emptyProjectState(project.id));
+    const cardTitle = (cardId: string): string => board.card(cardId)?.title ?? cardId;
+    const waitingApprovals = [...board.runs.values()]
       .filter((run) => run.status === 'waiting')
       .map((run) => ({
         runId: run.id,
         cardId: run.cardId,
-        cardTitle: projectState?.cards.get(run.cardId)?.title ?? run.cardId,
+        cardTitle: cardTitle(run.cardId),
         pipelineId: run.pipelineId,
       }))
       .sort((a, b) => a.cardId.localeCompare(b.cardId));
     // The card's latest run feeds health: failed and returned runs are both
     // actionable (a returned run means work came back from a later stage).
-    const latestRunByCard = new Map<string, Run>();
-    for (const run of projectState?.runs.values() ?? []) {
-      const latest = latestRunByCard.get(run.cardId);
-      if (latest === undefined || run.startedAt >= latest.startedAt) latestRunByCard.set(run.cardId, run);
-    }
-    const failedRuns = [...latestRunByCard.values()]
-      .filter((run) => run.status === 'failed' || run.status === 'returned')
+    const failedRuns = [...new Set([...board.runs.values()].map((run) => run.cardId))]
+      .map((cardId) => board.latestRunOf(cardId))
+      .filter((run): run is Run => run !== undefined && (run.status === 'failed' || run.status === 'returned'))
       .map((run) => ({
         runId: run.id,
         cardId: run.cardId,
-        cardTitle: projectState?.cards.get(run.cardId)?.title ?? run.cardId,
+        cardTitle: cardTitle(run.cardId),
         pipelineId: run.pipelineId,
         ...(run.error !== undefined ? { error: run.error } : {}),
         ...(run.endedAt !== undefined ? { endedAt: run.endedAt } : {}),
@@ -122,12 +120,28 @@ export async function dashboardProjects(
       id: project.id,
       name: project.name,
       ...(project.directory !== undefined ? { directory: project.directory } : {}),
-      runningRuns: [...(projectState?.runs.values() ?? [])].filter((run) => run.status === 'running').length,
+      runningRuns: [...board.runs.values()].filter((run) => run.status === 'running').length,
       waitingApprovals,
       failedRuns,
       git: await readGit(project.directory),
     };
   });
+}
+
+/** An absent project folds to an empty board (a dashboard row with no runs). */
+function emptyProjectState(projectId: string): ProjectState {
+  return {
+    projectId,
+    cards: new Map(),
+    automation: new Map(),
+    planningSessions: new Map(),
+    agentSessions: new Map(),
+    pipelines: new Map(),
+    pipelineRevisions: new Map(),
+    deletedPipelines: new Set(),
+    runs: new Map(),
+    activeRuns: new Map(),
+  };
 }
 
 function parseBranch(header: string): string | undefined {

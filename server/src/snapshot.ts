@@ -7,7 +7,7 @@ import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
 import type { EventName } from './wire/events.js';
 import type { ProjectState, State } from './fold.js';
-import { isBlockedIn } from './domain/card.js';
+import { Board } from './domain/board.js';
 
 /** Terminal runs replayed per card (older attempts stay in the log). */
 const TERMINAL_RUNS_PER_CARD = 20;
@@ -84,6 +84,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     events.push(frame(project.id, 'projectCreated', { project: project.toWire() }, nonce, index++));
     const projectState = state.byProject.get(project.id);
     if (!projectState) continue;
+    const board = Board.of(projectState);
 
     const automations = [...projectState.automation.entries()].sort(([a], [b]) => a.localeCompare(b));
     for (const [pipelineId, stages] of automations) {
@@ -278,7 +279,7 @@ export function snapshotEvents(state: State, projectId?: string): EventFrame[] {
     }
     // Blocked cards replay their dependency state (order-insensitive fold).
     for (const card of projectState.cards.values()) {
-      if (isBlockedIn(projectState.cards, card, projectState.pipelines)) {
+      if (board.isBlocked(card)) {
         events.push(
           frame(
             project.id,

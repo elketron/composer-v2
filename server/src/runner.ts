@@ -29,6 +29,7 @@ import { ensureAgentFiles } from './agents.js';
 import { resolveModel } from './store.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
 import type { Card, Pipeline, PipelineStage, PipelineStep } from './wire/models.js';
+import { Board } from './domain/board.js';
 
 export interface RunnerOptions {
   /** Composer's HTTP base (the MCP tools' callback target). */
@@ -190,10 +191,10 @@ export class PipelineRunner {
   ): Promise<void> {
     if (this.tasks.has(runId)) return;
     const project = this.bus.state.byProject.get(projectId);
+    if (project === undefined) return;
     // The pinned revision wins; a revision the fold no longer holds (or an
     // unnumbered run) falls back to the pipeline's current definition.
-    const pinned = revision !== undefined ? project?.pipelineRevisions.get(pipelineId)?.get(revision) : undefined;
-    const pipeline = pinned ?? project?.pipelines.get(pipelineId);
+    const pipeline = Board.of(project).pipelineOfRun({ pipelineId, revision: revision ?? 0 });
     if (pipeline === undefined) return;
     const task: RunTask = {
       projectId,
