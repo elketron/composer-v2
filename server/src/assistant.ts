@@ -19,6 +19,7 @@ import { ASSISTANT_AGENT_NAME, ensureAssistantWorkspace } from './agents.js';
 import { resolveModel, type ComposerSettings } from './store.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
 import type { AssistantThread } from './wire/models.js';
+import { nextMessageIndex, ReservedIndexes, userMessageCount } from './domain/transcript.js';
 
 /** The per-agent model for a turn's spec (override, else the default). */
 function modelFor(settings: ComposerSettings): string | undefined {
@@ -52,8 +53,7 @@ export class AssistantOrchestrator {
    * a message's deltas and its completion must agree on one index, and
    * successive messages of one turn must not collide (the planning rule).
    */
-  private readonly reservedIndex = new Map<string, Map<string, number>>();
-  private readonly lastReserved = new Map<string, number>();
+  private readonly indexes = new ReservedIndexes();
   /** Thread id → the runtime's own session id (continuity, process lifetime). */
   private readonly engineSessions = new Map<string, string>();
   /** Thread id → the in-flight turn's abort controller (the stop kill switch). */
@@ -115,7 +115,7 @@ export class AssistantOrchestrator {
   private async onUserMessage(threadId: string, text: string): Promise<void> {
     const thread = this.threadOf(threadId);
     if (!thread || thread.archivedAt !== undefined) return;
-    const count = this.userMessageCount(thread);
+    const count = userMessageCount(thread.messages);
     if (this.inFlight.has(threadId)) {
       // A turn is running; the message is folded and the turn loop serves
       // it with the follow-up run.
@@ -126,8 +126,7 @@ export class AssistantOrchestrator {
       await this.turnLoop(threadId, count, text);
     } finally {
       this.inFlight.delete(threadId);
-      this.reservedIndex.delete(threadId);
-      this.lastReserved.delete(threadId);
+      this.indexes.release(threadId);
       this.lastCompletion.delete(threadId);
       this.streaming.delete(threadId);
     }
@@ -140,14 +139,13 @@ export class AssistantOrchestrator {
     if (this.inFlight.has(threadId)) return;
     const lastUser = [...thread.messages].reverse().find((message) => message.role === 'user');
     if (lastUser === undefined) return;
-    const count = this.userMessageCount(thread);
+    const count = userMessageCount(thread.messages);
     this.inFlight.set(threadId, count);
     try {
       await this.turnLoop(threadId, count, lastUser.text);
     } finally {
       this.inFlight.delete(threadId);
-      this.reservedIndex.delete(threadId);
-      this.lastReserved.delete(threadId);
+      this.indexes.release(threadId);
       this.lastCompletion.delete(threadId);
       this.streaming.delete(threadId);
     }
@@ -236,7 +234,7 @@ export class AssistantOrchestrator {
       }
 
       const now = this.threadOf(threadId);
-      const countNow = now === undefined ? count : this.userMessageCount(now);
+      const countNow = now === undefined ? count : userMessageCount(now.messages);
       if (countNow === count) return;
       // Only a new HUMAN message is a queued turn; pick up its text.
       const queued = now?.messages.filter((message) => message.role === 'user') ?? [];
@@ -279,7 +277,7 @@ export class AssistantOrchestrator {
       }
       void this.bus.publish(undefined, 'assistantMessageDelta', {
         threadId,
-        messageIndex: this.reserveIndex(threadId, event.messageId, thread),
+        messageIndex: this.indexes.reserve(threadId, event.messageId, thread.messages),
         delta: event.delta,
       });
       return;
@@ -306,11 +304,9 @@ export class AssistantOrchestrator {
     // folded onto the delta's reserved index must not be stolen by the
     // reply (the transcript sorts by index). The watermark advances so the
     // next reservation doesn't reuse the bumped index.
-    const reserved = this.reserveIndex(threadId, engineMessageId, thread);
-    const index = Math.max(reserved, nextMessageIndex(thread));
-    if (index > (this.lastReserved.get(threadId) ?? 0)) {
-      this.lastReserved.set(threadId, index);
-    }
+    const reserved = this.indexes.reserve(threadId, engineMessageId, thread.messages);
+    const index = Math.max(reserved, nextMessageIndex(thread.messages));
+    this.indexes.advance(threadId, index);
     const parentId = this.turnParents.get(threadId);
     await this.bus.publish(undefined, 'assistantMessageComplete', {
       threadId,
@@ -325,33 +321,10 @@ export class AssistantOrchestrator {
     });
   }
 
-  /** The message's transcript index (reserved once per engine messageId). */
-  private reserveIndex(
-    threadId: string,
-    messageId: string,
-    thread: { messages: { index: number }[] },
-  ): number {
-    const byMessage = this.reservedIndex.get(threadId) ?? new Map<string, number>();
-    const existing = byMessage.get(messageId);
-    if (existing !== undefined) return existing;
-    const reserved = Math.max(
-      nextMessageIndex(thread),
-      (this.lastReserved.get(threadId) ?? 0) + 1,
-    );
-    byMessage.set(messageId, reserved);
-    this.reservedIndex.set(threadId, byMessage);
-    this.lastReserved.set(threadId, reserved);
-    return reserved;
-  }
-
   private threadOf(threadId: string): AssistantThread | undefined {
     return this.bus.state.assistantThreads.get(threadId);
   }
 
-  /** The number of user messages on the thread's transcript. */
-  private userMessageCount(thread: { messages: { role: string }[] }): number {
-    return thread.messages.filter((message) => message.role === 'user').length;
-  }
 }
 
 function buildAssistantPrompt(thread: AssistantThread, text: string): string {
@@ -366,10 +339,6 @@ function buildAssistantPrompt(thread: AssistantThread, text: string): string {
     recent !== '' ? `\nRecent transcript:\n\n${recent}\n` : '',
     `\nThe user says:\n\n${text}`,
   ].join('');
-}
-
-function nextMessageIndex(thread: { messages: { index: number }[] }): number {
-  return thread.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
 }
 
 /**
@@ -400,7 +369,7 @@ export async function resumeStrandedThreads(bus: Bus): Promise<number> {
       message: {
         id: randomUUID(),
         ...(last.id !== undefined ? { parentId: last.id } : {}),
-        index: nextMessageIndex(thread),
+        index: nextMessageIndex(thread.messages),
         role: 'agent',
         text: 'the server restarted before this turn could run — send your message again',
         at: nowIso(),

@@ -4,6 +4,10 @@
 // terminal rule are the pipeline's own concepts, answered here once (the
 // processor, the runner, and the snapshot all read them from these objects).
 
+import {
+  readString,
+  asRecord,
+} from '../wire/read.js';
 import type {
   Pipeline as PipelineJson,
   PipelineStage as PipelineStageJson,
@@ -15,6 +19,17 @@ import { CommandRejection } from './rejection.js';
 
 /** Ceiling on steps one pipeline may carry (v1 M3). */
 export const MAX_PIPELINE_STEPS = 64;
+
+/** The revision is server-authoritative; a client's value is ignored. */
+function readRevision(record: Record<string, unknown>): number {
+  return typeof record['revision'] === 'number' ? record['revision'] : 0;
+}
+
+/** A timestamp the client actually set (the sentinel '' → absent). */
+function readTimestamp(record: Record<string, unknown>, key: string): string {
+  const value = readString(record, key);
+  return value !== undefined && Date.parse(value) > 0 ? value : '';
+}
 
 /**
  * One stage of a pipeline's forward path. Field assignment order matches
@@ -47,6 +62,34 @@ export class PipelineStage {
 
   static fromWire(json: PipelineStageJson): PipelineStage {
     return new PipelineStage(json);
+  }
+
+  /** The stage the client meant — lenient, defaults where absent. */
+  static fromAction(json: unknown): PipelineStageJson {
+    const record = asRecord(json);
+    const outcomes = Array.isArray(record['outcomes']) ? record['outcomes'] : [];
+    return {
+      id: readString(record, 'id') ?? '',
+      label: readString(record, 'label') ?? '',
+      kanbanVisible: record['kanbanVisible'] !== false,
+      ...(record['terminal'] === true ? { terminal: true } : {}),
+      ...(outcomes.length > 0
+        ? {
+            outcomes: outcomes.map((rule) => {
+              const outcome = asRecord(rule);
+              const toStageId = readString(outcome, 'toStageId');
+              return {
+                outcome: readString(outcome, 'outcome') ?? '',
+                ...(toStageId !== undefined && toStageId !== '' ? { toStageId } : {}),
+              };
+            }),
+          }
+        : {}),
+      ...(record['requiresOutcome'] === true ? { requiresOutcome: true } : {}),
+      ...(readString(record, 'errorReturnToStageId') !== undefined
+        ? { errorReturnToStageId: readString(record, 'errorReturnToStageId')! }
+        : {}),
+    };
   }
 
   toWire(): PipelineStageJson {
@@ -89,6 +132,25 @@ export class PipelineStep {
     return new PipelineStep(json);
   }
 
+  /** The step the client meant — lenient, an unknown kind defaults to agent. */
+  static fromAction(json: unknown): PipelineStepJson {
+    const record = asRecord(json);
+    const kind = readString(record, 'kind');
+    return {
+      id: readString(record, 'id') ?? '',
+      kind: kind === 'command' || kind === 'human' ? kind : 'agent',
+      stageId: readString(record, 'stageId') ?? '',
+      ...(readString(record, 'agentKind') !== undefined ? { agentKind: readString(record, 'agentKind') } : {}),
+      ...(readString(record, 'instructions') !== undefined
+        ? { instructions: readString(record, 'instructions') }
+        : {}),
+      ...(readString(record, 'command') !== undefined ? { command: readString(record, 'command') } : {}),
+      ...(readString(record, 'description') !== undefined
+        ? { description: readString(record, 'description') }
+        : {}),
+    };
+  }
+
   toWire(): PipelineStepJson {
     return {
       id: this.id,
@@ -127,6 +189,22 @@ export class Pipeline {
 
   static fromWire(json: PipelineJson): Pipeline {
     return new Pipeline(json);
+  }
+
+  /** The pipeline draft the client meant — stages and steps lenient, per-kind fields as found. */
+  static draftFromAction(json: unknown, scopeProjectId: string | undefined): PipelineJson {
+    const record = asRecord(json);
+    const stages = Array.isArray(record['stages']) ? record['stages'] : [];
+    const steps = Array.isArray(record['steps']) ? record['steps'] : [];
+    return {
+      id: readString(record, 'id') ?? '',
+      projectId: readString(record, 'projectId') ?? scopeProjectId ?? '',
+      name: readString(record, 'name') ?? '',
+      revision: readRevision(record),
+      stages: stages.map((stage) => PipelineStage.fromAction(stage)),
+      steps: steps.map((step) => PipelineStep.fromAction(step)),
+      updatedAt: readTimestamp(record, 'updatedAt'),
+    };
   }
 
   toWire(): PipelineJson {

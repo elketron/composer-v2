@@ -6,6 +6,13 @@
 // validation and the snapshot's dependency replay both answer; the
 // cross-object rules that need the whole board join with the aggregate.
 
+import {
+  readNumber,
+  readObject,
+  readString,
+  readStringArray,
+  asRecord,
+} from '../wire/read.js';
 import type {
   Assignee,
   Card as CardJson,
@@ -62,6 +69,60 @@ export class Card {
     return new Card(json);
   }
 
+  /**
+   * The card the client meant — every field lenient, defaults where absent.
+   * Empty pipeline/stage ids let the processor assign the defaults.
+   */
+  static fromAction(json: unknown, scopeProjectId: string | undefined): CardJson {
+    const record = asRecord(json);
+    const str = (key: string): string | undefined => readString(record, key);
+    const assigneeJson = readObject(record, 'assignee');
+    const assigneeRole = readString(assigneeJson ?? {}, 'role') ?? 'human';
+    const fileStats = readObject(record, 'fileStats');
+    const createdAt = str('createdAt');
+    const updatedAt = str('updatedAt');
+    const created = createdAt !== undefined && Date.parse(createdAt) > 0 ? createdAt : '';
+    const updated = updatedAt !== undefined && Date.parse(updatedAt) > 0 ? updatedAt : '';
+    return {
+      id: str('id') ?? '',
+      projectId: str('projectId') ?? scopeProjectId ?? '',
+      type: parseCardType(str('type') ?? 'coding'),
+      title: str('title') ?? '',
+      description: str('description') ?? '',
+      tags: readStringArray(record, 'tags'),
+      pipelineId: str('pipelineId') ?? '',
+      stageId: str('stageId') ?? '',
+      blockedBy: readStringArray(record, 'blockedBy'),
+      ...(assigneeJson !== undefined
+        ? {
+            assignee:
+              assigneeRole === 'human'
+                ? { role: 'human' }
+                : {
+                    role: assigneeRole,
+                    ...(readString(assigneeJson, 'model') ? { model: readString(assigneeJson, 'model') } : {}),
+                    ...(readString(assigneeJson, 'effort') ? { effort: readString(assigneeJson, 'effort') } : {}),
+                  },
+          }
+        : {}),
+      ...(str('sessionId') !== undefined ? { sessionId: str('sessionId') } : {}),
+      ...(str('branch') !== undefined ? { branch: str('branch') } : {}),
+      ...(fileStats !== undefined
+        ? {
+            fileStats: {
+              added: readNumber(fileStats, 'added'),
+              removed: readNumber(fileStats, 'removed'),
+              files: readNumber(fileStats, 'files'),
+            },
+          }
+        : {}),
+      stepStates: readStepStates(record),
+      ...(str('rejectionComment') !== undefined ? { rejectionComment: str('rejectionComment') } : {}),
+      createdAt: created,
+      updatedAt: updated,
+    };
+  }
+
   toWire(): CardJson {
     return {
       id: this.id,
@@ -115,4 +176,22 @@ export function isBlockedIn(
     if (blocker === undefined) return false;
     return pipelines.get(blocker.pipelineId)?.stages.find((stage) => stage.id === blocker.stageId)?.terminal !== true;
   });
+}
+
+export function parseCardType(value: string | undefined): CardType {
+  return value === 'design' || value === 'docs' ? value : 'coding';
+}
+
+export function parseSubStateStatus(value: string | undefined): SubStateStatus {
+  return value === 'running' || value === 'ok' || value === 'failed' ? value : 'pending';
+}
+
+function readStepStates(record: Record<string, unknown>): Record<string, SubStateStatus> {
+  const json = readObject(record, 'stepStates');
+  if (json === undefined) return {};
+  const result: Record<string, SubStateStatus> = {};
+  for (const [key, value] of Object.entries(json)) {
+    result[key] = parseSubStateStatus(typeof value === 'string' ? value : 'pending');
+  }
+  return result;
 }

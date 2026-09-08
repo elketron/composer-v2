@@ -5,6 +5,7 @@
 // ones reject).
 
 import type { Card as CardJson, CardProposal, ProposalItem } from '../wire/models.js';
+import { readString, readStringArray, asRecord } from '../wire/read.js';
 import { CommandRejection } from './rejection.js';
 
 export class Proposal {
@@ -20,6 +21,25 @@ export class Proposal {
       throw new CommandRejection('invalidCommand', `Proposal ${this.proposal.id} was already ${this.proposal.status}`);
     }
   }
+}
+
+/**
+ * The proposal item the client meant — defaults where absent (Phase 8).
+ */
+export function proposalItemFromAction(json: unknown): ProposalItem {
+  const record = asRecord(json);
+  const cardType = readString(record, 'cardType');
+  const key = readString(record, 'key');
+  return {
+    id: readString(record, 'id') ?? '',
+    projectId: readString(record, 'projectId') ?? '',
+    title: readString(record, 'title') ?? '',
+    description: readString(record, 'description') ?? '',
+    cardType: cardType === 'design' || cardType === 'docs' ? cardType : 'coding',
+    ...(key !== undefined && key !== '' ? { key } : {}),
+    blockedBy: readStringArray(record, 'blockedBy'),
+    included: record['included'] !== false,
+  };
 }
 
 /**

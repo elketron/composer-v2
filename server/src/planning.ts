@@ -17,6 +17,7 @@ import { nowIso } from './wire/envelope.js';
 import { ensureAgentFiles, PLANNER_AGENT_NAME } from './agents.js';
 import { resolveModel, type ComposerSettings } from './store.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
+import { nextMessageIndex, ReservedIndexes, userMessageCount } from './domain/transcript.js';
 
 /** The per-agent model for a turn's spec (override, else the default). */
 function modelFor(settings: ComposerSettings, agentName: string): string | undefined {
@@ -49,10 +50,9 @@ export class PlanningOrchestrator {
    * a message's deltas and its completion must agree on one index (the
    * desktop keys the live bubble on it), and successive messages of one
    * turn must not collide even when the fold lags the (synchronous) emit
-   * stream. `lastReserved` keeps the allocation monotonic per session.
+   * stream.
    */
-  private readonly reservedIndex = new Map<string, Map<string, number>>();
-  private readonly lastReserved = new Map<string, number>();
+  private readonly indexes = new ReservedIndexes();
   /** Session id → the runtime's own session id (continuity, process lifetime). */
   private readonly engineSessions = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
@@ -84,7 +84,7 @@ export class PlanningOrchestrator {
   private async onUserMessage(projectId: string, sessionId: string, text: string): Promise<void> {
     const found = this.sessionOf(projectId, sessionId);
     if (!found || found.session.status !== 'drafting') return;
-    const count = this.userMessageCount(found.session);
+    const count = userMessageCount(found.session.messages);
     if (this.inFlight.has(sessionId)) {
       // A turn is running; the message is folded and the turn loop serves
       // it with the follow-up run.
@@ -95,8 +95,7 @@ export class PlanningOrchestrator {
       await this.turnLoop(projectId, sessionId, count, text);
     } finally {
       this.inFlight.delete(sessionId);
-      this.reservedIndex.delete(sessionId);
-      this.lastReserved.delete(sessionId);
+      this.indexes.release(sessionId);
     }
   }
 
@@ -158,7 +157,7 @@ export class PlanningOrchestrator {
       }
 
       const now = this.sessionOf(projectId, sessionId);
-      const countNow = now === undefined ? count : this.userMessageCount(now.session);
+      const countNow = now === undefined ? count : userMessageCount(now.session.messages);
       if (countNow === count) return;
       // Only a new HUMAN message is a queued turn; pick up its text.
       const queued = now?.session.messages.filter((message) => message.role === 'user') ?? [];
@@ -173,7 +172,7 @@ export class PlanningOrchestrator {
       if (!found) return;
       void this.bus.publish(projectId, 'agentMessageDelta', {
         sessionId,
-        messageIndex: this.reserveIndex(sessionId, event.messageId, found.session),
+        messageIndex: this.indexes.reserve(sessionId, event.messageId, found.session.messages),
         delta: event.delta,
       });
       return;
@@ -190,27 +189,11 @@ export class PlanningOrchestrator {
   ): Promise<void> {
     const found = this.sessionOf(projectId, sessionId);
     if (!found) return;
-    const index = this.reserveIndex(sessionId, messageId, found.session);
+    const index = this.indexes.reserve(sessionId, messageId, found.session.messages);
     await this.bus.publish(projectId, 'agentMessageComplete', {
       sessionId,
       message: { index, role: 'agent', text, at: nowIso() },
     });
-  }
-
-  /** The message's transcript index (reserved once per engine messageId). */
-  private reserveIndex(
-    sessionId: string,
-    messageId: string,
-    session: { messages: { index: number }[] },
-  ): number {
-    const byMessage = this.reservedIndex.get(sessionId) ?? new Map<string, number>();
-    const existing = byMessage.get(messageId);
-    if (existing !== undefined) return existing;
-    const reserved = Math.max(nextMessageIndex(session), (this.lastReserved.get(sessionId) ?? 0) + 1);
-    byMessage.set(messageId, reserved);
-    this.reservedIndex.set(sessionId, byMessage);
-    this.lastReserved.set(sessionId, reserved);
-    return reserved;
   }
 
   private sessionOf(projectId: string, sessionId: string) {
@@ -222,20 +205,11 @@ export class PlanningOrchestrator {
       ...(directory !== undefined ? { directory } : {}),
     };
   }
-
-  /** The number of user messages on the session's transcript (v1 human_count). */
-  private userMessageCount(session: { messages: { role: string }[] }): number {
-    return session.messages.filter((message) => message.role === 'user').length;
-  }
 }
 
 function buildPrompt(document: string, text: string): string {
   const documentBlock = document === '' ? '(the document is empty)' : document;
   return `Current plan document:\n\n${documentBlock}\n\nThe user says:\n\n${text}`;
-}
-
-function nextMessageIndex(session: { messages: { index: number }[] }): number {
-  return session.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
 }
 
 /**
@@ -255,7 +229,7 @@ export async function resumeStrandedTurns(bus: Bus): Promise<number> {
       await bus.publish(projectId, 'agentMessageComplete', {
         sessionId: session.id,
         message: {
-          index: nextMessageIndex(session),
+          index: nextMessageIndex(session.messages),
           role: 'agent',
           text: 'the server restarted before this turn could run — send your message again',
           at: nowIso(),
