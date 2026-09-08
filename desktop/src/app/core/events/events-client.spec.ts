@@ -290,7 +290,9 @@ describe('EventsClient (gateway)', () => {
         { provide: PROJECTS_GATEWAY, useValue: gateway },
       ],
     });
-    return TestBed.inject(EventsClient);
+    const client = TestBed.inject(EventsClient);
+    client.connect();
+    return client;
   }
 
   function moveFrame(id: string, projectId: string): EventFrameJson {

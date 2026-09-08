@@ -2,12 +2,10 @@ import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
 
 import { FakeEventsClient, provideFakeEventsClient } from '../core/events/events-client.fake';
-import { ShellService } from '../shell/shell.service';
 import { SettingsService } from './settings.service';
 
 describe('SettingsService', () => {
   let events: FakeEventsClient;
-  let shell: ShellService;
   let service: SettingsService;
   let fetchJson: (url: string, init?: RequestInit) => { status: number; body: unknown };
 
@@ -16,7 +14,6 @@ describe('SettingsService', () => {
     await TestBed.configureTestingModule({
       providers: [provideFakeEventsClient(events)],
     }).compileComponents();
-    shell = TestBed.inject(ShellService);
     service = TestBed.inject(SettingsService);
     fetchJson = () => ({ status: 200, body: {} });
     vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string, init?: RequestInit) => {
@@ -30,7 +27,7 @@ describe('SettingsService', () => {
     await service.load();
 
     expect(service.model()).toBe('llamacpp/qwen3.6');
-    expect(shell.model()).toBe('llamacpp/qwen3.6');
+    expect(service.effectiveModel()).toBe('llamacpp/qwen3.6');
   });
 
   it('saves the draft and reflects the saved value', async () => {
@@ -43,7 +40,7 @@ describe('SettingsService', () => {
 
     expect(ok).toBe(true);
     expect(service.model()).toBe('llamacpp/qwen3.6');
-    expect(shell.model()).toBe('llamacpp/qwen3.6');
+    expect(service.effectiveModel()).toBe('llamacpp/qwen3.6');
     expect(service.error()).toBeNull();
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls.at(-1) as unknown as [
       string,
@@ -62,7 +59,7 @@ describe('SettingsService', () => {
     const ok = await service.save();
 
     expect(ok).toBe(true);
-    expect(shell.model()).toBe('default');
+    expect(service.effectiveModel()).toBe('default');
     const [, init] = vi.mocked(globalThis.fetch).mock.calls.at(-1) as unknown as [
       string,
       RequestInit,
@@ -128,6 +125,6 @@ describe('SettingsService', () => {
 
     expect(service.models()).toEqual({ planner: 'p-m', reviewer: 'r-m' });
     expect(service.agentKinds()).toEqual(['planner', 'coder', 'tester', 'reviewer', 'security']);
-    expect(shell.model()).toBe('default-m');
+    expect(service.effectiveModel()).toBe('default-m');
   });
 });

@@ -83,6 +83,7 @@ export class EventsClient {
   private readonly transportFactory: TransportFactory;
   private readonly gateway: ProjectsBridge | null;
   private readonly eventsSubject = new Subject<DomainEventJson>();
+  private started = false;
 
   /** The one server link; the test/dev injected transport keeps `fallback`. */
   private link: ServerLink | null = null;
@@ -115,6 +116,12 @@ export class EventsClient {
       );
       return;
     }
+  }
+
+  /** Opens the stream after the app's folds subscribed (idempotent). */
+  connect(): void {
+    if (this.started || this.fallback !== null) return;
+    this.started = true;
     void this.startup();
   }
 

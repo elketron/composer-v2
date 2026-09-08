@@ -1,19 +1,19 @@
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
 import { EventsClient } from '../core/events/events-client';
-import { ShellService } from '../shell/shell.service';
+import { RestClient } from '../core/rest';
 
 /**
  * Global app settings (the server's `/settings`): the default model plus
  * per-agent overrides (planner, coder, the pipeline workers, and any
- * custom agent kind). The shell's model badge shows the default; the
- * pipeline editor's agent picker offers the known kinds. The provider
- * endpoint stays opencode's own config.
+ * custom agent kind). The shell's model badge shows the default (via
+ * `effectiveModel`); the pipeline editor's agent picker offers the known
+ * kinds. The provider endpoint stays opencode's own config.
  */
 @Injectable({ providedIn: 'root' })
 export class SettingsService {
   private readonly events = inject(EventsClient);
-  private readonly shell = inject(ShellService);
+  private readonly rest = inject(RestClient);
 
   private readonly modelDraft = signal<string | null>(null);
   private readonly modelsDraft = signal<Record<string, string> | null>(null);
@@ -24,6 +24,8 @@ export class SettingsService {
 
   /** The editable default-model field: '' until a load/save gives it a value. */
   readonly model = computed(() => this.modelDraft() ?? this.savedModel());
+  /** The saved default model the shell badge shows ('default' when unset). */
+  readonly effectiveModel = computed(() => this.savedModel() || 'default');
   /** The per-agent overrides (kind → model), as last edited. */
   readonly models = computed(() => this.modelsDraft() ?? this.savedModels());
   /** The known agent kinds: the shipped ones plus anything with an override. */
@@ -43,19 +45,17 @@ export class SettingsService {
     });
   }
 
-  /** Pulls the server's settings into the local draft + shell badge. */
+  /** Pulls the server's settings into the local draft. */
   async load(): Promise<void> {
-    const base = this.events.serverBase;
-    if (base === null) return;
+    if (this.rest.serverBase === null) return;
     this.loading.set(true);
     try {
-      const response = await fetch(`${base}/settings`);
-      if (!response.ok) return;
-      const body = (await response.json()) as { model?: unknown; models?: unknown };
-      const model = typeof body.model === 'string' ? body.model : '';
+      const response = await this.rest.get<{ model?: unknown; models?: unknown }>('/settings');
+      if (response === null || !response.ok) return;
+      const model = typeof response.body.model === 'string' ? response.body.model : '';
       const saved: Record<string, string> = {};
-      if (body.models !== null && typeof body.models === 'object') {
-        for (const [kind, value] of Object.entries(body.models as Record<string, unknown>)) {
+      if (response.body.models !== null && typeof response.body.models === 'object') {
+        for (const [kind, value] of Object.entries(response.body.models as Record<string, unknown>)) {
           if (typeof value === 'string' && value !== '') saved[kind] = value;
         }
       }
@@ -63,9 +63,6 @@ export class SettingsService {
       this.savedModels.set(saved);
       this.modelDraft.set(null);
       this.modelsDraft.set(null);
-      this.shell.model.set(model === '' ? 'default' : model);
-    } catch {
-      // Offline: keep whatever the shell shows.
     } finally {
       this.loading.set(false);
     }
@@ -73,19 +70,12 @@ export class SettingsService {
   }
 
   private async loadModels(): Promise<void> {
-    const base = this.events.serverBase;
-    if (base === null) return;
-    try {
-      const response = await fetch(`${base}/models`);
-      if (!response.ok) return;
-      const body = (await response.json()) as { models?: unknown };
-      if (!Array.isArray(body.models)) return;
-      this.availableModels.set(
-        body.models.filter((model): model is string => typeof model === 'string' && model !== ''),
-      );
-    } catch {
-      // Free-text model entry remains available when opencode cannot be queried.
-    }
+    const response = await this.rest.get<{ models?: unknown }>('/models');
+    if (response === null || !response.ok) return;
+    if (!Array.isArray(response.body.models)) return;
+    this.availableModels.set(
+      response.body.models.filter((model): model is string => typeof model === 'string' && model !== ''),
+    );
   }
 
   setModel(value: string): void {
@@ -112,8 +102,7 @@ export class SettingsService {
   }
 
   async save(): Promise<boolean> {
-    const base = this.events.serverBase;
-    if (base === null) {
+    if (this.rest.serverBase === null) {
       this.error.set('no server attached');
       return false;
     }
@@ -125,23 +114,22 @@ export class SettingsService {
         const trimmed = value.trim();
         if (trimmed !== '') models[kind] = trimmed;
       }
-      const response = await fetch(`${base}/settings`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model().trim() || null,
-          models,
-        }),
+      const response = await this.rest.put<{ model?: unknown; models?: unknown }>('/settings', {
+        model: this.model().trim() || null,
+        models,
       });
+      if (response === null) {
+        this.error.set('could not reach the server');
+        return false;
+      }
       if (!response.ok) {
         this.error.set(`the server refused the settings (${response.status})`);
         return false;
       }
-      const body = (await response.json()) as { model?: unknown; models?: unknown };
-      const model = typeof body.model === 'string' ? body.model : '';
+      const model = typeof response.body.model === 'string' ? response.body.model : '';
       const saved: Record<string, string> = {};
-      if (body.models !== null && typeof body.models === 'object') {
-        for (const [kind, value] of Object.entries(body.models as Record<string, unknown>)) {
+      if (response.body.models !== null && typeof response.body.models === 'object') {
+        for (const [kind, value] of Object.entries(response.body.models as Record<string, unknown>)) {
           if (typeof value === 'string' && value !== '') saved[kind] = value;
         }
       }
@@ -149,12 +137,8 @@ export class SettingsService {
       this.savedModels.set(saved);
       this.modelDraft.set(null);
       this.modelsDraft.set(null);
-      this.shell.model.set(model === '' ? 'default' : model);
       this.saved.set(true);
       return true;
-    } catch {
-      this.error.set('could not reach the server');
-      return false;
     } finally {
       this.saving.set(false);
     }

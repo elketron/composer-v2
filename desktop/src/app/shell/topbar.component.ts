@@ -4,6 +4,7 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/ro
 import { filter, map } from 'rxjs';
 
 import { PaletteService } from '../core/palette/palette.service';
+import { SettingsService } from '../settings/settings.service';
 import { ShellService } from './shell.service';
 
 /**
@@ -24,9 +25,10 @@ export class TopbarComponent {
   private readonly shell = inject(ShellService);
   private readonly router = inject(Router);
   private readonly palette = inject(PaletteService);
+  private readonly settings = inject(SettingsService);
 
   protected readonly activeTab = this.shell.activeTab;
-  protected readonly model = this.shell.model;
+  protected readonly model = this.settings.effectiveModel;
 
   private readonly currentUrl = toSignal(
     this.router.events.pipe(

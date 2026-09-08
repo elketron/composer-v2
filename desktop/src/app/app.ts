@@ -18,17 +18,18 @@ import { ShellService } from './shell/shell.service';
   templateUrl: './app.html',
 })
 export class App {
-  // Every stream-folding service must exist before the first event lands —
-  // they are instantiated lazily on first injection, but events$ is a plain
-  // Subject: a service constructed later (e.g. PlanService when the Plan view
-  // first opens) would miss the startup snapshot. Inject them all here so
-  // all folds are subscribed before the stream connects. SettingsService
-  // counts too: its connected-effect pulls `/settings` at boot, which keeps
-  // the shell's model badge truthful before any view is visited.
+  // Composition root: construct the stream-folding services, then open the
+  // stream. Each fold subscribes in its own constructor, so connecting only
+  // after they all exist means the startup snapshot lands on every fold —
+  // no missing-first-event ordering bug to work around.
   private readonly events = inject(EventsClient);
   private readonly shell = inject(ShellService);
   private readonly board = inject(BoardService);
   private readonly plan = inject(PlanService);
   private readonly assistant = inject(AssistantService);
   private readonly settings = inject(SettingsService);
+
+  constructor() {
+    this.events.connect();
+  }
 }

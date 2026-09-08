@@ -1,6 +1,7 @@
 import { Injectable, effect, inject, signal } from '@angular/core';
 
 import { EventsClient } from '../core/events/events-client';
+import { RestClient } from '../core/rest';
 
 export interface DashboardHealth {
   id: string;
@@ -25,6 +26,7 @@ export interface DashboardHealth {
 @Injectable({ providedIn: 'root' })
 export class DashboardService {
   private readonly events = inject(EventsClient);
+  private readonly rest = inject(RestClient);
   private request = 0;
 
   readonly projects = signal<readonly DashboardHealth[]>([]);
@@ -38,22 +40,18 @@ export class DashboardService {
   }
 
   async refresh(): Promise<void> {
-    const base = this.events.serverBase;
-    if (!base) return;
+    if (!this.rest.serverBase) return;
     const request = ++this.request;
     this.loading.set(true);
     this.error.set(null);
-    try {
-      const response = await fetch(`${base}/dashboard`);
-      if (!response.ok) throw new Error(`dashboard request failed (${response.status})`);
-      const body = (await response.json()) as { projects?: unknown };
-      if (request !== this.request) return;
-      this.projects.set(Array.isArray(body.projects) ? (body.projects as DashboardHealth[]) : []);
-    } catch {
-      if (request === this.request) this.error.set('project health is temporarily unavailable');
-    } finally {
-      if (request === this.request) this.loading.set(false);
+    const response = await this.rest.get<{ projects?: unknown }>('/dashboard');
+    if (request !== this.request) return;
+    if (response === null || !response.ok) {
+      this.error.set('project health is temporarily unavailable');
+    } else {
+      this.projects.set(Array.isArray(response.body.projects) ? (response.body.projects as DashboardHealth[]) : []);
     }
+    this.loading.set(false);
   }
 
   forProject(projectId: string): DashboardHealth | undefined {

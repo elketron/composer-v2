@@ -36,13 +36,6 @@ export class ShellService {
   readonly activeTabId = signal<string | null>(null);
   readonly activeTab = computed(() => this.tabs().find((t) => t.id === this.activeTabId()) ?? null);
 
-  /**
-   * Active planner model shown in the top bar and status strip. Starts at
-   * the server's neutral default; SettingsService replaces it with the
-   * server's real value as soon as `/settings` answers.
-   */
-  readonly model = signal('default');
-
   private readonly lastViews = readLastViews();
 
   constructor() {

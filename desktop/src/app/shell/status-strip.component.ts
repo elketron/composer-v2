@@ -4,6 +4,7 @@ import { NavigationEnd, Router } from '@angular/router';
 import { filter, map } from 'rxjs';
 
 import { PipelineService } from '../pipelines/pipeline.service';
+import { SettingsService } from '../settings/settings.service';
 import { ShellService } from './shell.service';
 
 /**
@@ -23,6 +24,7 @@ export class StatusStripComponent {
   private readonly shell = inject(ShellService);
   private readonly pipelines = inject(PipelineService);
   private readonly router = inject(Router);
+  private readonly settings = inject(SettingsService);
 
   protected readonly runningSessions = computed(() =>
     this.pipelines.agentSessions().filter((session) => session.status === 'running'),
@@ -32,7 +34,7 @@ export class StatusStripComponent {
   protected readonly agentLabel = computed(() =>
     this.agentCount() === 1 ? 'agent running' : 'agents running',
   );
-  protected readonly model = this.shell.model;
+  protected readonly model = this.settings.effectiveModel;
   protected readonly inWorkspace = toSignal(
     this.router.events.pipe(
       filter((event): event is NavigationEnd => event instanceof NavigationEnd),

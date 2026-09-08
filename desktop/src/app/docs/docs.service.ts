@@ -2,6 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 
 import { EventsClient } from '../core/events/events-client';
 import { DocInfoJson, DomainEventJson, domainEventKind } from '../core/events/wire';
+import { RestClient } from '../core/rest';
 
 /**
  * The docs index (Phase 9): markdown files under the project's docs/
@@ -12,6 +13,7 @@ import { DocInfoJson, DomainEventJson, domainEventKind } from '../core/events/wi
 @Injectable({ providedIn: 'root' })
 export class DocsService {
   private readonly events = inject(EventsClient);
+  private readonly rest = inject(RestClient);
 
   /** Per-project indexes; only projects opened in this session are keyed. */
   private readonly index = signal<ReadonlyMap<string, readonly DocInfoJson[]>>(new Map());
@@ -36,28 +38,27 @@ export class DocsService {
 
   /** Refreshes a project's index from disk (the REST read). */
   async open(projectId: string): Promise<void> {
-    const base = this.events.serverBase;
-    if (base === null) return;
+    if (this.rest.serverBase === null) return;
     this.loading.set(true);
     try {
-      const response = await fetch(`${base}/projects/${encodeURIComponent(projectId)}/docs`);
-      const body = (await response.json().catch(() => ({}))) as {
-        docs?: unknown;
-        error?: unknown;
-      };
-      if (!response.ok || typeof body.error === 'string') {
+      const response = await this.rest.get<{ docs?: unknown; error?: unknown }>(
+        `/projects/${encodeURIComponent(projectId)}/docs`,
+      );
+      if (response === null) {
+        this.error.set('could not reach the server');
+        return;
+      }
+      if (!response.ok || typeof response.body.error === 'string') {
         this.error.set(
-          typeof body.error === 'string' ? body.error : `the docs of ${projectId} are unavailable`,
+          typeof response.body.error === 'string' ? response.body.error : `the docs of ${projectId} are unavailable`,
         );
         return;
       }
-      const listed = body.docs;
+      const listed = response.body.docs;
       if (!Array.isArray(listed)) return;
       this.error.set(null);
       this.loaded.add(projectId);
       this.index.update((index) => new Map(index).set(projectId, sanitize(listed)));
-    } catch {
-      this.error.set('could not reach the server');
     } finally {
       this.loading.set(false);
     }
@@ -68,30 +69,21 @@ export class DocsService {
     projectId: string,
     path: string,
   ): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
-    const base = this.events.serverBase;
-    if (base === null) return { ok: false, error: 'no server attached' };
-    try {
-      const url =
-        `${base}/projects/${encodeURIComponent(projectId)}/docs/content` +
-        `?path=${encodeURIComponent(path)}`;
-      const response = await fetch(url);
-      const body = (await response.json().catch(() => ({}))) as {
-        doc?: { content?: unknown };
-        error?: unknown;
+    if (this.rest.serverBase === null) return { ok: false, error: 'no server attached' };
+    const response = await this.rest.get<{ doc?: { content?: unknown }; error?: unknown }>(
+      `/projects/${encodeURIComponent(projectId)}/docs/content?path=${encodeURIComponent(path)}`,
+    );
+    if (response === null) return { ok: false, error: 'could not reach the server' };
+    if (!response.ok || typeof response.body.error === 'string') {
+      return {
+        ok: false,
+        error: typeof response.body.error === 'string' ? response.body.error : `doc '${path}' is unavailable`,
       };
-      if (!response.ok || typeof body.error === 'string') {
-        return {
-          ok: false,
-          error: typeof body.error === 'string' ? body.error : `doc '${path}' is unavailable`,
-        };
-      }
-      if (typeof body.doc?.content !== 'string') {
-        return { ok: false, error: `doc '${path}' is unavailable` };
-      }
-      return { ok: true, content: body.doc.content };
-    } catch {
-      return { ok: false, error: 'could not reach the server' };
     }
+    if (typeof response.body.doc?.content !== 'string') {
+      return { ok: false, error: `doc '${path}' is unavailable` };
+    }
+    return { ok: true, content: response.body.doc.content };
   }
 
   /**
