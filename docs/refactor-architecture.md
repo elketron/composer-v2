@@ -2,6 +2,32 @@
 
 The working rules this refactor enforces, and the slice plan for getting there.
 
+## Progress
+
+Server side complete (wire frozen throughout; golden untouched):
+
+- **R1 ✅** — `server/src/domain/` founded: Card, Pipeline(+Stage/Step), Run,
+  Project own `fromWire`/`toWire()` and local queries; the fold swaps
+  immutable instances; the blocking rule is a single definition.
+- **R2 ✅** — the `Board` aggregate owns every cross-object rule (links,
+  pinned revisions, latest runs, done/blocked, default pipeline); dashboard,
+  assistant-tools, processor, runner, and the snapshot read it.
+- **R3 ✅** — transitions on the objects (Board/Pipeline/Thread/Planning/
+  Proposal) returning their events or a typed `CommandRejection`; the
+  processor is dispatch + publish.
+- **R4 ✅** — `actions.ts` owns the action-envelope translation over the
+  domain objects' lenient parses (`Card.fromAction` & co, `wire/read.ts`);
+  http.ts is a pure router; both orchestrators share `ReservedIndexes`.
+- **R5 ✅** — `domain/markdown.ts` + `KnowledgeNote`/`Workflow` own the file
+  domains' text repr (parse, serialize, scored match) with round-trip tests;
+  the stores are pure I/O.
+- **R6 ✅** — absorbed into R2 (the consumers already shape views through the
+  aggregate).
+
+Frontend slices F1–F5 remain.
+
+## Decisions
+
 Frontend:
 
 1. Objects own their own state and representation logic.
