@@ -82,7 +82,7 @@ describe('the mcp json-rpc surface', () => {
     expect(result.isError).toBe(false);
   });
 
-  it('create_tickets_normalizes_the_type_alias_and_defaults_the_card_type', async () => {
+  it('create_tickets_defaults_the_card_type_and_ignores_unknown_fields', async () => {
     const { caller, commands } = scriptedCaller([{ ok: true }]);
     await handleMessage(
       {
@@ -93,8 +93,10 @@ describe('the mcp json-rpc surface', () => {
           name: 'create_tickets',
           arguments: {
             tickets: [
-              { title: 'a', type: 'docs', description: 'd' },
+              { title: 'a', cardType: 'docs', description: 'd' },
               { title: 'b', cardType: 'design' },
+              // The schema's field is `cardType`; an unknown `type` is ignored.
+              { title: 'c', type: 'design' },
             ],
           },
         },
@@ -108,6 +110,7 @@ describe('the mcp json-rpc surface', () => {
       tickets: [
         { title: 'a', cardType: 'docs', description: 'd', blockedBy: [] },
         { title: 'b', cardType: 'design', description: '', blockedBy: [] },
+        { title: 'c', cardType: 'coding', description: '', blockedBy: [] },
       ],
     });
   });

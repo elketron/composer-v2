@@ -46,7 +46,7 @@ export async function userMessage(
     }
     let message: ChatMessage;
     try {
-      message = Planning.of(found.session).userMessage(text);
+      message = Planning.of(found.session).userMessage(text, nowIso);
     } catch (error) {
       return toRejection(error);
     }

@@ -49,7 +49,7 @@ export class PipelineRunner {
     for (const task of this.tasks.values()) {
       task.stopped = true;
       task.abort.abort();
-      task.child?.kill('SIGKILL');
+      task.child?.cancel();
       task.resolveGate?.('cancelled');
     }
     // The tasks stay in the map: each drive removes its own task in its

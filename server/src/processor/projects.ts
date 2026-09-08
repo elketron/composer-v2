@@ -1,9 +1,9 @@
 // The project commands: creation (with directory linking), directory
 // updates, activation, archive, and restore. Archive refuses while a run
-// is active; archive/restore are idempotent.
+// is active; archive/restore are idempotent. Directory resolution is the
+// injected canonical resolver (filesystem/directory.ts); the duplicate-link
+// policy stays here.
 
-import { statSync } from 'node:fs';
-import { isAbsolute, join, normalize } from 'node:path';
 import { nowIso } from '../wire/envelope.js';
 import type { CommandOutcome } from '../wire/commands.js';
 import type { Project } from '../wire/models.js';
@@ -23,7 +23,7 @@ export async function createProject(p: Processor, name: string, directory?: stri
     ) {
       return rejected('invalidCommand', `Project '${trimmed}' already exists`);
     }
-    const resolved = resolveDirectory(directory);
+    const resolved = p.resolveDirectory(directory);
     if (directory !== undefined && directory.trim() !== '' && resolved === null) {
       return rejected('invalidCommand', 'Project directory must exist');
     }
@@ -64,7 +64,7 @@ export async function setProjectDirectory(
     if (!project) {
       return rejected('unknownProject', `Unknown project ${commandProjectId}`);
     }
-    const resolved = resolveDirectory(directory);
+    const resolved = p.resolveDirectory(directory);
     if (resolved === null) {
       return rejected('invalidCommand', 'Project directory must exist');
     }
@@ -154,18 +154,7 @@ export async function restoreProject(
    */
 
 
-/** Resolves a directory-ish string to an existing absolute path, else null. */
-function resolveDirectory(value: string | undefined): string | null {
-  if (value === undefined || value.trim() === '') return null;
-  const path = isAbsolute(value) ? value : join(process.cwd(), value);
-  const normalized = normalize(path).replace(/[/\\]+$/, '');
-  try {
-    return statSync(normalized).isDirectory() ? normalized : null;
-  } catch {
-    return null;
-  }
-}
-
+/** Two canonical directory strings that name the same path. */
 function sameDirectory(left: string | undefined, right: string): boolean {
   if (left === undefined) return false;
   return trimEndingSeparator(left) === trimEndingSeparator(right);

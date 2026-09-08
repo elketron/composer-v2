@@ -42,6 +42,8 @@ export interface PlanningOptions {
   mcpScriptPath?: string;
   /** The settings provider — the model override rides each turn's spec. */
   getModel?: () => Promise<{ model?: string }> | { model?: string };
+  /** Ships the agent definitions into the project (defaults to `ensureAgentFiles`). */
+  provision?: (directory: string) => void;
 }
 
 /** The turn id: a session is keyed by (project, session) — ids repeat per project. */
@@ -80,7 +82,7 @@ export class PlanningOrchestrator {
         const directory = this.bus.state.projects.get(projectId)?.directory;
         if (directory === undefined) return;
         try {
-          ensureAgentFiles(directory);
+          (this.options.provision ?? ensureAgentFiles)(directory);
         } catch (error) {
           console.error(`planner: could not ship agent files to ${directory}:`, error);
         }

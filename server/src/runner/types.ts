@@ -2,8 +2,6 @@
 // run's coordination state, the gate decision, and the agent outcome
 // report (S36).
 
-import type { ChildProcess } from 'node:child_process';
-
 export interface RunnerOptions {
   /** Composer's HTTP base (the MCP tools' callback target). */
   serverUrl?: string;
@@ -15,6 +13,8 @@ export interface RunnerOptions {
   agentTimeoutMs?: number;
   /** The settings provider — the model override rides each agent step's spec. */
   getModel?: () => Promise<{ model?: string }> | { model?: string };
+  /** Ships the worker agent definitions into the project (defaults to `ensureAgentFiles`). */
+  provision?: (directory: string) => void;
 }
 
 export interface GateDecision {
@@ -29,6 +29,11 @@ export interface OutcomeReport {
   note?: string;
 }
 
+/** An opaque handle to the command step's live child, with cancel only. */
+export interface CommandHandle {
+  cancel(): void;
+}
+
 /** One live run: the drive task's coordination state. */
 export interface RunTask {
   projectId: string;
@@ -36,7 +41,7 @@ export interface RunTask {
   cardId: string;
   pipelineId: string;
   stopped: boolean;
-  child: ChildProcess | null;
+  child: CommandHandle | null;
   abort: AbortController;
   resolveGate: ((decision: GateDecision | 'cancelled') => void) | null;
   /** The agent's reported outcome for the current step, if one landed. */

@@ -24,7 +24,7 @@ export async function runCommandStep(
   }
   return await new Promise((resolve) => {
     const child = spawn('/bin/sh', ['-c', step.command ?? ''], { cwd: directory });
-    task.child = child;
+    task.child = { cancel: () => child.kill('SIGKILL') };
     let output = '';
     // Live output rides ephemeral `commandOutput` events (live-only, like
     // agent deltas) — capped so a chatty build can't flood the stream.

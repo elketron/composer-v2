@@ -34,7 +34,7 @@ export async function runAgentStep(
   }
   // The shipped agent the step names; ship it if absent.
   try {
-    ensureAgentFiles(directory);
+    (options.provision ?? ensureAgentFiles)(directory);
   } catch (error) {
     return { ok: false, error: `could not ship agent files: ${String(error)}` };
   }

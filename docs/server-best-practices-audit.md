@@ -261,6 +261,8 @@ The transports differ, but both reproduce incremental text calculation, tool-cal
 
 ### SRV-017: MCP schemas and runtime argument decoders are parallel contracts
 
+**Status:** Resolved 2026-09-08. Tightened the decoders to their published schemas: the planner's `create_tickets` no longer accepts the undocumented `type` alias (schema field `cardType` only), the worker's `workflow_search` rejects a missing/empty query (schema `required: ['query']`), and the assistant's `knowledge_save` no longer forwards the schema-absent `path` form (the desktop's path edits ride the `/action` route, not the MCP tool). The planner alias test was updated to pin the tightened behavior.
+
 **Severity:** Medium
 
 **References:**
@@ -342,6 +344,8 @@ Both use the same NUL/control-byte heuristic over an 8 KiB sample.
 
 ### SRV-022: Domain transitions read clock and entropy directly
 
+**Status:** Resolved 2026-09-08. Added `Clock`/`IdGenerator` ports (`domain/ports.ts`); `Thread`'s archive/restore/message/resend transitions and `Planning.userMessage` now take the clock (and id generator) as parameters — the application layer passes `nowIso`/`randomUUID`, so the transitions are pure.
+
 **Severity:** Medium
 
 **References:**
@@ -355,6 +359,8 @@ Domain transitions call `randomUUID()` and `nowIso()`. Identical state and comma
 **Remediation:** Generate IDs and timestamps in the application layer through `Clock` and `IdGenerator` ports and pass them into pure transitions.
 
 ### SRV-023: Turn orchestration performs hidden synchronous agent provisioning
+
+**Status:** Resolved 2026-09-08. `PlanningOptions`/`AssistantOptions`/`RunnerOptions` each gain a `provision` port; the planner, assistant, and worker step call it (defaulting to `ensureAgentFiles`/`ensureAssistantWorkspace`) instead of reaching the filesystem shipping directly.
 
 **Severity:** Medium
 
@@ -371,6 +377,8 @@ Scheduling paths directly create directories and agent files. Failure policy dif
 
 ### SRV-024: Node child-process handles leak into runner policy
 
+**Status:** Resolved 2026-09-08. `RunTask.child` is now the opaque `CommandHandle { cancel() }` (the concrete `ChildProcess` stays inside the command step), and the lifecycle coordinators call `cancel()` instead of `kill('SIGKILL')`.
+
 **Severity:** Medium
 
 **References:**
@@ -385,6 +393,8 @@ Scheduling paths directly create directories and agent files. Failure policy dif
 **Remediation:** Keep the child process inside a `CommandExecutor`; expose an opaque handle with `cancel()` and result/output behavior.
 
 ### SRV-025: Project command validation depends on cwd and synchronous filesystem state
+
+**Status:** Resolved 2026-09-08. Added `filesystem/directory.ts` `makeDirectoryResolver` (canonical `realpathSync`, explicit base) injected into the `Processor` as `resolveDirectory`; the project commands use it, keeping the duplicate-link policy in the handler.
 
 **Severity:** Medium
 

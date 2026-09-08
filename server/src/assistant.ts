@@ -36,6 +36,8 @@ export interface AssistantOptions {
   workspaceDir?: string;
   /** The settings provider — the model override rides each turn's spec. */
   getModel?: () => Promise<ComposerSettings> | ComposerSettings;
+  /** Ships the assistant's agent definition (defaults to `ensureAssistantWorkspace`). */
+  provision?: (directory: string) => void;
 }
 
 /** The per-agent model for a turn's spec (override, else the default). */
@@ -83,7 +85,7 @@ export class AssistantOrchestrator {
       provision: () => {
         if (this.options.workspaceDir === undefined) return;
         try {
-          ensureAssistantWorkspace(this.options.workspaceDir);
+          (this.options.provision ?? ensureAssistantWorkspace)(this.options.workspaceDir);
         } catch (error) {
           console.error('assistant: could not ship the agent definition:', error);
         }

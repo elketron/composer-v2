@@ -51,7 +51,6 @@ export function registerAssistantMcpRoutes(app: Hono, deps: HttpDeps): void {
       }
       const outcome = await processor.execute(undefined, {
         type: 'requestKnowledgeSave',
-        ...(typeof args['path'] === 'string' && args['path'] !== '' ? { path: args['path'] } : {}),
         ...(typeof args['title'] === 'string' ? { title: args['title'] } : {}),
         ...(Array.isArray(args['tags'])
           ? { tags: args['tags'].filter((tag): tag is string => typeof tag === 'string') }

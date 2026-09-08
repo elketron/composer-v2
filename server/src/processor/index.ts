@@ -32,6 +32,7 @@ import { threadCommands } from './threads.js';
 import { workflowCommands } from './workflows.js';
 import { WorkflowRecordings } from './recordings.js';
 import type { FileRepositories } from './ports.js';
+import { makeDirectoryResolver, type DirectoryResolver } from '../filesystem/directory.js';
 import type { KnowledgeStore } from '../knowledge.js';
 
 /** Every registered command type → its handler. */
@@ -56,12 +57,15 @@ export class Processor {
   readonly files: FileRepositories;
   /** The open workflow recordings (S34), keyed by `<projectId>/<sessionId>`. */
   readonly recordings: WorkflowRecordings;
+  /** Canonicalizes a directory string (the project commands link it). */
+  readonly resolveDirectory: DirectoryResolver;
 
   constructor(
     bus: Bus,
     knowledge?: KnowledgeStore,
     files?: FileRepositories,
     recordings?: WorkflowRecordings,
+    resolveDirectory?: DirectoryResolver,
   ) {
     this.bus = bus;
     this.knowledge = knowledge;
@@ -70,6 +74,7 @@ export class Processor {
       workflows: { save: saveWorkflow, remove: deleteWorkflow },
     };
     this.recordings = recordings ?? new WorkflowRecordings();
+    this.resolveDirectory = resolveDirectory ?? makeDirectoryResolver(process.cwd());
   }
 
   /**

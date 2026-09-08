@@ -4,8 +4,8 @@
 
 import type { Card as CardJson, ChatMessage, PlanningSession } from '../wire/models.js';
 import type { TicketEmission } from '../wire/commands.js';
-import { nowIso } from '../wire/envelope.js';
 import { CommandRejection } from './rejection.js';
+import type { Clock } from './ports.js';
 
 export class Planning {
   private constructor(private readonly session: PlanningSession) {}
@@ -22,7 +22,7 @@ export class Planning {
   }
 
   /** Appends a user message (v1 `user_message`); drafting sessions only. */
-  userMessage(text: string): ChatMessage {
+  userMessage(text: string, clock: Clock): ChatMessage {
     this.requireDrafting('its transcript is closed');
     if (text.trim() === '') {
       throw new CommandRejection('invalidCommand', 'Message text is required');
@@ -31,7 +31,7 @@ export class Planning {
       index: this.nextMessageIndex(),
       role: 'user',
       text,
-      at: nowIso(),
+      at: clock(),
     };
   }
 

@@ -190,6 +190,9 @@ export async function executeWorkerTool(
   }
   if (tool === 'workflow_search') {
     const query = typeof args['query'] === 'string' ? args['query'] : '';
+    if (query.trim() === '') {
+      return { ok: false, error: 'a workflow search needs a query' };
+    }
     return {
       ok: true,
       results: searchWorkflows(project.directory, query).map((result) => ({

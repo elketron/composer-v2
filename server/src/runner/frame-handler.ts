@@ -56,7 +56,7 @@ export async function handleFrame(
       // until drive's finally so drain() still observes its unwind.
       task.stopped = true;
       task.abort.abort();
-      task.child?.kill('SIGKILL');
+      task.child?.cancel();
       task.resolveGate?.('cancelled');
       return;
     }

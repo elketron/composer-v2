@@ -35,7 +35,7 @@ export async function archiveAssistantThread(p: Processor, threadId: string): Pr
     if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    return transition(p.bus, undefined, () => Thread.of(found).archiveEvents());
+    return transition(p.bus, undefined, () => Thread.of(found).archiveEvents(nowIso));
   }
 
 
@@ -44,7 +44,7 @@ export async function restoreAssistantThread(p: Processor, threadId: string): Pr
     if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    return transition(p.bus, undefined, () => Thread.of(found).restoreEvents());
+    return transition(p.bus, undefined, () => Thread.of(found).restoreEvents(nowIso));
   }
 
   /**
@@ -86,7 +86,7 @@ export async function assistantMessage(p: Processor, threadId: string, text: str
     if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    return transition(p.bus, undefined, () => Thread.of(found).messageEvents(text));
+    return transition(p.bus, undefined, () => Thread.of(found).messageEvents(text, nowIso, randomUUID));
   }
 
   /**
@@ -114,7 +114,7 @@ export async function resendAssistantMessage(
     if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    return transition(p.bus, undefined, () => Thread.of(found).resendEvents(messageId, text));
+    return transition(p.bus, undefined, () => Thread.of(found).resendEvents(messageId, text, nowIso, randomUUID));
   }
 
   /**

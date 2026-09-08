@@ -39,8 +39,8 @@ export async function editDocument(
 
 /**
  * `create_tickets` — emits the planner's tickets as validated cards and
- * closes the session. Accepts `type` as an alias for `cardType` and
- * defaults a missing card type to `coding` (v1's normalize_ticket).
+ * closes the session. Defaults a missing card type to `coding` (v1's
+ * normalize_ticket); only the schema's `cardType` field is accepted.
  */
 export async function createTickets(
   caller: ComposerCaller,
@@ -68,7 +68,7 @@ function normalizeTickets(proposed: unknown): TicketEmission[] | null {
     const record = entry as Record<string, unknown>;
     const title = record['title'];
     if (typeof title !== 'string') return null;
-    const rawType = record['cardType'] ?? record['type'] ?? 'coding';
+    const rawType = record['cardType'] ?? 'coding';
     if (rawType !== 'coding' && rawType !== 'design' && rawType !== 'docs') return null;
     tickets.push({
       ...(typeof record['key'] === 'string' ? { key: record['key'] } : {}),

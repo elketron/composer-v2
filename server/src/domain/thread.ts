@@ -4,10 +4,9 @@
 // user message's index — answering commands with the canonical events to
 // publish or a typed rejection.
 
-import { randomUUID } from 'node:crypto';
 import type { AssistantThread, ChatMessage, Project } from '../wire/models.js';
-import { nowIso } from '../wire/envelope.js';
 import { CommandRejection, event, type PendingEvent } from './rejection.js';
+import type { Clock, IdGenerator } from './ports.js';
 
 export class Thread {
   private constructor(private readonly thread: AssistantThread) {}
@@ -31,15 +30,15 @@ export class Thread {
   }
 
   /** Archive is idempotent: an already-archived thread publishes nothing. */
-  archiveEvents(): PendingEvent[] {
+  archiveEvents(clock: Clock): PendingEvent[] {
     if (this.thread.archivedAt !== undefined) return [];
-    return [event('assistantThreadArchived', { threadId: this.thread.id, archivedAt: nowIso() })];
+    return [event('assistantThreadArchived', { threadId: this.thread.id, archivedAt: clock() })];
   }
 
   /** Restore is idempotent: an open thread publishes nothing. */
-  restoreEvents(): PendingEvent[] {
+  restoreEvents(clock: Clock): PendingEvent[] {
     if (this.thread.archivedAt === undefined) return [];
-    return [event('assistantThreadRestored', { threadId: this.thread.id, restoredAt: nowIso() })];
+    return [event('assistantThreadRestored', { threadId: this.thread.id, restoredAt: clock() })];
   }
 
   /**
@@ -66,17 +65,17 @@ export class Thread {
   }
 
   /** Appends a user message; the index lands past every folded message. */
-  messageEvents(text: string): PendingEvent[] {
+  messageEvents(text: string, clock: Clock, ids: IdGenerator): PendingEvent[] {
     this.requireOpen();
     if (text.trim() === '') {
       throw new CommandRejection('invalidCommand', 'Message text is required');
     }
     const message: ChatMessage = {
-      id: randomUUID(),
+      id: ids(),
       index: this.nextMessageIndex(),
       role: 'user',
       text,
-      at: nowIso(),
+      at: clock(),
     };
     return [event('assistantUserMessage', { threadId: this.thread.id, message })];
   }
@@ -86,7 +85,7 @@ export class Thread {
    * original (same `parentId`, fresh id and index) — the prior branch
    * stays intact.
    */
-  resendEvents(messageId: string, text: string): PendingEvent[] {
+  resendEvents(messageId: string, text: string, clock: Clock, ids: IdGenerator): PendingEvent[] {
     this.requireOpen();
     if (text.trim() === '') {
       throw new CommandRejection('invalidCommand', 'Message text is required');
@@ -102,12 +101,12 @@ export class Thread {
       throw new CommandRejection('invalidCommand', 'Only a user message can be edited and resent');
     }
     const message: ChatMessage = {
-      id: randomUUID(),
+      id: ids(),
       ...(original.parentId !== undefined ? { parentId: original.parentId } : {}),
       index: this.nextMessageIndex(),
       role: 'user',
       text,
-      at: nowIso(),
+      at: clock(),
     };
     return [event('assistantResent', { threadId: this.thread.id, message })];
   }
