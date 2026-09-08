@@ -12,6 +12,8 @@ export interface HttpDeps {
   processor: Processor;
   store?: EventStore;
   knowledge?: KnowledgeStore;
+  /** The model catalog (the settings route lists it); defaults to the OpenCode adapter. */
+  models?: () => Promise<string[]>;
 }
 
 export type RouteRegistrar = (app: Hono, deps: HttpDeps) => void;

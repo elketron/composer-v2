@@ -230,6 +230,8 @@ Title/key/dependency validation, ID remapping, default pipeline assignment, card
 
 ### SRV-015: Knowledge and workflow repositories duplicate a flat Markdown library
 
+**Status:** Resolved 2026-09-08. The text helpers were already shared in `domain/markdown.ts`; the write/delete protocol (root provisioning, containment resolution, O_NOFOLLOW write, remove, and the containment-vs-StorageError classification with the SRV-003 rollback) is now `filesystem/contained-file.ts`, used by both stores. The domain-specific listing/search/parse stays per store (their shapes differ).
+
 **Severity:** Medium
 
 **References:**
@@ -393,6 +395,8 @@ Project policy resolves relative paths against ambient `process.cwd()` and calls
 **Remediation:** Inject a directory resolver/probe with an explicit base directory and canonical path result. Keep duplicate-link policy in the command handler.
 
 ### SRV-026: Model parsing and process execution share one concrete dependency
+
+**Status:** Resolved 2026-09-08. `HttpDeps` gains a `models` catalog; the settings route reads it (defaulting to the OpenCode adapter `listOpenCodeModels`), which boot injects. The pure `parseOpenCodeModels` stays separate from the process adapter.
 
 **Severity:** Low
 

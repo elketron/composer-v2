@@ -13,6 +13,7 @@ import { EventStore } from './store/index.js';
 import { Processor } from './processor/index.js';
 import { router } from './http/index.js';
 import { KnowledgeStore } from './knowledge.js';
+import { listOpenCodeModels } from './models.js';
 import { PlanningOrchestrator, resumeStrandedTurns } from './planning.js';
 import { AssistantOrchestrator, resumeStrandedThreads } from './assistant.js';
 import { PipelineRunner } from './runner/index.js';
@@ -81,7 +82,7 @@ export async function boot(config: Config): Promise<{
     ? (config.addr.split(':') as [string, string])
     : ['127.0.0.1', config.addr];
   const server = serve({
-    fetch: router(bus, processor, store, knowledge).fetch,
+    fetch: router(bus, processor, store, knowledge, listOpenCodeModels).fetch,
     hostname,
     port: Number(port),
   });

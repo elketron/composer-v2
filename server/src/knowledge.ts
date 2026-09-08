@@ -8,14 +8,14 @@
 // representation (frontmatter parse, serialization, scored match) lives
 // on the domain object (domain/knowledge.ts); this store is the I/O.
 
-import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { KnowledgeEntryInfo } from './wire/models.js';
 import { invalidLibraryPath, slugify, uniqueSlugPath } from './domain/markdown.js';
 import { KnowledgeNote } from './domain/knowledge.js';
-import { captureFile, type MutationResult } from './filesystem/commit.js';
-import { isWithinRoot, writeTextFileContained } from './filesystem/containment.js';
-import { isContainmentFailure, StorageError } from './filesystem/errors.js';
+import type { MutationResult } from './filesystem/commit.js';
+import { isWithinRoot } from './filesystem/containment.js';
+import { containedTarget, deleteContainedFile, ensureLibraryRoot, writeContainedFile } from './filesystem/contained-file.js';
 
 const KNOWLEDGE_DIRNAME = 'knowledge';
 /** 256 KiB per note; knowledge is notes, not file dumps. */
@@ -107,16 +107,9 @@ export class KnowledgeStore {
     } catch {
       return { ok: false, error: `not a readable note: ${path}` };
     }
-    const rollback = captureFile(target);
-    try {
-      rmSync(target);
-    } catch (error) {
-      if (isContainmentFailure(error)) {
-        return { ok: false, error: `note '${path}' could not be deleted` };
-      }
-      throw new StorageError(`note '${path}' could not be deleted`);
-    }
-    return { ok: true, value: null, rollback };
+    const deleted = deleteContainedFile(target, 'note', path);
+    if (!deleted.ok) return deleted;
+    return { ok: true, value: null, rollback: deleted.rollback };
   }
 
   /**
@@ -156,37 +149,18 @@ export class KnowledgeStore {
   }
 
   private writeFile(path: string, content: string): MutationResult<KnowledgeEntryInfo> {
-    let rootReal: string;
-    try {
-      mkdirSync(this.root, { recursive: true });
-      rootReal = realpathSync(this.root);
-    } catch (error) {
-      if (isContainmentFailure(error)) {
-        return { ok: false, error: `note '${path}' could not be written` };
-      }
-      throw new StorageError(`note '${path}' could not be written`);
-    }
-    // The library is flat: resolve the filename against the real root so
-    // a planted symlink cannot turn a write into an escape.
-    const target = resolve(rootReal, path);
-    if (!isWithinRoot(rootReal, target) || target === rootReal) {
-      return { ok: false, error: 'path escapes the knowledge library' };
-    }
-    const rollback = captureFile(target);
-    try {
-      writeTextFileContained(rootReal, target, content);
-    } catch (error) {
-      if (isContainmentFailure(error)) {
-        return { ok: false, error: `note '${path}' could not be written` };
-      }
-      throw new StorageError(`note '${path}' could not be written`);
-    }
-    const stat = statSync(target);
+    const root = ensureLibraryRoot(this.root, 'note', path);
+    if (!root.ok) return root;
+    const target = containedTarget(root.real, path, 'knowledge library');
+    if (!target.ok) return target;
+    const written = writeContainedFile(root.real, target.target, content, 'note', path);
+    if (!written.ok) return written;
+    const stat = statSync(target.target);
     const note = KnowledgeNote.fromFile(path, content);
     return {
       ok: true,
       value: { ...note.info(), size: stat.size, updatedAt: stat.mtime.toISOString() },
-      rollback,
+      rollback: written.rollback,
     };
   }
 

@@ -10,13 +10,14 @@ import { listOpenCodeModels } from '../models.js';
 
 export function registerSettingsRoutes(app: Hono, deps: HttpDeps): void {
   const { store } = deps;
+  const catalog = deps.models ?? listOpenCodeModels;
   app.get('/settings', async (context) => {
     const settings = store ? await store.getSettings() : {};
     return context.json(settings);
   });
   app.get('/models', async (context) => {
     try {
-      return context.json({ models: await listOpenCodeModels() });
+      return context.json({ models: await catalog() });
     } catch (error) {
       return context.json(
         {

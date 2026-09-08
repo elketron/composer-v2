@@ -30,11 +30,12 @@ export function router(
   processor: Processor,
   store?: EventStore,
   knowledge?: KnowledgeStore,
+  models?: () => Promise<string[]>,
 ): Hono {
   const app = new Hono();
   app.use('*', cors());
 
-  const deps: HttpDeps = { bus, processor, store, knowledge };
+  const deps: HttpDeps = { bus, processor, store, knowledge, models };
   registerHealth(app);
   registerDashboardRoutes(app, deps);
   registerDocsRoutes(app, deps);
