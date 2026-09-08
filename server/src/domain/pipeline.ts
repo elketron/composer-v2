@@ -11,6 +11,10 @@ import type {
   PipelineStepKind,
   StageOutcomeRule,
 } from '../wire/models.js';
+import { CommandRejection } from './rejection.js';
+
+/** Ceiling on steps one pipeline may carry (v1 M3). */
+export const MAX_PIPELINE_STEPS = 64;
 
 /**
  * One stage of a pipeline's forward path. Field assignment order matches
@@ -177,5 +181,171 @@ export class Pipeline {
       if (stage?.kanbanVisible) return stage.id;
     }
     return undefined;
+  }
+
+  // ---- Draft validation (the save command's transition) ----
+
+  /**
+   * Validates a user-authored draft in full — name, stages, the forward
+   * path, the terminal stage — and returns the normalized stages the save
+   * publishes. Same order, codes, and messages the processor emitted when
+   * the validation lived there.
+   */
+  static validateDraft(draft: PipelineJson): PipelineStageJson[] {
+    const rejection = (message: string): CommandRejection => new CommandRejection('invalidCommand', message);
+    if (draft.name.trim() === '') {
+      throw rejection('Pipeline name is required');
+    }
+    if (draft.stages.length === 0) {
+      throw rejection('A pipeline needs at least one stage');
+    }
+    if (draft.steps.length === 0) {
+      throw rejection('A pipeline needs at least one step');
+    }
+    if (draft.steps.length > MAX_PIPELINE_STEPS) {
+      throw rejection(`Pipeline has ${draft.steps.length} steps; the limit is ${MAX_PIPELINE_STEPS}`);
+    }
+
+    const stageOrder = new Map<string, number>();
+    for (const [index, stage] of draft.stages.entries()) {
+      const id = stage.id.trim();
+      if (id === '') {
+        throw rejection(`Stage ${index + 1} needs an id`);
+      }
+      if (stageOrder.has(id)) {
+        throw rejection(`Stage id '${id}' appears twice`);
+      }
+      stageOrder.set(id, index);
+    }
+    const stages = Pipeline.normalizeStages(draft.stages);
+    for (const [index, stage] of stages.entries()) {
+      const label = `Stage ${index + 1}`;
+      if (stage.label.trim() === '') {
+        throw rejection(`${label} needs a label`);
+      }
+      for (const outcome of stage.outcomes ?? []) {
+        if (outcome.outcome.trim() === '') {
+          throw rejection(`${label}: an outcome needs a name`);
+        }
+        if (outcome.toStageId !== undefined) {
+          const target = stageOrder.get(outcome.toStageId);
+          if (target === undefined) {
+            throw rejection(`${label}: outcome '${outcome.outcome}' names an unknown stage`);
+          }
+          if (target >= index) {
+            throw rejection(`${label}: outcome '${outcome.outcome}' may only return to an earlier stage`);
+          }
+        }
+      }
+      const outcomeNames = (stage.outcomes ?? []).map((rule) => rule.outcome.trim());
+      if (new Set(outcomeNames).size !== outcomeNames.length) {
+        throw rejection(`${label}: outcome names must be unique`);
+      }
+      if (stage.errorReturnToStageId !== undefined) {
+        const target = stageOrder.get(stage.errorReturnToStageId);
+        if (target === undefined) {
+          throw rejection(`${label}: the error condition names an unknown stage`);
+        }
+        if (target >= index) {
+          throw rejection(`${label}: the error condition may only return to an earlier stage`);
+        }
+      }
+    }
+
+    const seenSteps = new Set<string>();
+    let lastOrder = -1;
+    for (const [index, step] of draft.steps.entries()) {
+      const label = `Step ${index + 1}`;
+      const id = step.id.trim();
+      if (id === '') {
+        throw rejection(`${label} needs an id`);
+      }
+      if (seenSteps.has(id)) {
+        throw rejection(`Step id '${id}' appears twice`);
+      }
+      seenSteps.add(id);
+      const stageIndex = stageOrder.get(step.stageId);
+      if (stageIndex === undefined) {
+        throw rejection(`${label}: stage '${step.stageId}' is not a stage of this pipeline`);
+      }
+      if (stageIndex < lastOrder) {
+        throw rejection(`${label}: the normal path must not move to an earlier stage`);
+      }
+      lastOrder = stageIndex;
+      const message = Pipeline.missingStepField(step);
+      if (message !== null) {
+        throw rejection(`${label}: ${message}`);
+      }
+    }
+
+    const terminals = stages.filter((stage) => stage.terminal === true);
+    if (terminals.length !== 1) {
+      throw rejection('A pipeline needs exactly one terminal (Done) stage');
+    }
+    if (stages[stages.length - 1]?.terminal !== true) {
+      throw rejection('The terminal stage must be the last stage');
+    }
+    if (stages[0]?.kanbanVisible !== true) {
+      throw rejection('The first stage must be Kanban-visible');
+    }
+    return stages;
+  }
+
+  /** Fills the stage defaults the lenient wire allows (visibility, trimmed labels). */
+  static normalizeStages(stages: readonly PipelineStageJson[]): PipelineStageJson[] {
+    return stages.map((stage) => ({
+      id: stage.id.trim(),
+      label: stage.label.trim(),
+      kanbanVisible: stage.kanbanVisible !== false,
+      ...(stage.terminal === true ? { terminal: true } : {}),
+      ...(stage.outcomes !== undefined && stage.outcomes.length > 0
+        ? {
+            outcomes: stage.outcomes.map((rule) => ({
+              outcome: rule.outcome.trim(),
+              ...(rule.toStageId !== undefined && rule.toStageId.trim() !== ''
+                ? { toStageId: rule.toStageId.trim() }
+                : {}),
+            })),
+          }
+        : {}),
+      ...(stage.requiresOutcome === true ? { requiresOutcome: true } : {}),
+      ...(stage.errorReturnToStageId !== undefined && stage.errorReturnToStageId.trim() !== ''
+        ? { errorReturnToStageId: stage.errorReturnToStageId.trim() }
+        : {}),
+    }));
+  }
+
+  /** Whether a save would change the definition (name, stages, or steps). */
+  static sameDefinition(current: Pipeline, next: PipelineJson, name: string): boolean {
+    return (
+      current.name === name &&
+      JSON.stringify(Pipeline.normalizeStages(current.stages.map((stage) => stage.toWire()))) ===
+        JSON.stringify(Pipeline.normalizeStages(next.stages)) &&
+      JSON.stringify(current.steps.map((step) => step.toWire())) === JSON.stringify(next.steps)
+    );
+  }
+
+  /** The per-kind fields a pipeline step must carry (v1 M3). */
+  static missingStepField(step: PipelineStepJson): string | null {
+    switch (step.kind) {
+      case 'agent':
+        if (step.agentKind === undefined || step.agentKind === '') {
+          return 'an agent step needs an agentKind';
+        }
+        if (step.instructions === undefined || step.instructions.trim() === '') {
+          return 'an agent step needs instructions';
+        }
+        return null;
+      case 'command':
+        if (step.command === undefined || step.command.trim() === '') {
+          return 'a command step needs a command';
+        }
+        return null;
+      case 'human':
+        if (step.description === undefined || step.description.trim() === '') {
+          return 'a human step needs a description (the approval prompt)';
+        }
+        return null;
+    }
   }
 }

@@ -8,8 +8,7 @@ import { statSync } from 'node:fs';
 import { isAbsolute, join, normalize } from 'node:path';
 import type { Bus } from './bus.js';
 import type { Command, CommandOutcome, Rejection, TicketEmission } from './wire/commands.js';
-import { nowIso } from './wire/envelope.js';
-import {
+import { nowIso } from './wire/envelope.js';import {
   type AssistantThread,
   type Assignee,
   type Card as CardJson,
@@ -17,8 +16,7 @@ import {
   type CardType,
   type ChatMessage,
   type Pipeline as PipelineJson,
-  type PipelineStage,
-  type PipelineStep,
+  type PipelineStage as PipelineStageJson,
   type PlanningSession,
   type ProposalItem,
   type ProposalOutcome,
@@ -27,17 +25,18 @@ import {
   type WorkflowStep,
 } from './wire/models.js';
 import { Card, isBlockedIn } from './domain/card.js';
-import type { Pipeline } from './domain/pipeline.js';
+import { Pipeline } from './domain/pipeline.js';
 import type { Run } from './domain/run.js';
 import { defaultPipeline } from './pipelines.js';
 import { Board } from './domain/board.js';
+import { Planning } from './domain/planning.js';
+import { Proposal, validateProposalItem } from './domain/proposal.js';
+import { CommandRejection, type PendingEvent } from './domain/rejection.js';
+import { Thread } from './domain/thread.js';
 import { PIPELINE_AGENT_KINDS } from './agents.js';
 import { deleteDoc as deleteDocFile, renameDoc as renameDocFile, saveDoc as saveDocFile } from './docs.js';
 import { deleteWorkflow as deleteWorkflowFile, saveWorkflow, MAX_WORKFLOW_STEPS } from './workflows.js';
 import type { KnowledgeStore } from './knowledge.js';
-
-/** Ceiling on steps one pipeline may carry (v1 M3). */
-const MAX_PIPELINE_STEPS = 64;
 
 export class Processor {
   private bus: Bus;
@@ -349,6 +348,35 @@ export class Processor {
     return ok();
   }
 
+  /** The board a scoped card command answers from, or the unknown-card rejection. */
+  private cardBoard(scope: string | undefined, cardId: string): Board | CommandOutcome {
+    const board = this.boardOf(scope ?? '');
+    if (scope === undefined || board === undefined) {
+      return rejected('unknownCard', `Unknown card ${cardId}`);
+    }
+    return board;
+  }
+
+  /**
+   * Runs a card transition: the board answers with its events (or a typed
+   * rejection), and the events publish in order under the write lock.
+   */
+  private async transition(
+    projectId: string | undefined,
+    answer: () => PendingEvent[],
+  ): Promise<CommandOutcome> {
+    let events: PendingEvent[];
+    try {
+      events = answer();
+    } catch (error) {
+      return toRejection(error);
+    }
+    for (const pending of events) {
+      await this.bus.publish(projectId, pending.name, pending.body);
+    }
+    return ok();
+  }
+
   /**
    * Moves a card to a stage of its assigned pipeline: the move needs no
    * active run (the pipeline owns transitions while one runs), the target
@@ -363,39 +391,9 @@ export class Processor {
     override: boolean,
     comment: string | undefined,
   ): Promise<CommandOutcome> {
-    const found = this.findCard(scope, cardId);
-    if (!found) {
-      return rejected('unknownCard', `Unknown card ${cardId}`);
-    }
-    const { projectId, card } = found;
-    const pipeline = this.pipelinesOf(projectId).get(card.pipelineId);
-    if (pipeline === undefined) {
-      return rejected('unknownPipeline', `Card ${cardId} has no assigned pipeline`);
-    }
-    if (pipeline.stageById(toStageId) === undefined) {
-      return rejected('unknownStage', `Stage '${toStageId}' is not a stage of pipeline ${pipeline.id}`);
-    }
-    if (this.activeRunOf(projectId, cardId) !== null) {
-      return rejected('runActive', `Card ${cardId} has an active pipeline run`);
-    }
-    if (card.stageId === toStageId) {
-      return ok();
-    }
-    const before = this.cardsOf(projectId);
-    if (!override && isBlockedIn(before, card, this.pipelinesOf(projectId))) {
-      return rejected('blocked', `Card ${cardId} has unsatisfied blockers`);
-    }
-
-    await this.bus.publish(projectId, 'cardStageMoved', {
-      cardId: card.id,
-      pipelineId: pipeline.id,
-      fromStageId: card.stageId,
-      toStageId,
-      ...(comment !== undefined ? { comment } : {}),
-    });
-    const moved = card.with({ stageId: toStageId });
-    await this.appendDependencyTransitions(projectId, before, moved);
-    return ok();
+    const board = this.cardBoard(scope, cardId);
+    if (isOutcome(board)) return board;
+    return this.transition(scope!, () => board.moveCard(cardId, toStageId, override, comment));
   }
 
   /**
@@ -408,50 +406,16 @@ export class Processor {
     cardId: string,
     pipelineId: string,
   ): Promise<CommandOutcome> {
-    const found = this.findCard(scope, cardId);
-    if (!found) {
-      return rejected('unknownCard', `Unknown card ${cardId}`);
-    }
-    const { projectId, card } = found;
-    const pipeline = this.pipelinesOf(projectId).get(pipelineId);
-    if (pipeline === undefined) {
-      return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
-    }
-    if (this.activeRunOf(projectId, cardId) !== null) {
-      return rejected('runActive', `Card ${cardId} has an active pipeline run`);
-    }
-    await this.bus.publish(projectId, 'cardPipelineAssigned', {
-      cardId: card.id,
-      pipelineId: pipeline.id,
-      stageId: pipeline.firstStage().id,
-    });
-    return ok();
+    const board = this.cardBoard(scope, cardId);
+    if (isOutcome(board)) return board;
+    return this.transition(scope!, () => board.assignPipeline(cardId, pipelineId));
   }
 
   /** Reopens a completed card: it returns to its pipeline's first stage. */
   private async reopenCard(scope: string | undefined, cardId: string): Promise<CommandOutcome> {
-    const found = this.findCard(scope, cardId);
-    if (!found) {
-      return rejected('unknownCard', `Unknown card ${cardId}`);
-    }
-    const { projectId, card } = found;
-    const pipeline = this.pipelinesOf(projectId).get(card.pipelineId);
-    if (pipeline === undefined) {
-      return rejected('unknownPipeline', `Card ${cardId} has no assigned pipeline`);
-    }
-    if (!pipeline.isTerminalStage(card.stageId)) {
-      return rejected('invalidCommand', `Card ${cardId} is not completed`);
-    }
-    if (this.activeRunOf(projectId, cardId) !== null) {
-      return rejected('runActive', `Card ${cardId} has an active pipeline run`);
-    }
-    await this.bus.publish(projectId, 'cardStageMoved', {
-      cardId: card.id,
-      pipelineId: pipeline.id,
-      fromStageId: card.stageId,
-      toStageId: pipeline.firstStage().id,
-    });
-    return ok();
+    const board = this.cardBoard(scope, cardId);
+    if (isOutcome(board)) return board;
+    return this.transition(scope!, () => board.reopenCard(cardId));
   }
 
   /** Changes a card's type (v1 `change_card_type`); the fold resets step states. */
@@ -460,19 +424,9 @@ export class Processor {
     cardId: string,
     toType: CardType,
   ): Promise<CommandOutcome> {
-    const found = this.findCard(scope, cardId);
-    if (!found) {
-      return rejected('unknownCard', `Unknown card ${cardId}`);
-    }
-    if (found.card.type === toType) {
-      return ok();
-    }
-    await this.bus.publish(found.projectId, 'cardTypeChanged', {
-      cardId: found.card.id,
-      from: found.card.type,
-      to: toType,
-    });
-    return ok();
+    const board = this.cardBoard(scope, cardId);
+    if (isOutcome(board)) return board;
+    return this.transition(scope!, () => board.changeType(cardId, toType));
   }
 
   /** Assigns (or unassigns) a card; the assignee rides the event (v1 §3.4). */
@@ -481,25 +435,16 @@ export class Processor {
     cardId: string,
     assignee: Assignee | undefined,
   ): Promise<CommandOutcome> {
-    const found = this.findCard(scope, cardId);
-    if (!found) {
-      return rejected('unknownCard', `Unknown card ${cardId}`);
-    }
-    await this.bus.publish(found.projectId, 'cardAssigned', {
-      cardId: found.card.id,
-      ...(assignee ? { assignee } : {}),
-    });
-    return ok();
+    const board = this.cardBoard(scope, cardId);
+    if (isOutcome(board)) return board;
+    return this.transition(scope!, () => board.assign(cardId, assignee));
   }
 
   /** Archives a card (v1 `archive_card`); dependents re-derive blocking. */
   private async archiveCard(scope: string | undefined, cardId: string): Promise<CommandOutcome> {
-    const found = this.findCard(scope, cardId);
-    if (!found) {
-      return rejected('unknownCard', `Unknown card ${cardId}`);
-    }
-    await this.bus.publish(found.projectId, 'cardArchived', { cardId: found.card.id });
-    return ok();
+    const board = this.cardBoard(scope, cardId);
+    if (isOutcome(board)) return board;
+    return this.transition(scope!, () => board.archive(cardId));
   }
 
   /** Updates one step's execution state; the card must be idle. */
@@ -509,23 +454,9 @@ export class Processor {
     stepId: string,
     status: SubStateStatus,
   ): Promise<CommandOutcome> {
-    const found = this.findCard(scope, cardId);
-    if (!found) {
-      return rejected('unknownCard', `Unknown card ${cardId}`);
-    }
-    const pipeline = this.pipelinesOf(found.projectId).get(found.card.pipelineId);
-    if (pipeline === undefined || pipeline.stepById(stepId) === undefined) {
-      return rejected('unknownStage', `Step '${stepId}' is not a step of the card's pipeline`);
-    }
-    if (this.activeRunOf(found.projectId, cardId) !== null) {
-      return rejected('runActive', `Card ${cardId} has an active pipeline run`);
-    }
-    await this.bus.publish(found.projectId, 'cardStepStateUpdated', {
-      cardId: found.card.id,
-      stepId,
-      status,
-    });
-    return ok();
+    const board = this.cardBoard(scope, cardId);
+    if (isOutcome(board)) return board;
+    return this.transition(scope!, () => board.updateStepState(cardId, stepId, status));
   }
 
   /** Toggles a stage's automation (v1 `toggle_automation`), per pipeline stage. */
@@ -538,15 +469,11 @@ export class Processor {
     if (scope === undefined || !this.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
-    const pipeline = this.pipelinesOf(scope).get(pipelineId);
-    if (pipeline === undefined) {
-      return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
+    const board = this.boardOf(scope);
+    if (board === undefined) {
+      return rejected('unknownProject', `Unknown project ${scope}`);
     }
-    if (pipeline.stageById(stageId) === undefined) {
-      return rejected('unknownStage', `Stage '${stageId}' is not a stage of pipeline ${pipelineId}`);
-    }
-    await this.bus.publish(scope, 'automationToggled', { pipelineId, stageId, on });
-    return ok();
+    return this.transition(scope, () => board.toggleAutomation(pipelineId, stageId, on));
   }
 
   // ---- Planning ----
@@ -578,18 +505,12 @@ export class Processor {
     if (!found) {
       return rejected('unknownSession', `Unknown session ${sessionId}`);
     }
-    if (found.session.status !== 'drafting') {
-      return rejected('invalidCommand', `Session ${sessionId} is done; its transcript is closed`);
+    let message: ChatMessage;
+    try {
+      message = Planning.of(found.session).userMessage(text);
+    } catch (error) {
+      return toRejection(error);
     }
-    if (text.trim() === '') {
-      return rejected('invalidCommand', 'Message text is required');
-    }
-    const message: ChatMessage = {
-      index: nextMessageIndex(found.session),
-      role: 'user',
-      text,
-      at: nowIso(),
-    };
     await this.bus.publish(found.projectId, 'userMessageReceived', {
       sessionId: found.session.id,
       message,
@@ -607,8 +528,10 @@ export class Processor {
     if (!found) {
       return rejected('unknownSession', `Unknown session ${sessionId}`);
     }
-    if (found.session.status !== 'drafting') {
-      return rejected('invalidCommand', `Session ${sessionId} is done; its plan document is closed`);
+    try {
+      Planning.of(found.session).requireDocumentOpen();
+    } catch (error) {
+      return toRejection(error);
     }
     await this.bus.publish(found.projectId, 'planDocumentUpdated', {
       sessionId: found.session.id,
@@ -632,38 +555,12 @@ export class Processor {
     if (!found) {
       return rejected('unknownSession', `Unknown session ${sessionId}`);
     }
-    if (found.session.status !== 'drafting') {
-      return rejected('invalidCommand', `Session ${sessionId} is done; its tickets were already emitted`);
-    }
-    if (tickets.length === 0) {
-      return rejected('invalidCommand', 'No tickets provided');
-    }
-    for (const ticket of tickets) {
-      if (ticket.title.trim() === '') {
-        return rejected('invalidCommand', 'Every ticket needs a title');
-      }
-      if (ticket.key !== undefined && ticket.key.trim() === '') {
-        return rejected('invalidCommand', `Ticket '${ticket.title}': key must not be empty`);
-      }
-    }
-    const keys = tickets.filter((ticket) => ticket.key !== undefined).map((ticket) => ticket.key);
-    if (new Set(keys).size !== keys.length) {
-      return rejected('invalidCommand', 'Ticket keys must be unique');
-    }
-    const keySet = new Set(keys);
     const cards = this.cardsOf(found.projectId);
-    for (const ticket of tickets) {
-      for (const dep of ticket.blockedBy) {
-        if (dep === ticket.key) {
-          return rejected('invalidCommand', `Ticket '${ticket.title}': a ticket cannot block itself`);
-        }
-        if (!keySet.has(dep) && !cards.has(dep)) {
-          return rejected(
-            'invalidCommand',
-            `Ticket '${ticket.title}': blockedBy entry ${dep} is neither an existing card nor a ticket key`,
-          );
-        }
-      }
+    try {
+      Planning.of(found.session).requireDrafting('its tickets were already emitted');
+      Planning.validateTickets(tickets, cards);
+    } catch (error) {
+      return toRejection(error);
     }
 
     const first = Number(allocateId(cards.keys(), 'T').slice(2));
@@ -714,15 +611,6 @@ export class Processor {
 
   // ---- Card helpers ----
 
-  private findCard(
-    scope: string | undefined,
-    cardId: string,
-  ): { projectId: string; card: Card } | null {
-    if (scope === undefined) return null;
-    const card = this.cardsOf(scope).get(cardId);
-    return card ? { projectId: scope, card } : null;
-  }
-
   /**
    * The project's cards as a scratch map: a shallow copy of the fold's map —
    * the immutable instances are shared, and in-flight batches (a card the
@@ -750,33 +638,6 @@ export class Processor {
     return session ? { projectId: scope, session } : null;
   }
 
-  /**
-   * After a move, re-evaluates the moved card's dependents and emits
-   * dependencyStateChanged for those whose blocked-ness flipped (v1
-   * `append_dependency_transitions`).
-   */
-  private async appendDependencyTransitions(
-    projectId: string,
-    before: Map<string, Card>,
-    moved: Card,
-  ): Promise<void> {
-    const after = new Map(before);
-    after.set(moved.id, moved);
-    const pipelines = this.pipelinesOf(projectId);
-    for (const dependent of before.values()) {
-      if (!dependent.blockedBy.includes(moved.id)) continue;
-      const was = isBlockedIn(before, dependent, pipelines);
-      const now = isBlockedIn(after, dependent, pipelines);
-      if (was !== now) {
-        await this.bus.publish(projectId, 'dependencyStateChanged', {
-          cardId: dependent.id,
-          blocked: now,
-          blockedBy: dependent.blockedBy,
-        });
-      }
-    }
-  }
-
   // ---- Pipelines ----
 
   /**
@@ -790,110 +651,16 @@ export class Processor {
     if (scope === undefined || !this.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
-    const rejection = (message: string): CommandOutcome => rejected('invalidCommand', message);
+    let stages: PipelineStageJson[];
+    try {
+      stages = Pipeline.validateDraft(pipeline);
+    } catch (error) {
+      return toRejection(error);
+    }
     const name = pipeline.name.trim();
-    if (name === '') {
-      return rejection('Pipeline name is required');
-    }
-    if (pipeline.stages.length === 0) {
-      return rejection('A pipeline needs at least one stage');
-    }
-    if (pipeline.steps.length === 0) {
-      return rejection('A pipeline needs at least one step');
-    }
-    if (pipeline.steps.length > MAX_PIPELINE_STEPS) {
-      return rejection(`Pipeline has ${pipeline.steps.length} steps; the limit is ${MAX_PIPELINE_STEPS}`);
-    }
-
-    const seenStages = new Set<string>();
-    const stageOrder = new Map<string, number>();
-    for (const [index, stage] of pipeline.stages.entries()) {
-      const id = stage.id.trim();
-      if (id === '') {
-        return rejection(`Stage ${index + 1} needs an id`);
-      }
-      if (seenStages.has(id)) {
-        return rejection(`Stage id '${id}' appears twice`);
-      }
-      seenStages.add(id);
-      stageOrder.set(id, index);
-    }
-    for (const [index, stage] of normalizeStages(pipeline.stages).entries()) {
-      const label = `Stage ${index + 1}`;
-      if (stage.label.trim() === '') {
-        return rejection(`${label} needs a label`);
-      }
-      for (const outcome of stage.outcomes ?? []) {
-        if (outcome.outcome.trim() === '') {
-          return rejection(`${label}: an outcome needs a name`);
-        }
-        if (outcome.toStageId !== undefined) {
-          const target = stageOrder.get(outcome.toStageId);
-          if (target === undefined) {
-            return rejection(`${label}: outcome '${outcome.outcome}' names an unknown stage`);
-          }
-          if (target >= index) {
-            return rejection(
-              `${label}: outcome '${outcome.outcome}' may only return to an earlier stage`,
-            );
-          }
-        }
-      }
-      const outcomeNames = (stage.outcomes ?? []).map((rule) => rule.outcome.trim());
-      if (new Set(outcomeNames).size !== outcomeNames.length) {
-        return rejection(`${label}: outcome names must be unique`);
-      }
-      if (stage.errorReturnToStageId !== undefined) {
-        const target = stageOrder.get(stage.errorReturnToStageId);
-        if (target === undefined) {
-          return rejection(`${label}: the error condition names an unknown stage`);
-        }
-        if (target >= index) {
-          return rejection(`${label}: the error condition may only return to an earlier stage`);
-        }
-      }
-    }
-
-    const seenSteps = new Set<string>();
-    let lastOrder = -1;
-    for (const [index, step] of pipeline.steps.entries()) {
-      const label = `Step ${index + 1}`;
-      const id = step.id.trim();
-      if (id === '') {
-        return rejection(`${label} needs an id`);
-      }
-      if (seenSteps.has(id)) {
-        return rejection(`Step id '${id}' appears twice`);
-      }
-      seenSteps.add(id);
-      const stageIndex = stageOrder.get(step.stageId);
-      if (stageIndex === undefined) {
-        return rejection(`${label}: stage '${step.stageId}' is not a stage of this pipeline`);
-      }
-      if (stageIndex < lastOrder) {
-        return rejection(`${label}: the normal path must not move to an earlier stage`);
-      }
-      lastOrder = stageIndex;
-      const message = validatePipelineStep(step);
-      if (message !== null) {
-        return rejection(`${label}: ${message}`);
-      }
-    }
-
-    const terminals = pipeline.stages.filter((stage) => stage.terminal === true);
-    if (terminals.length !== 1) {
-      return rejection('A pipeline needs exactly one terminal (Done) stage');
-    }
-    if (pipeline.stages[pipeline.stages.length - 1]?.terminal !== true) {
-      return rejection('The terminal stage must be the last stage');
-    }
-    if (pipeline.stages[0]?.kanbanVisible !== true) {
-      return rejection('The first stage must be Kanban-visible');
-    }
-
     const id = pipeline.id.trim() !== '' ? pipeline.id.trim() : allocateId(this.pipelinesOf(scope).keys(), 'PL');
     const current = this.pipelinesOf(scope).get(id);
-    if (current !== undefined && sameDefinition(current, pipeline, name)) {
+    if (current !== undefined && Pipeline.sameDefinition(current, pipeline, name)) {
       return ok();
     }
     const saved: PipelineJson = {
@@ -901,7 +668,7 @@ export class Processor {
       projectId: scope,
       name,
       revision: (current?.revision ?? 0) + 1,
-      stages: normalizeStages(pipeline.stages),
+      stages,
       steps: pipeline.steps,
       updatedAt: nowIso(),
     };
@@ -938,22 +705,23 @@ export class Processor {
     if (scope === undefined || !this.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
-    const card = this.cardsOf(scope).get(cardId);
-    if (card === undefined) {
+    const board = this.boardOf(scope);
+    if (board === undefined) {
       return rejected('unknownCard', `Unknown card ${cardId}`);
     }
-    const pipeline = this.pipelinesOf(scope).get(card.pipelineId);
-    if (pipeline === undefined) {
-      return rejected('unknownPipeline', `Card ${cardId} has no assigned pipeline`);
+    let pipeline: Pipeline;
+    try {
+      ({ pipeline } = board.requireRunnableCard(cardId));
+    } catch (error) {
+      return toRejection(error);
     }
     if (this.bus.state.projects.get(scope)?.directory === undefined) {
       return rejected('invalidCommand', `Project ${scope} has no directory set`);
     }
-    if (this.activeRunOf(scope, cardId) !== null) {
-      return rejected('runActive', `Card ${cardId} already has a running pipeline`);
-    }
-    if (pipeline.isTerminalStage(card.stageId)) {
-      return rejected('invalidCommand', `Card ${cardId} is completed — reopen it to run again`);
+    try {
+      board.requireStartable(cardId, pipeline);
+    } catch (error) {
+      return toRejection(error);
     }
     const kind = pipeline.steps.find((step) => step.kind === 'agent')?.agentKind;
     if (kind !== undefined && !PIPELINE_AGENT_KINDS.includes(kind)) {
@@ -975,14 +743,20 @@ export class Processor {
    * runner's kill trigger.
    */
   private async stopPipeline(scope: string | undefined, cardId: string): Promise<CommandOutcome> {
-    const run = this.activeRunOf(scope, cardId);
-    if (run === null) {
-      return rejected(
-        this.findCard(scope, cardId) === null ? 'unknownCard' : 'pipelineNotRunning',
-        this.findCard(scope, cardId) === null ? `Unknown card ${cardId}` : `Card ${cardId} has no running pipeline`,
-      );
+    if (scope === undefined) {
+      return this.unknownCardOrNotRunning(scope, cardId);
     }
-    await this.bus.publish(scope!, 'pipelineRunEnded', {
+    const board = this.boardOf(scope);
+    if (board === undefined) {
+      return rejected('unknownCard', `Unknown card ${cardId}`);
+    }
+    let run: Run;
+    try {
+      run = board.requireStoppable(cardId);
+    } catch (error) {
+      return toRejection(error);
+    }
+    await this.bus.publish(scope, 'pipelineRunEnded', {
       runId: run.id,
       cardId,
       pipelineId: run.pipelineId,
@@ -1002,24 +776,35 @@ export class Processor {
     approved: boolean,
     comment: string | undefined,
   ): Promise<CommandOutcome> {
-    const run = this.activeRunOf(scope, cardId);
-    if (run === null) {
-      const unknown = this.findCard(scope, cardId) === null;
-      return rejected(
-        unknown ? 'unknownCard' : 'pipelineNotRunning',
-        unknown ? `Unknown card ${cardId}` : `Card ${cardId} has no running pipeline`,
-      );
+    if (scope === undefined) {
+      return this.unknownCardOrNotRunning(scope, cardId);
     }
-    if (run.status !== 'waiting') {
-      return rejected('pipelineNotRunning', `Card ${cardId}'s pipeline is not waiting at a gate`);
+    const board = this.boardOf(scope);
+    if (board === undefined) {
+      return rejected('unknownCard', `Unknown card ${cardId}`);
     }
-    await this.bus.publish(scope!, 'pipelineGateResponded', {
+    let run: Run;
+    try {
+      run = board.requireGateWait(cardId);
+    } catch (error) {
+      return toRejection(error);
+    }
+    await this.bus.publish(scope, 'pipelineGateResponded', {
       runId: run.id,
       cardId,
       approved,
       ...(comment !== undefined ? { comment } : {}),
     });
     return ok();
+  }
+
+  /** The stop/gate rejection when the scope names no card at all. */
+  private unknownCardOrNotRunning(scope: string | undefined, cardId: string): CommandOutcome {
+    const unknown = this.boardOf(scope ?? '')?.card(cardId) === undefined;
+    return rejected(
+      unknown ? 'unknownCard' : 'pipelineNotRunning',
+      unknown ? `Unknown card ${cardId}` : `Card ${cardId} has no running pipeline`,
+    );
   }
 
   /**
@@ -1038,59 +823,32 @@ export class Processor {
     if (scope === undefined || !this.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
-    const project = this.bus.state.byProject.get(scope);
-    const session = project?.agentSessions.get(sessionId);
-    if (session === undefined) {
+    const board = this.boardOf(scope);
+    const session = this.bus.state.byProject.get(scope)?.agentSessions.get(sessionId);
+    if (board === undefined || session === undefined) {
       return rejected('unknownSession', `Unknown session ${sessionId}`);
     }
     if (session.status !== 'running') {
       return rejected('invalidCommand', `Session ${sessionId} is not running`);
     }
     const cardId = session.cardId;
-    const run = this.activeRunOf(scope, cardId);
-    if (run === null) {
-      return rejected('pipelineNotRunning', `Card ${cardId} has no running pipeline`);
+    let run: Run;
+    try {
+      run = board.requireAgentStepRun(cardId);
+      const { rule, name } = board.outcomeRule(run, outcome);
+      const trimmedNote = note?.trim();
+      await this.bus.publish(scope, 'pipelineOutcomeReported', {
+        runId: run.id,
+        cardId,
+        pipelineId: run.pipelineId,
+        stepId: run.stepId!,
+        outcome: name,
+        ...(trimmedNote !== undefined && trimmedNote !== '' ? { note: trimmedNote } : {}),
+      });
+      return { ok: true, transition: board.outcomeTransitionText(run, rule) };
+    } catch (error) {
+      return toRejection(error);
     }
-    if (run.stepKind !== 'agent' || run.stepId === undefined || run.stageId === undefined) {
-      return rejected('invalidCommand', `Card ${cardId}'s pipeline is not at an agent step`);
-    }
-    // The run's pinned revision owns the stage semantics — an edited
-    // pipeline never changes a live run's rules.
-    const pipeline = this.boardOf(scope)?.pipelineOfRun(run);
-    const stage = pipeline?.stages.find((candidate) => candidate.id === run.stageId);
-    if (pipeline === undefined || stage === undefined) {
-      return rejected('unknownPipeline', `Run ${run.id} names an unknown pipeline or stage`);
-    }
-    const rules = stage.outcomes ?? [];
-    const name = outcome.trim();
-    const rule = rules.find((candidate) => candidate.outcome === name);
-    if (name === '' || rule === undefined) {
-      const names = rules.map((candidate) => `'${candidate.outcome}'`).join(', ');
-      return rejected(
-        'invalidCommand',
-        names === ''
-          ? `Stage ${stage.label} defines no outcomes to report`
-          : `outcome '${name}' is not one of stage ${stage.label}'s outcomes: ${names}`,
-      );
-    }
-    const trimmedNote = note?.trim();
-    await this.bus.publish(scope, 'pipelineOutcomeReported', {
-      runId: run.id,
-      cardId,
-      pipelineId: run.pipelineId,
-      stepId: run.stepId,
-      outcome: name,
-      ...(trimmedNote !== undefined && trimmedNote !== '' ? { note: trimmedNote } : {}),
-    });
-    return {
-      ok: true,
-      transition:
-        rule.toStageId !== undefined
-          ? `the card returns to ${
-              pipeline.stages.find((candidate) => candidate.id === rule.toStageId)?.label ?? rule.toStageId
-            } when the step finishes`
-          : 'the pipeline proceeds when the step finishes',
-    };
   }
 
   // ---- Pipeline helpers ----
@@ -1138,29 +896,19 @@ export class Processor {
   }
 
   private async archiveAssistantThread(threadId: string): Promise<CommandOutcome> {
-    const thread = this.assistantThreads().get(threadId);
-    if (!thread) {
+    const found = this.findThread(threadId);
+    if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    if (thread.archivedAt !== undefined) return ok();
-    await this.bus.publish(undefined, 'assistantThreadArchived', {
-      threadId,
-      archivedAt: nowIso(),
-    });
-    return ok();
+    return this.transition(undefined, () => Thread.of(found).archiveEvents());
   }
 
   private async restoreAssistantThread(threadId: string): Promise<CommandOutcome> {
-    const thread = this.assistantThreads().get(threadId);
-    if (!thread) {
+    const found = this.findThread(threadId);
+    if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    if (thread.archivedAt === undefined) return ok();
-    await this.bus.publish(undefined, 'assistantThreadRestored', {
-      threadId,
-      restoredAt: nowIso(),
-    });
-    return ok();
+    return this.transition(undefined, () => Thread.of(found).restoreEvents());
   }
 
   /**
@@ -1173,55 +921,22 @@ export class Processor {
     threadId: string,
     projectIds: string[],
   ): Promise<CommandOutcome> {
-    const thread = this.assistantThreads().get(threadId);
-    if (!thread) {
+    const found = this.findThread(threadId);
+    if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    if (thread.archivedAt !== undefined) {
-      return rejected('invalidCommand', `Thread ${threadId} is archived`);
-    }
-    const seen = new Set<string>();
-    const scoped: string[] = [];
-    for (const projectId of projectIds) {
-      if (projectId === '' || seen.has(projectId)) continue;
-      const project = this.bus.state.projects.get(projectId);
-      if (!project) {
-        return rejected('unknownProject', `Unknown project ${projectId}`);
-      }
-      if (project.archivedAt !== undefined) {
-        return rejected('invalidCommand', `Project ${projectId} is archived`);
-      }
-      seen.add(projectId);
-      scoped.push(projectId);
-    }
-    await this.bus.publish(undefined, 'assistantThreadScopeChanged', {
-      threadId,
-      projectIds: scoped,
-    });
-    return ok();
+    return this.transition(undefined, () =>
+      Thread.of(found).scopeEvents(projectIds, (id) => this.bus.state.projects.get(id)),
+    );
   }
 
   /** Appends a user message to the thread (archived threads are closed). */
   private async assistantMessage(threadId: string, text: string): Promise<CommandOutcome> {
-    const thread = this.assistantThreads().get(threadId);
-    if (!thread) {
+    const found = this.findThread(threadId);
+    if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    if (thread.archivedAt !== undefined) {
-      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
-    }
-    if (text.trim() === '') {
-      return rejected('invalidCommand', 'Message text is required');
-    }
-    const message: ChatMessage = {
-      id: randomUUID(),
-      index: nextAssistantMessageIndex(thread),
-      role: 'user',
-      text,
-      at: nowIso(),
-    };
-    await this.bus.publish(undefined, 'assistantUserMessage', { threadId, message });
-    return ok();
+    return this.transition(undefined, () => Thread.of(found).messageEvents(text));
   }
 
   /**
@@ -1235,36 +950,11 @@ export class Processor {
     messageId: string,
     text: string,
   ): Promise<CommandOutcome> {
-    const thread = this.assistantThreads().get(threadId);
-    if (!thread) {
+    const found = this.findThread(threadId);
+    if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    if (thread.archivedAt !== undefined) {
-      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
-    }
-    if (text.trim() === '') {
-      return rejected('invalidCommand', 'Message text is required');
-    }
-    const original = thread.messages.find((message) => message.id === messageId);
-    if (original === undefined) {
-      return rejected('unknownSession', `Unknown message ${messageId}`);
-    }
-    if (thread.status === 'running') {
-      return rejected('invalidCommand', `Thread ${threadId} is already running`);
-    }
-    if (original.role !== 'user') {
-      return rejected('invalidCommand', 'Only a user message can be edited and resent');
-    }
-    const message: ChatMessage = {
-      id: randomUUID(),
-      ...(original.parentId !== undefined ? { parentId: original.parentId } : {}),
-      index: nextAssistantMessageIndex(thread),
-      role: 'user',
-      text,
-      at: nowIso(),
-    };
-    await this.bus.publish(undefined, 'assistantResent', { threadId, message });
-    return ok();
+    return this.transition(undefined, () => Thread.of(found).resendEvents(messageId, text));
   }
 
   // ---- Work proposals (Phase 8) ----
@@ -1277,30 +967,31 @@ export class Processor {
    * the tool result can teach the model before the user ever sees it.
    */
   private async draftProposal(threadId: string, items: ProposalItem[]): Promise<CommandOutcome> {
-    const thread = this.assistantThreads().get(threadId);
-    if (!thread) {
+    const found = this.findThread(threadId);
+    if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    if (thread.archivedAt !== undefined) {
-      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
-    }
-    if (items.length === 0) {
-      return rejected('invalidCommand', 'No proposal items provided');
-    }
-    if (items.length > Processor.MAX_PROPOSAL_ITEMS) {
-      return rejected('invalidCommand', `A proposal carries at most ${Processor.MAX_PROPOSAL_ITEMS} items`);
-    }
-    const keys = items.filter((item) => item.key !== undefined).map((item) => item.key!);
-    if (new Set(keys).size !== keys.length) {
-      return rejected('invalidCommand', 'Proposal item keys must be unique');
-    }
-    const keySet = new Set(keys);
-    for (const item of items) {
-      if (!thread.projectIds.includes(item.projectId)) {
-        return rejected('invalidCommand', `project ${item.projectId} is not in thread ${threadId}'s scope`);
+    const thread = Thread.of(found);
+    try {
+      thread.requireOpen();
+      if (items.length === 0) {
+        throw new CommandRejection('invalidCommand', 'No proposal items provided');
       }
-      const error = validateProposalItem(item, this.cardsOf(item.projectId), keySet);
-      if (error !== null) return rejected('invalidCommand', error);
+      if (items.length > Processor.MAX_PROPOSAL_ITEMS) {
+        throw new CommandRejection('invalidCommand', `A proposal carries at most ${Processor.MAX_PROPOSAL_ITEMS} items`);
+      }
+      const keys = items.filter((item) => item.key !== undefined).map((item) => item.key!);
+      if (new Set(keys).size !== keys.length) {
+        throw new CommandRejection('invalidCommand', 'Proposal item keys must be unique');
+      }
+      const keySet = new Set(keys);
+      for (const item of items) {
+        thread.requireInScope(item.projectId);
+        const error = validateProposalItem(item, this.cardsOf(item.projectId), keySet);
+        if (error !== null) throw new CommandRejection('invalidCommand', error);
+      }
+    } catch (error) {
+      return toRejection(error);
     }
 
     const proposal: CardProposal = {
@@ -1329,8 +1020,10 @@ export class Processor {
     if (!proposal) {
       return rejected('unknownProposal', `Unknown proposal ${proposalId}`);
     }
-    if (proposal.status !== 'drafted') {
-      return rejected('invalidCommand', `Proposal ${proposalId} was already ${proposal.status}`);
+    try {
+      Proposal.of(proposal).requireDrafted();
+    } catch (error) {
+      return toRejection(error);
     }
     const included = items.filter((item) => item.included);
     if (included.length === 0) {
@@ -1417,8 +1110,10 @@ export class Processor {
     if (!proposal) {
       return rejected('unknownProposal', `Unknown proposal ${proposalId}`);
     }
-    if (proposal.status !== 'drafted') {
-      return rejected('invalidCommand', `Proposal ${proposalId} was already ${proposal.status}`);
+    try {
+      Proposal.of(proposal).requireDrafted();
+    } catch (error) {
+      return toRejection(error);
     }
     await this.bus.publish(undefined, 'proposalDiscarded', { proposalId });
     return ok();
@@ -1646,15 +1341,11 @@ export class Processor {
    * orchestrator's kill trigger; the fold marks the thread `stopped`.
    */
   private async stopAssistantThread(threadId: string): Promise<CommandOutcome> {
-    const thread = this.assistantThreads().get(threadId);
-    if (!thread) {
+    const found = this.findThread(threadId);
+    if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    if (thread.status !== 'running') {
-      return rejected('invalidCommand', `Thread ${threadId} is not running`);
-    }
-    await this.bus.publish(undefined, 'assistantThreadStopped', { threadId });
-    return ok();
+    return this.transition(undefined, () => Thread.of(found).stopEvents());
   }
 
   /**
@@ -1662,39 +1353,24 @@ export class Processor {
    * alternate response — nothing in the transcript is rewritten.
    */
   private async retryAssistantThread(threadId: string): Promise<CommandOutcome> {
-    const thread = this.assistantThreads().get(threadId);
-    if (!thread) {
+    const found = this.findThread(threadId);
+    if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    if (thread.archivedAt !== undefined) {
-      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
-    }
-    if (thread.status === 'running') {
-      return rejected('invalidCommand', `Thread ${threadId} is already running`);
-    }
-    const lastUser = [...thread.messages].reverse().find((message) => message.role === 'user');
-    if (lastUser === undefined) {
-      return rejected('invalidCommand', `Thread ${threadId} has no user message to retry`);
-    }
-    await this.bus.publish(undefined, 'assistantRetryRequested', { threadId });
-    return ok();
+    return this.transition(undefined, () => Thread.of(found).retryEvents());
   }
 
   private async renameAssistantThread(threadId: string, name: string): Promise<CommandOutcome> {
-    const thread = this.assistantThreads().get(threadId);
-    if (!thread) {
+    const found = this.findThread(threadId);
+    if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    if (thread.archivedAt !== undefined) {
-      return rejected('invalidCommand', `Thread ${threadId} is archived; restore it first`);
-    }
-    const trimmed = name.trim();
-    if (trimmed === '') {
-      return rejected('invalidCommand', 'Thread name is required');
-    }
-    if (trimmed === thread.name) return ok();
-    await this.bus.publish(undefined, 'assistantThreadRenamed', { threadId, name: trimmed });
-    return ok();
+    return this.transition(undefined, () => Thread.of(found).renameEvents(name));
+  }
+
+  /** The named thread record, or null. */
+  private findThread(threadId: string): AssistantThread | null {
+    return this.assistantThreads().get(threadId) ?? null;
   }
 }
 
@@ -1706,106 +1382,19 @@ function rejected(code: Rejection['code'], message: string): CommandOutcome {
   return { ok: false, rejection: { code, message } };
 }
 
-/** Fills the stage defaults the lenient wire allows (visibility, trimmed labels). */
-function normalizeStages(stages: readonly PipelineStage[]): PipelineStage[] {
-  return stages.map((stage) => ({
-    id: stage.id.trim(),
-    label: stage.label.trim(),
-    kanbanVisible: stage.kanbanVisible !== false,
-    ...(stage.terminal === true ? { terminal: true } : {}),
-    ...(stage.outcomes !== undefined && stage.outcomes.length > 0
-      ? {
-          outcomes: stage.outcomes.map((rule) => ({
-            outcome: rule.outcome.trim(),
-            ...(rule.toStageId !== undefined && rule.toStageId.trim() !== ''
-              ? { toStageId: rule.toStageId.trim() }
-              : {}),
-          })),
-        }
-      : {}),
-    ...(stage.requiresOutcome === true ? { requiresOutcome: true } : {}),
-    ...(stage.errorReturnToStageId !== undefined && stage.errorReturnToStageId.trim() !== ''
-      ? { errorReturnToStageId: stage.errorReturnToStageId.trim() }
-      : {}),
-  }));
+/** A transition's typed rejection becomes the wire outcome unchanged. */
+function toRejection(error: unknown): CommandOutcome {
+  if (error instanceof CommandRejection) return rejected(error.code, error.message);
+  throw error;
 }
 
-/** Whether a save would change the definition (name, stages, or steps). */
-function sameDefinition(current: Pipeline, next: PipelineJson, name: string): boolean {
-  return (
-    current.name === name &&
-    JSON.stringify(normalizeStages(current.stages)) === JSON.stringify(normalizeStages(next.stages)) &&
-    JSON.stringify(current.steps) === JSON.stringify(next.steps)
-  );
+function isOutcome(value: Board | CommandOutcome): value is CommandOutcome {
+  return 'ok' in value;
 }
 
 /** A timestamp the client actually set (v1's DEFAULT_TIMESTAMP sentinel → absent here). */
 function isSet(timestamp: string): boolean {
   return timestamp !== '' && Date.parse(timestamp) > 0;
-}
-
-/** One past the highest message index (v1 `next_message_index`; starts at 1). */
-function nextMessageIndex(session: PlanningSession): number {
-  return session.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
-}
-
-/** One past the highest assistant message index. */
-function nextAssistantMessageIndex(thread: AssistantThread): number {
-  return thread.messages.reduce((max, message) => Math.max(max, message.index), 0) + 1;
-}
-
-/**
- * One proposal item's domain validation: shape, key self-reference, and
- * deps that must name an in-batch key or an existing card of the item's
- * target project (missing blockers don't block — unknown ones reject).
- */
-function validateProposalItem(
-  item: ProposalItem,
-  projectCards: Map<string, Card>,
-  keySet: Set<string>,
-): string | null {
-  if (item.title.trim() === '') {
-    return `Proposal item '${item.title || item.projectId}': a title is required`;
-  }
-  if (item.cardType !== 'coding' && item.cardType !== 'design' && item.cardType !== 'docs') {
-    return `Proposal item '${item.title}': card type must be coding, design, or docs`;
-  }
-  if (item.key !== undefined && item.key.trim() === '') {
-    return `Proposal item '${item.title}': key must not be empty`;
-  }
-  for (const dep of item.blockedBy) {
-    if (dep === item.key) {
-      return `Proposal item '${item.title}': a proposal item cannot block itself`;
-    }
-    if (!keySet.has(dep) && !projectCards.has(dep)) {
-      return `Proposal item '${item.title}': blockedBy entry ${dep} is neither an existing card nor a proposal key`;
-    }
-  }
-  return null;
-}
-
-/** The per-kind fields a pipeline step must carry (v1 M3). */
-function validatePipelineStep(step: PipelineStep): string | null {
-  switch (step.kind) {
-    case 'agent':
-      if (step.agentKind === undefined || step.agentKind === '') {
-        return 'an agent step needs an agentKind';
-      }
-      if (step.instructions === undefined || step.instructions.trim() === '') {
-        return 'an agent step needs instructions';
-      }
-      return null;
-    case 'command':
-      if (step.command === undefined || step.command.trim() === '') {
-        return 'a command step needs a command';
-      }
-      return null;
-    case 'human':
-      if (step.description === undefined || step.description.trim() === '') {
-        return 'a human step needs a description (the approval prompt)';
-      }
-      return null;
-  }
 }
 
 /** One past the highest numeric suffix in use ("P-3" → "P-4"). */
