@@ -1,6 +1,6 @@
 // Composer's MCP server (D8) — a stdio child process spawned by the agent
 // runtime (opencode) per its inline MCP config. It exposes the planner's
-// two domain tools and issues the same validated commands the desktop
+// ticket-emission tool and issues the same validated commands the desktop
 // would: every tool call POSTs to composer's `/mcp/command` route, which
 // runs the processor. Commits stay validated regardless of model behavior.
 //
@@ -8,12 +8,12 @@
 // process): COMPOSER_SERVER_URL, COMPOSER_PROJECT_ID, COMPOSER_SESSION_ID.
 // The wire is newline-delimited JSON-RPC (probed against opencode
 // 1.18.25); opencode prefixes tool names with the server name, so the
-// planner sees `composer_edit_document` / `composer_create_tickets`.
+// planner sees `composer_create_tickets`.
 
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { CommandOutcome } from '../wire/commands.js';
-import { createTickets, editDocument, PLANNER_MCP_TOOLS, type ComposerCaller } from '../agents/planner/index.js';
+import { createTickets, PLANNER_MCP_TOOLS, type ComposerCaller } from '../agents/planner/index.js';
 import { postJson } from './http-caller.js';
 import { toolContent, type JsonRpcMessage, type McpToolDefinition } from './protocol.js';
 import { handleMcpMessage } from './server.js';
@@ -30,7 +30,7 @@ const TOOLS: McpToolDefinition[] = PLANNER_MCP_TOOLS;
 export async function handleMessage(
   message: JsonRpcMessage,
   caller: ComposerCaller,
-  context: { projectId: string; sessionId: string },
+  context: { projectId: string; sessionId: string; planDocumentPath?: string },
 ): Promise<Record<string, unknown> | null> {
   return handleMcpMessage(message, TOOLS, (name, args) => callTool(name, args, caller, context));
 }
@@ -39,19 +39,23 @@ async function callTool(
   name: string,
   args: Record<string, unknown>,
   caller: ComposerCaller,
-  context: { projectId: string; sessionId: string },
+  context: { projectId: string; sessionId: string; planDocumentPath?: string },
 ): Promise<{ content: { type: string; text: string }[]; isError: boolean }> {
   let result: { committed: boolean; rejection?: string; cards?: number };
-  if (name === 'edit_document') {
-    const document = typeof args['document'] === 'string' ? args['document'] : null;
-    if (document === null) {
-      result = { committed: false, rejection: 'the document argument is required' };
-    } else {
-      const outcome = await editDocument(caller, context.projectId, context.sessionId, document);
-      result = outcome.ok ? { committed: true } : { committed: false, rejection: outcome.message };
+  if (name === 'create_tickets') {
+    const pipelineId = typeof args['pipelineId'] === 'string' ? args['pipelineId'] : '';
+    if (pipelineId === '' || context.planDocumentPath === undefined) {
+      result = { committed: false, rejection: 'pipelineId and the session plan document are required' };
+      return toolContent(result);
     }
-  } else if (name === 'create_tickets') {
-    const outcome = await createTickets(caller, context.projectId, context.sessionId);
+    let document: string;
+    try {
+      document = readFileSync(context.planDocumentPath, 'utf8');
+    } catch (error) {
+      result = { committed: false, rejection: `could not read the session plan document: ${String(error)}` };
+      return toolContent(result);
+    }
+    const outcome = await createTickets(caller, context.projectId, context.sessionId, pipelineId, document);
     result = outcome.ok ? { committed: true, cards: outcome.cards } : { committed: false, rejection: outcome.message };
   } else {
     result = { committed: false, rejection: `unknown tool ${name}` };
@@ -82,8 +86,9 @@ export function main(env: NodeJS.ProcessEnv = process.env): void {
   const serverUrl = env['COMPOSER_SERVER_URL'] ?? '';
   const projectId = env['COMPOSER_PROJECT_ID'] ?? '';
   const sessionId = env['COMPOSER_SESSION_ID'] ?? '';
+  const planDocumentPath = env['COMPOSER_PLAN_DOCUMENT_PATH'];
   const caller = httpCaller(serverUrl);
-  const context = { projectId, sessionId };
+  const context = { projectId, sessionId, ...(planDocumentPath !== undefined ? { planDocumentPath } : {}) };
   serveStdio((message) => handleMessage(message, caller, context));
 }
 

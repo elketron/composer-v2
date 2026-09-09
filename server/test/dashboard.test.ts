@@ -105,6 +105,7 @@ function projectState(): ProjectState {
       ['T-1', card('T-1', 'Running')],
       ['T-2', card('T-2', 'Approve me')],
       ['T-3', card('T-3', 'Fix me')],
+      ['T-4', card('T-4', 'Back for changes')],
     ]),
     automation: new Map(),
     planningSessions: new Map(),
@@ -116,6 +117,7 @@ function projectState(): ProjectState {
       ['R-1', run('R-1', 'T-1', 'running', '2026-09-06T01:00:00Z')],
       ['R-2', run('R-2', 'T-2', 'waiting', '2026-09-06T01:00:00Z')],
       ['R-3', run('R-3', 'T-3', 'failed', '2026-09-06T01:00:00Z', 'tests failed')],
+      ['R-4', run('R-4', 'T-4', 'returned', '2026-09-06T01:00:00Z')],
     ]),
     activeRuns: new Map([
       ['T-1', 'R-1'],

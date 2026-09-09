@@ -70,13 +70,23 @@ export class RunViewComponent {
         .find((session) => session.cardId === this.cardId())?.sessionId,
   );
 
+  /** The active/historical agent session the output pane reads. */
+  protected readonly session = computed(() => {
+    const id = this.sessionId();
+    if (id === undefined) return undefined;
+    return this.pipelines.agentSessions().find((session) => session.sessionId === id);
+  });
+
+  protected readonly sessionUsage = computed(() => this.session()?.usage);
+  protected readonly sessionFiles = computed(() => this.session()?.files ?? []);
+
   protected readonly transcript = computed<readonly RunTranscriptEntry[]>(() =>
     this.pipelines.transcriptFor(this.sessionId()),
   );
 
   protected readonly buildOutput = computed(() => this.pipelines.commandOutputFor(this.cardId()));
 
-  /** The card's assigned pipeline (its steps are the todo list). */
+  /** The card's assigned pipeline (its steps are the pipeline progress, not agent todos). */
   protected readonly runPipelineOf = computed(() => {
     const cardState = this.card();
     if (cardState === undefined) return undefined;
@@ -149,6 +159,19 @@ export class RunViewComponent {
     return text.length > 160 ? text.slice(0, 157) + '…' : text;
   }
 
+  /** Formats a dollar cost (a zero cost is real, not "missing"). */
+  protected costLabel(cost: number): string {
+    return `$${cost.toFixed(4)}`;
+  }
+
+  protected fileAdditions(): number {
+    return this.sessionFiles().reduce((total, file) => total + file.additions, 0);
+  }
+
+  protected fileDeletions(): number {
+    return this.sessionFiles().reduce((total, file) => total + file.deletions, 0);
+  }
+
   protected toolResult(entry: RunTranscriptEntry & { kind: 'tool' }): string {
     const content = entry.result?.content ?? '';
     const firstLine = content.split('\n').find((line) => line.trim() !== '') ?? '';
@@ -158,8 +181,9 @@ export class RunViewComponent {
   protected outcomeLabel(outcome: RunOutcome): string {
     switch (outcome.status) {
       case 'failed':
+        return `the run failed${outcome.error ? ' — ' + outcome.error : ''}`;
       case 'returned':
-        return `the run ${outcome.status}${outcome.error ? ' — ' + outcome.error : ''}`;
+        return `${outcome.outcome ?? 'changes needed'}${outcome.feedback ? ' — ' + outcome.feedback : ''}`;
       case 'cancelled':
         return 'the run was cancelled';
       default:

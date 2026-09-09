@@ -81,12 +81,23 @@ export async function setAssistantThreadScope(
 
   /** Appends a user message to the thread (archived threads are closed). */
 
-export async function assistantMessage(p: Processor, threadId: string, text: string): Promise<CommandOutcome> {
+export async function assistantMessage(
+    p: Processor,
+    threadId: string,
+    text: string,
+    parentId?: string,
+    projectIds?: string[],
+  ): Promise<CommandOutcome> {
     const found = findThread(p, threadId);
     if (!found) {
       return rejected('unknownThread', `Unknown thread ${threadId}`);
     }
-    return transition(p.bus, undefined, () => Thread.of(found).messageEvents(text, nowIso, randomUUID));
+    return transition(p.bus, undefined, () => [
+      ...(projectIds !== undefined
+        ? Thread.of(found).scopeEvents(projectIds, (id) => p.bus.state.projects.get(id))
+        : []),
+      ...Thread.of(found).messageEvents(text, nowIso, randomUUID, parentId),
+    ]);
   }
 
   /**
@@ -180,7 +191,8 @@ export const threadCommands: CommandMap = [
   command('requestAssistantThreadArchive', (p, _scope, cmd) => archiveAssistantThread(p, cmd.threadId)),
   command('requestAssistantThreadRestore', (p, _scope, cmd) => restoreAssistantThread(p, cmd.threadId)),
   command('requestAssistantThreadScope', (p, _scope, cmd) => setAssistantThreadScope(p, cmd.threadId, cmd.projectIds)),
-  command('requestAssistantMessage', (p, _scope, cmd) => assistantMessage(p, cmd.threadId, cmd.text)),
+  command('requestAssistantMessage', (p, _scope, cmd) =>
+    assistantMessage(p, cmd.threadId, cmd.text, cmd.parentId, cmd.projectIds)),
   command('requestAssistantThreadStop', (p, _scope, cmd) => stopAssistantThread(p, cmd.threadId)),
   command('requestAssistantRetry', (p, _scope, cmd) => retryAssistantThread(p, cmd.threadId)),
   command('requestAssistantThreadRename', (p, _scope, cmd) => renameAssistantThread(p, cmd.threadId, cmd.name)),

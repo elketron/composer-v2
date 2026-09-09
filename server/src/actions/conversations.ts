@@ -11,6 +11,17 @@ export const conversationActions: ActionRegistry = {
     sessionId: str('sessionId') ?? '',
     text: str('text') ?? '',
   }),
+  'update:planDocument': ({ str }) => ({
+    type: 'requestPlanDocumentUpdate',
+    sessionId: str('sessionId') ?? '',
+    document: str('document') ?? '',
+  }),
+  'create:tickets': ({ str }) => ({
+    type: 'requestTicketsCreate',
+    sessionId: str('sessionId') ?? '',
+    pipelineId: str('pipelineId') ?? '',
+    document: str('document') ?? '',
+  }),
   'create:assistantThread': ({ str }) => ({
     type: 'requestAssistantThreadCreate',
     ...(str('name') !== undefined ? { name: str('name') } : {}),
@@ -19,10 +30,14 @@ export const conversationActions: ActionRegistry = {
     type: 'requestAssistantThreadArchive',
     threadId: str('id') ?? '',
   }),
-  'create:assistantMessage': ({ str }) => ({
+  'create:assistantMessage': ({ body, str }) => ({
     type: 'requestAssistantMessage',
     threadId: str('threadId') ?? '',
     text: str('text') ?? '',
+    ...(str('parentId') !== undefined ? { parentId: str('parentId') } : {}),
+    ...(Array.isArray(body['projectIds'])
+      ? { projectIds: body['projectIds'].filter((id): id is string => typeof id === 'string') }
+      : {}),
   }),
   'create:assistantResend': ({ str }) => ({
     type: 'requestAssistantResend',

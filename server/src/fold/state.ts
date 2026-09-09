@@ -51,6 +51,13 @@ export interface AgentSessionState {
   endedAt?: string;
   error?: string;
   transcript: TranscriptEntryState[];
+  /** The run/step this session serves (retry-safe attribution). */
+  runId?: string;
+  stepId?: string;
+  /** Accumulated cost and tokens (absolute snapshot). */
+  usage?: { cost: number; tokens: { input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number } };
+  /** The session's edited files (absolute snapshot). */
+  files?: Array<{ path: string; additions: number; deletions: number }>;
 }
 
 export interface State {

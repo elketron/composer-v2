@@ -9,13 +9,14 @@ import type {
   AgentTurnOutcome,
   AgentTurnSpec,
 } from './types.js';
+import { readFile, writeFile } from 'node:fs/promises';
 import type { ComposerCaller } from '../agents/planner/index.js';
-import { createTickets, editDocument } from '../agents/planner/index.js';
+import { createTickets } from '../agents/planner/index.js';
 
 /** The tool surface a scripted turn sees (the planner's MCP tools). */
 export interface FakeTurnTools {
   editDocument(document: string): Promise<{ ok: true } | { ok: false; message: string }>;
-  createTickets(): Promise<{ ok: true; cards: number } | { ok: false; message: string }>;
+  createTickets(pipelineId: string): Promise<{ ok: true; cards: number } | { ok: false; message: string }>;
 }
 
 export type FakeTurn = (context: {
@@ -52,10 +53,16 @@ export class FakeEngine implements AgentEngine {
       onEvent(event);
     };
     const tools: FakeTurnTools = {
-      editDocument: (document) =>
-        editDocument(this.caller, spec.projectId ?? '', spec.sessionId, document),
-      createTickets: () =>
-        createTickets(this.caller, spec.projectId ?? '', spec.sessionId),
+      editDocument: async (document) => {
+        if (spec.planDocumentPath === undefined) return { ok: false, message: 'no plan document path' };
+        await writeFile(spec.planDocumentPath, document);
+        return { ok: true };
+      },
+      createTickets: async (pipelineId) => {
+        if (spec.planDocumentPath === undefined) return { ok: false, message: 'no plan document path' };
+        const document = await readFile(spec.planDocumentPath, 'utf8');
+        return createTickets(this.caller, spec.projectId ?? '', spec.sessionId, pipelineId, document);
+      },
     };
     if (turn === undefined) {
       return { ok: false, error: 'FakeEngine has no scripted turn left' };

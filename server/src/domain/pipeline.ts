@@ -86,8 +86,8 @@ export class PipelineStep {
   missingField(): string | null {
     switch (this.kind) {
       case 'agent':
-        if (!this.agentKind?.trim()) return 'an agent step needs an agentKind';
-        if (!this.instructions?.trim()) return 'an agent step needs instructions';
+        if (!this.agentKind?.trim()) return 'an agent step needs an agent';
+        // The selected agent owns its instructions; a step only names the agent.
         return null;
       case 'command':
         if (!this.command?.trim()) return 'a command step needs a command';

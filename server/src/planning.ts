@@ -4,7 +4,8 @@
 // a turn is in flight is already folded into state and picked up by the
 // turn loop's next run. Replies stream as `agentMessageDelta`; intermediate
 // completions become turn activity and the final completion stays the normal
-// reply. Document edits and ticket emissions ride the MCP tools instead.
+// reply. Document edits synchronize from a native-edit scratch file; ticket
+// emission rides the planner MCP tool.
 //
 // The shared turn lifecycle (subscription, in-flight lock, engine-session
 // continuity, transcript index reservations, the follower loop) lives in
@@ -16,6 +17,9 @@
 // session; the document and transcript are durable, so context survives).
 
 import type { Bus } from './bus.js';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
 import { ensureAgentFiles, PLANNER_AGENT_NAME } from './agents/index.js';
@@ -64,6 +68,8 @@ export class PlanningOrchestrator {
   private readonly turnParents = new Map<string, number>();
   private readonly lastCompletion = new Map<string, { messageId: string; text: string }>();
   private readonly activityWrites = new Map<string, Promise<void>>();
+  private readonly workspaceRoot = mkdtempSync(join(tmpdir(), 'composer-planner-'));
+  private readonly workspaces = new Map<string, string>();
 
   constructor(bus: Bus, engine: AgentEngine, options: PlanningOptions = {}) {
     this.bus = bus;
@@ -82,8 +88,9 @@ export class PlanningOrchestrator {
       },
       provision: (key) => {
         const { projectId, sessionId } = splitTurnKey(key);
-        const directory = this.bus.state.projects.get(projectId)?.directory;
-        if (directory === undefined) return;
+        const found = this.sessionOf(projectId, sessionId);
+        if (found === undefined) return;
+        const directory = this.workspaceFor(key, found.session.planDocument);
         try {
           (this.options.provision ?? ensureAgentFiles)(directory);
         } catch (error) {
@@ -97,12 +104,14 @@ export class PlanningOrchestrator {
         return {
           projectId,
           sessionId,
-          ...(found.directory !== undefined ? { projectDirectory: found.directory } : {}),
-          prompt: buildPrompt(found.session.planDocument, text),
+          projectDirectory: this.workspaceFor(key, found.session.planDocument),
+          planDocumentPath: this.planPath(key),
+          prompt: buildPrompt(text, pipelineInventory(this.bus, projectId)),
           ...(engineSessionId !== undefined ? { engineSessionId } : {}),
           serverUrl: this.options.serverUrl ?? '',
           mcpScriptPath: this.options.mcpScriptPath ?? '',
           agentName: this.options.agentName ?? PLANNER_AGENT_NAME,
+          mcpTools: 'planner',
           ...(modelFor(settings, this.options.agentName ?? PLANNER_AGENT_NAME)
             ? { model: modelFor(settings, this.options.agentName ?? PLANNER_AGENT_NAME) }
             : {}),
@@ -119,6 +128,7 @@ export class PlanningOrchestrator {
       onEvent: (key, event) => this.onEngineEvent(key, event),
       onFailure: async (key, outcome) => {
         const { projectId, sessionId } = splitTurnKey(key);
+        await this.syncDocument(key);
         // The desktop's send-lock clears on the next agent message; a
         // failed turn publishes the failure as one so the UI unblocks.
         const buffered = this.lastCompletion.get(key);
@@ -134,6 +144,7 @@ export class PlanningOrchestrator {
       },
       onSuccess: async (key) => {
         const { projectId, sessionId } = splitTurnKey(key);
+        await this.syncDocument(key);
         const final = this.lastCompletion.get(key);
         this.lastCompletion.delete(key);
         await this.activityWrites.get(key);
@@ -167,6 +178,8 @@ export class PlanningOrchestrator {
 
   stop(): void {
     this.coordinator.stop();
+    rmSync(this.workspaceRoot, { recursive: true, force: true });
+    this.workspaces.clear();
   }
 
   private onFrame(frame: EventFrame): Promise<void> {
@@ -273,11 +286,33 @@ export class PlanningOrchestrator {
   private sessionOf(projectId: string, sessionId: string) {
     const session = this.bus.state.byProject.get(projectId)?.planningSessions.get(sessionId);
     if (!session) return undefined;
-    const directory = this.bus.state.projects.get(projectId)?.directory;
-    return {
-      session: structuredClone(session),
-      ...(directory !== undefined ? { directory } : {}),
-    };
+    return { session: structuredClone(session) };
+  }
+
+  private workspaceFor(key: string, document: string): string {
+    let directory = this.workspaces.get(key);
+    if (directory === undefined) {
+      directory = join(this.workspaceRoot, key.replaceAll('/', '-'));
+      mkdirSync(directory, { recursive: true });
+      this.workspaces.set(key, directory);
+    }
+    const path = join(directory, 'plan.md');
+    if (!existsSync(path)) writeFileSync(path, document);
+    return directory;
+  }
+
+  private planPath(key: string): string {
+    return join(this.workspaces.get(key) ?? '', 'plan.md');
+  }
+
+  private async syncDocument(key: string): Promise<void> {
+    const { projectId, sessionId } = splitTurnKey(key);
+    const found = this.sessionOf(projectId, sessionId);
+    const directory = this.workspaces.get(key);
+    if (found === undefined || found.session.status !== 'drafting' || directory === undefined) return;
+    const document = readFileSync(join(directory, 'plan.md'), 'utf8');
+    if (document === found.session.planDocument) return;
+    await this.bus.publish(projectId, 'planDocumentUpdated', { sessionId, document });
   }
 }
 
@@ -289,9 +324,20 @@ function capActivitySummary(content: string): string {
     : `${content.slice(0, ACTIVITY_SUMMARY_CAP)}…`;
 }
 
-function buildPrompt(document: string, text: string): string {
-  const documentBlock = document === '' ? '(the document is empty)' : document;
-  return `Current plan document:\n\n${documentBlock}\n\nThe user says:\n\n${text}`;
+function buildPrompt(text: string, pipelines: string): string {
+  return `Edit plan.md for this turn. Do not return the document as chat.\n\nAvailable target pipelines:\n${pipelines}\n\nThe user says:\n\n${text}`;
+}
+
+function pipelineInventory(bus: Bus, projectId: string): string {
+  const pipelines = bus.state.byProject.get(projectId)?.pipelines;
+  if (pipelines === undefined || pipelines.size === 0) return '(none)';
+  return [...pipelines.values()]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((pipeline) => {
+      const lanes = pipeline.steps.filter((step) => step.boardVisible).map((step) => `${step.id}: ${step.label}`);
+      return `- ${pipeline.id}: ${pipeline.name} [${lanes.join(', ')}]`;
+    })
+    .join('\n');
 }
 
 /**

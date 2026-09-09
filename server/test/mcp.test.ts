@@ -1,16 +1,23 @@
 // The MCP server (D8): the JSON-RPC surface and the two planner tools —
 // each call must land as the exact validated command the processor takes.
 
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi, afterAll, afterEach } from 'vitest';
 import { handleMessage, httpCaller } from '../src/mcp/planner.js';
 import { handleMessage as assistantHandleMessage } from '../src/mcp/assistant.js';
 import { handleMessage as workerHandleMessage } from '../src/mcp/worker.js';
 import type { Command, CommandOutcome } from '../src/wire/commands.js';
+import { fromAction } from '../src/actions/index.js';
 
-const context = { projectId: 'P-1', sessionId: 'S-1' };
+const planDirectory = mkdtempSync(join(tmpdir(), 'composer-mcp-test-'));
+const planDocumentPath = join(planDirectory, 'plan.md');
+writeFileSync(planDocumentPath, '# plan');
+const context = { projectId: 'P-1', sessionId: 'S-1', planDocumentPath };
 
 function scriptedCaller(outcomes: CommandOutcome[]): {
-  caller: import('../src/engine/planner-tools.js').ComposerCaller;
+  caller: import('../src/agents/planner/index.js').ComposerCaller;
   commands: { projectId: string; command: Command }[];
 } {
   const commands: { projectId: string; command: Command }[] = [];
@@ -28,6 +35,8 @@ function scriptedCaller(outcomes: CommandOutcome[]): {
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+afterAll(() => rmSync(planDirectory, { recursive: true, force: true }));
 
 describe('the mcp json-rpc surface', () => {
   it('initialize_reports_the_server_capabilities', async () => {
@@ -52,34 +61,11 @@ describe('the mcp json-rpc surface', () => {
     expect(response).toBeNull();
   });
 
-  it('tools_list_exposes_the_two_planner_tools', async () => {
+  it('tools_list_exposes_only_ticket_creation', async () => {
     const { caller } = scriptedCaller([]);
     const response = await handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, caller, context);
     const tools = (response!['result'] as { tools: { name: string }[] }).tools;
-    expect(tools.map((tool) => tool.name)).toEqual(['edit_document', 'create_tickets']);
-  });
-
-  it('edit_document_issues_the_validated_command', async () => {
-    const { caller, commands } = scriptedCaller([{ ok: true }]);
-    const response = await handleMessage(
-      {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'edit_document', arguments: { document: '<plan>v1</plan>' } },
-      },
-      caller,
-      context,
-    );
-    expect(commands).toEqual([
-      {
-        projectId: 'P-1',
-        command: { type: 'requestPlanDocumentUpdate', sessionId: 'S-1', document: '<plan>v1</plan>' },
-      },
-    ]);
-    const result = response!['result'] as { content: { text: string }[]; isError: boolean };
-    expect(JSON.parse(result.content[0]!.text)).toEqual({ committed: true });
-    expect(result.isError).toBe(false);
+    expect(tools.map((tool) => tool.name)).toEqual(['create_tickets']);
   });
 
   it('create_tickets_emits_the_command_from_the_document', async () => {
@@ -89,20 +75,23 @@ describe('the mcp json-rpc surface', () => {
         jsonrpc: '2.0',
         id: 3,
         method: 'tools/call',
-        params: { name: 'create_tickets', arguments: {} },
+        params: { name: 'create_tickets', arguments: { pipelineId: 'PL-2' } },
       },
       caller,
       context,
     );
     expect(commands).toEqual([
-      { projectId: 'P-1', command: { type: 'requestTicketsCreate', sessionId: 'S-1' } },
+      {
+        projectId: 'P-1',
+        command: { type: 'requestTicketsCreate', sessionId: 'S-1', pipelineId: 'PL-2', document: '# plan' },
+      },
     ]);
     const result = response!['result'] as { content: { text: string }[]; isError: boolean };
     expect(JSON.parse(result.content[0]!.text)).toEqual({ committed: true, cards: 2 });
     expect(result.isError).toBe(false);
   });
 
-  it('rejections_surface_as_tool_results', async () => {
+  it('ticket_rejections_surface_as_tool_results', async () => {
     const { caller } = scriptedCaller([
       { ok: false, rejection: { code: 'invalidCommand', message: 'Session S-1 is done; its plan document is closed' } },
     ]);
@@ -111,7 +100,7 @@ describe('the mcp json-rpc surface', () => {
         jsonrpc: '2.0',
         id: 4,
         method: 'tools/call',
-        params: { name: 'edit_document', arguments: { document: 'late edit' } },
+        params: { name: 'create_tickets', arguments: { pipelineId: 'PL-1' } },
       },
       caller,
       context,
@@ -133,6 +122,23 @@ describe('the mcp json-rpc surface', () => {
     expect(commands).toHaveLength(0);
     const result = response!['result'] as { content: { text: string }[] };
     expect(JSON.parse(result.content[0]!.text).rejection).toContain('unknown tool');
+  });
+});
+
+describe('planner actions', () => {
+  it('carry_document_and_target_pipeline_into_commands', () => {
+    expect(fromAction({ type: 'update', on: 'planDocument', body: { sessionId: 'S-1', document: '# plan' } }, 'P-1'))
+      .toEqual({ type: 'requestPlanDocumentUpdate', sessionId: 'S-1', document: '# plan' });
+    expect(fromAction({
+      type: 'create',
+      on: 'tickets',
+      body: { sessionId: 'S-1', pipelineId: 'PL-2', document: '# plan' },
+    }, 'P-1')).toEqual({
+      type: 'requestTicketsCreate',
+      sessionId: 'S-1',
+      pipelineId: 'PL-2',
+      document: '# plan',
+    });
   });
 });
 

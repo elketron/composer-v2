@@ -2,6 +2,10 @@ export const ASSISTANT_DEFINITION = `---
 description: Composer's global assistant — reads projects and answers; never edits
 mode: primary
 tools:
+  read: false
+  glob: false
+  grep: false
+  list: false
   write: false
   edit: false
   bash: false

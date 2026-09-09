@@ -18,6 +18,27 @@ export type PipelineRunStatus = WirePipelineRunStatus;
  */
 export const PIPELINE_AGENT_KINDS: readonly string[] = ['coder', 'tester', 'reviewer', 'security'];
 
+/** A predefined agent the step editor selects (server catalog entry). */
+export interface PipelineAgentCatalogEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+}
+
+/** A predefined runtime (terminal) step the step editor selects. */
+export interface RuntimeStepCatalogEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly command: string;
+  readonly description: string;
+}
+
+/** The server's executor catalog (GET /catalog). */
+export interface PipelineCatalog {
+  readonly agents: readonly PipelineAgentCatalogEntry[];
+  readonly runtimeSteps: readonly RuntimeStepCatalogEntry[];
+}
+
 /** One agent-reported named outcome and where it routes. */
 export interface StepOutcomeRule {
   readonly outcome: string;
@@ -128,8 +149,8 @@ export class PipelineStep {
   missingField(): string | null {
     switch (this.data.kind) {
       case 'agent':
-        if (!this.data.agentKind?.trim()) return 'an agent step needs an agentKind';
-        if (!this.data.instructions?.trim()) return 'an agent step needs instructions';
+        if (!this.data.agentKind?.trim()) return 'an agent step needs an agent';
+        // The selected agent owns its instructions; a step only names the agent.
         return null;
       case 'command':
         if (!this.data.command?.trim()) return 'a command step needs a command';
@@ -282,6 +303,11 @@ export interface RunOutcome {
   /** The finished run's agent session (its transcript outlives the run). */
   readonly sessionId?: string;
   readonly error?: string;
+  /** A successful named outcome that routed the card (e.g. changes_requested). */
+  readonly outcome?: string;
+  /** The reviewer/human feedback the routed card carries back. */
+  readonly feedback?: string;
+  readonly routedToStepId?: string;
 }
 
 // ---- Run representation (the board card's run chip) ----

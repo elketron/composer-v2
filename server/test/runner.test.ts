@@ -143,6 +143,9 @@ function runEndedBody(projectId: string) {
     revision: number;
     status: string;
     error?: string;
+    outcome?: string;
+    feedback?: string;
+    routedToStepId?: string;
   };
 }
 
@@ -467,11 +470,15 @@ describe('the pipeline runner', () => {
     });
     expect(rejected.ok).toBe(true);
 
-    await waitUntil(() => cardOf(projectId, cardId).stepId === STEP_CODER);
+    await waitUntil(() => !bus.state.byProject.get(projectId)?.activeRuns.has(cardId));
+    expect(cardOf(projectId, cardId).stepId).toBe(STEP_CODER);
     expect(cardOf(projectId, cardId).rejectionComment).toBe('needs tests');
     const ended = runEndedBody(projectId);
     expect(ended.status).toBe('returned');
-    expect(ended.error).toBe('changes requested: needs tests');
+    expect(ended.outcome).toBe('changes_requested');
+    expect(ended.feedback).toBe('needs tests');
+    expect(ended.routedToStepId).toBe(STEP_CODER);
+    expect(ended.error).toBeUndefined();
   });
 
   it('the_run_executes_from_the_cards_current_step_onward', async () => {
@@ -564,9 +571,56 @@ describe('the pipeline runner', () => {
     await waitUntil(() => cardOf(projectId, cardId).stepId === 'st-6');
   });
 
+  it('two_agent_messages_keep_distinct_indices_and_usage_files_are_observed', async () => {
+    engine.enqueue(async ({ emit }) => {
+      emit({ kind: 'messageDelta', messageId: 'm1', delta: 'first ' });
+      emit({ kind: 'messageComplete', messageId: 'm1', text: 'first reply' });
+      emit({ kind: 'toolCall', toolCallId: 'tool-1', toolName: 'write', args: { path: 'a.ts' } });
+      emit({ kind: 'toolResult', toolCallId: 'tool-1', content: 'written', isError: false });
+      emit({
+        kind: 'usage',
+        cost: 0.0025,
+        tokens: { input: 80, output: 20, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      });
+      emit({ kind: 'files', files: [{ path: 'a.ts', additions: 3, deletions: 1 }] });
+      emit({ kind: 'messageDelta', messageId: 'm2', delta: 'second ' });
+      return 'second reply';
+    });
+    const pipelineId = await savePipeline(projectId, pipelineFixture('', [
+      coderStep('st-1'),
+      humanStep('st-2'),
+      doneStep('st-3'),
+    ]));
+    await runOn(projectId, pipelineId, cardId);
+    await waitUntil(() => activeRunOf(projectId, cardId)?.status === 'waiting');
+
+    // Two assistant messages of one turn must not collide: distinct indices.
+    const completes = recorded
+      .filter((frame) => frame.eventType === 'agentMessageComplete')
+      .map((frame) => (frame.body as { message: { index: number; text: string } }).message);
+    expect(completes).toMatchObject([
+      { index: 1, text: 'first reply' },
+      { index: 2, text: 'second reply' },
+    ]);
+
+    // The usage and files ride durable agentSessionObserved events whose
+    // session state survives (the run view's cost/tokens/Edited Files panes).
+    const observed = recorded.filter((frame) => frame.eventType === 'agentSessionObserved');
+    expect(observed.length).toBeGreaterThanOrEqual(2);
+    const session = [...bus.state.byProject.get(projectId)!.agentSessions.values()][0];
+    expect(session?.usage).toEqual({
+      cost: 0.0025,
+      tokens: { input: 80, output: 20, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+    });
+    expect(session?.files).toEqual([{ path: 'a.ts', additions: 3, deletions: 1 }]);
+    expect(session?.runId).toBe('R-1');
+    expect(session?.stepId).toBe('st-1');
+  });
+
   it('a_failed_command_step_returns_the_card_when_the_step_configures_it', async () => {
     // The check step carries the error return: the failed command moves the
-    // card back to the coder and ends the run `returned`.
+    // card back to the coder and ends the run `failed` (a routed recovery is
+    // still an execution failure).
     const pipelineId = await savePipeline(
       projectId,
       pipelineFixture('', [
@@ -584,7 +638,8 @@ describe('the pipeline runner', () => {
     expect(cardOf(projectId, cardId).stepId).toBe(STEP_CODER, 'the step error return moved the card back');
     expect(cardOf(projectId, cardId).stepStates['st-2']).toBe('failed');
     const ended = runEndedBody(projectId);
-    expect(ended.status).toBe('returned');
+    expect(ended.status).toBe('failed');
+    expect(ended.routedToStepId).toBe(STEP_CODER);
     expect(ended.error).toContain('exit code 1');
     expect(ended.error).toContain('boom');
 
@@ -655,7 +710,10 @@ describe('the pipeline runner', () => {
     });
     const ended = runEndedBody(projectId);
     expect(ended.status).toBe('returned');
-    expect(ended.error).toBe('changes_requested: the error path is untested');
+    expect(ended.outcome).toBe('changes_requested');
+    expect(ended.feedback).toBe('the error path is untested');
+    expect(ended.routedToStepId).toBe(STEP_CODER);
+    expect(ended.error).toBeUndefined();
 
     // The returned card re-runs from where it sits (the step skip).
     const again = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
@@ -703,7 +761,7 @@ describe('the pipeline runner', () => {
     expect(cardOf(projectId, cardId).stepStates['st-2']).toBe('failed');
     expect(cardOf(projectId, cardId).stepId).toBe(STEP_CODER, 'the failure flows through the step error return');
     const ended = runEndedBody(projectId);
-    expect(ended.status).toBe('returned');
+    expect(ended.status).toBe('failed');
     expect(ended.error).toContain('requires an explicit outcome');
     expect(ended.error).toContain('pass');
   });

@@ -245,6 +245,9 @@ export class PipelineService {
             // The finished run's agent session — the transcript outlives the run.
             ...(finished?.sessionId ? { sessionId: finished.sessionId } : {}),
             ...(payload.error ? { error: payload.error } : {}),
+            ...(payload.outcome ? { outcome: payload.outcome } : {}),
+            ...(payload.feedback ? { feedback: payload.feedback } : {}),
+            ...(payload.routedToStepId ? { routedToStepId: payload.routedToStepId } : {}),
           };
           const cardOutcomes = new Map(map.get(projectId) ?? []);
           cardOutcomes.set(payload.cardId, outcome);
@@ -267,6 +270,8 @@ export class PipelineService {
               agentKind: payload.agentKind ?? 'coder',
               status: 'running',
               startedAt: payload.startedAt ?? '',
+              ...(payload.runId ? { runId: payload.runId } : {}),
+              ...(payload.stepId ? { stepId: payload.stepId } : {}),
             },
             ...sessions.filter((session) => session.sessionId !== payload.sessionId),
           ]);
@@ -301,20 +306,54 @@ export class PipelineService {
         });
         break;
       }
+      case 'agentSessionObserved': {
+        const payload = event.agentSessionObserved;
+        if (!payload?.sessionId) break;
+        this.sessionsByProject.update((map) => {
+          const sessions = map.get(projectId) ?? [];
+          let changed = false;
+          const next = sessions.map((session) => {
+            if (session.sessionId !== payload.sessionId) return session;
+            changed = true;
+            return {
+              ...session,
+              ...(payload.usage ? { usage: payload.usage } : {}),
+              ...(payload.files ? { files: payload.files } : {}),
+            };
+          });
+          if (!changed) return map;
+          const nextMap = new Map(map);
+          nextMap.set(projectId, next);
+          return nextMap;
+        });
+        break;
+      }
       // The run view's live transcript: agent-step messages and tool calls
       // only (planning sessions fold in plan.service).
       case 'agentMessageDelta': {
         const payload = event.agentMessageDelta;
         if (!this.isAgentSession(projectId, payload?.sessionId)) break;
+        const index = payload?.messageIndex;
+        const delta = payload?.delta ?? '';
         this.appendToTranscript(projectId, payload!.sessionId, (entries) => {
-          const last = entries.at(-1);
-          if (last?.kind === 'message' && last.streaming) {
-            const merged = { ...last, text: last.text + (payload?.delta ?? '') };
-            return [...entries.slice(0, -1), merged];
+          // Key on the reserved index: distinct messages never collapse into
+          // one bubble, and a later delta joins its own message's stream.
+          for (let i = entries.length - 1; i >= 0; i--) {
+            const entry = entries[i];
+            const matches = entry.kind === 'message' && entry.streaming &&
+              (index === undefined ? entry.messageIndex === undefined : entry.messageIndex === index);
+            if (!matches) continue;
+            const merged = { ...entry, text: entry.text + delta };
+            return [...entries.slice(0, i), merged, ...entries.slice(i + 1)];
           }
           return [
             ...entries,
-            { kind: 'message', streaming: true, text: payload?.delta ?? '' } as RunTranscriptEntry,
+            {
+              kind: 'message',
+              streaming: true,
+              text: delta,
+              ...(index !== undefined ? { messageIndex: index } : {}),
+            } as RunTranscriptEntry,
           ];
         });
         break;
@@ -322,18 +361,34 @@ export class PipelineService {
       case 'agentMessageComplete': {
         const sessionId = event.agentMessageComplete?.sessionId;
         if (!this.isAgentSession(projectId, sessionId)) break;
-        const text = event.agentMessageComplete?.message
-          ? agentMessageText(event.agentMessageComplete.message)
-          : '';
+        const message = event.agentMessageComplete?.message as { index?: number; text?: string } | undefined;
+        const index = typeof message?.index === 'number' ? message.index : undefined;
+        const text = typeof message?.text === 'string' ? message.text : '';
         this.appendToTranscript(projectId, sessionId!, (entries) => {
-          // A streamed bubble finalizes; a cold complete (snapshot replay)
-          // appends.
+          if (index !== undefined) {
+            for (let i = entries.length - 1; i >= 0; i--) {
+              const entry = entries[i];
+              if (entry.kind === 'message' && entry.messageIndex === index) {
+                const final = { ...entry, streaming: false, text: text || entry.text };
+                return [...entries.slice(0, i), final, ...entries.slice(i + 1)];
+              }
+            }
+          }
+          // A cold complete (snapshot replay or no streamed delta) appends.
           const last = entries.at(-1);
-          if (last?.kind === 'message' && last.streaming) {
+          if (last?.kind === 'message' && last.streaming && index === undefined) {
             const final = { ...last, streaming: false, text: text || last.text };
             return [...entries.slice(0, -1), final];
           }
-          return [...entries, { kind: 'message', streaming: false, text } as RunTranscriptEntry];
+          return [
+            ...entries,
+            {
+              kind: 'message',
+              streaming: false,
+              text,
+              ...(index !== undefined ? { messageIndex: index } : {}),
+            } as RunTranscriptEntry,
+          ];
         });
         break;
       }
@@ -440,6 +495,29 @@ export interface AgentSessionView {
   readonly status: 'running' | 'ended' | 'failed';
   readonly startedAt: string;
   readonly error?: string;
+  readonly runId?: string;
+  readonly stepId?: string;
+  readonly usage?: SessionUsage;
+  readonly files?: readonly SessionFile[];
+}
+
+/** Accumulated cost and token usage for one agent session. */
+export interface SessionUsage {
+  readonly cost: number;
+  readonly tokens: {
+    readonly input: number;
+    readonly output: number;
+    readonly reasoning: number;
+    readonly cacheRead: number;
+    readonly cacheWrite: number;
+  };
+}
+
+/** One edited file the runtime observed for a session. */
+export interface SessionFile {
+  readonly path: string;
+  readonly additions: number;
+  readonly deletions: number;
 }
 
 /** One line of a command step's streamed output. */
@@ -453,6 +531,8 @@ export type RunTranscriptEntry =
   | {
       readonly kind: 'message';
       readonly messageId?: string;
+      /** The transcript index the server reserved (deltas and completion agree). */
+      readonly messageIndex?: number;
       readonly streaming: boolean;
       readonly text: string;
     }
@@ -466,11 +546,6 @@ export type RunTranscriptEntry =
 
 const COMMAND_OUTPUT_CAP = 400;
 const TRANSCRIPT_CAP = 300;
-
-function agentMessageText(message: unknown): string {
-  const record = message as { text?: unknown } | undefined;
-  return typeof record?.text === 'string' ? record.text : '';
-}
 
 type PublishRequest = {
   projectId?: string;

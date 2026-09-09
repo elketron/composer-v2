@@ -342,6 +342,8 @@ export interface DomainEventJson {
     readonly sessionId: string;
     readonly agentKind: string;
     readonly startedAt: string;
+    readonly runId?: string;
+    readonly stepId?: string;
   };
   readonly agentSessionEnded?: {
     readonly cardId: string;
@@ -349,6 +351,20 @@ export interface DomainEventJson {
     readonly status: WireAgentSessionStatus;
     readonly error?: string;
     readonly endedAt: string;
+  };
+  readonly agentSessionObserved?: {
+    readonly sessionId: string;
+    readonly usage?: {
+      readonly cost: number;
+      readonly tokens: {
+        readonly input: number;
+        readonly output: number;
+        readonly reasoning: number;
+        readonly cacheRead: number;
+        readonly cacheWrite: number;
+      };
+    };
+    readonly files?: ReadonlyArray<{ readonly path: string; readonly additions: number; readonly deletions: number }>;
   };
   readonly agentToolCall?: {
     readonly sessionId: string;
@@ -393,6 +409,9 @@ export interface DomainEventJson {
     readonly revision: number;
     readonly status: WirePipelineRunStatus;
     readonly error?: string;
+    readonly outcome?: string;
+    readonly feedback?: string;
+    readonly routedToStepId?: string;
   };
   readonly pipelineGateResponded?: {
     readonly runId?: string;
@@ -486,6 +505,7 @@ export const EVENT_KINDS = [
   'projectRestored',
   'agentSessionStarted',
   'agentSessionEnded',
+  'agentSessionObserved',
   'agentToolCall',
   'agentToolResult',
   'pipelineSaved',
@@ -602,6 +622,7 @@ export interface PublishRequestJson {
     readonly description?: string;
     readonly type: WireCardType;
     readonly tags?: readonly string[];
+    readonly pipelineId?: string;
   };
   readonly requestCardStepMove?: {
     readonly cardId: string;
@@ -639,7 +660,12 @@ export interface PublishRequestJson {
   readonly requestAssistantThreadArchive?: { readonly threadId: string };
   readonly requestAssistantThreadRestore?: { readonly threadId: string };
   readonly requestAssistantThreadScope?: { readonly threadId: string; readonly projectIds: string[] };
-  readonly requestAssistantMessage?: { readonly threadId: string; readonly text: string };
+  readonly requestAssistantMessage?: {
+    readonly threadId: string;
+    readonly text: string;
+    readonly parentId?: string;
+    readonly projectIds?: readonly string[];
+  };
   readonly requestAssistantThreadStop?: { readonly threadId: string };
   readonly requestAssistantRetry?: { readonly threadId: string };
   readonly requestAssistantThreadRename?: { readonly threadId: string; readonly name: string };
@@ -737,6 +763,7 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
       ...(create.description ? { description: create.description } : {}),
       type: create.type,
       ...(create.tags?.length ? { tags: [...create.tags] } : {}),
+      ...(create.pipelineId ? { pipelineId: create.pipelineId } : {}),
     });
   }
   if (request.requestCardStepMove) {
@@ -858,6 +885,10 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
     return env('create', 'assistantMessage', {
       threadId: request.requestAssistantMessage.threadId,
       text: request.requestAssistantMessage.text,
+      ...(request.requestAssistantMessage.parentId ? { parentId: request.requestAssistantMessage.parentId } : {}),
+      ...(request.requestAssistantMessage.projectIds
+        ? { projectIds: [...request.requestAssistantMessage.projectIds] }
+        : {}),
     });
   }
   if (request.requestAssistantThreadStop) {

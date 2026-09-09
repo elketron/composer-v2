@@ -16,12 +16,17 @@ export function promptFor(agentKind: string, card: Card, step: PipelineStep, out
   const instructions = step.instructions?.trim() !== '' ? step.instructions!.trim() : defaultInstructionOf(agentKind);
   const blockers =
     card.blockedBy.length > 0 ? `\n\nBlockers (already satisfied): ${card.blockedBy.join(', ')}` : '';
+  const feedback =
+    card.rejectionComment !== undefined && card.rejectionComment.trim() !== ''
+      ? `\n\nReview feedback from the previous attempt (address it):\n${card.rejectionComment.trim()}`
+      : '';
   const [verb, closing] = briefOf(agentKind);
   return [
     `${verb} card ${card.id}: ${card.title}`,
     '',
     card.description.trim() !== '' ? card.description : '(no description)',
     blockers,
+    feedback,
     '',
     `Instructions: ${instructions}`,
     ...(outcomeBrief !== undefined ? ['', outcomeBrief] : []),

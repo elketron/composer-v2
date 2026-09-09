@@ -25,6 +25,7 @@ import type {
   AgentTurnEvent,
   AgentTurnOutcome,
   AgentTurnSpec,
+  UsageTokens,
 } from './types.js';
 
 export interface OpenCodeServeEngineOptions {
@@ -47,6 +48,7 @@ export class ServeEventReducer {
   private readonly roles = new Map<string, string>();
   private readonly texts = new Map<string, TextReducer>();
   private readonly tools = new Map<string, ToolReducer>();
+  private readonly usageByMessage = new Map<string, { cost: number; tokens: UsageTokens }>();
   private idle = false;
   private error: { name: string; message: string } | null = null;
 
@@ -58,6 +60,16 @@ export class ServeEventReducer {
         const id = properties.info?.id;
         const role = properties.info?.role;
         if (id !== undefined && role !== undefined) this.roles.set(id, role);
+        // The assistant message's accumulated usage is an absolute snapshot;
+        // upsert by message id so re-emitted snapshots never double-count.
+        if (role !== 'assistant' || id === undefined) return;
+        const info = properties.info;
+        const cost = typeof info?.cost === 'number' ? info.cost : this.usageByMessage.get(id)?.cost ?? 0;
+        const tokens = toTokens(info?.tokens);
+        if (cost !== 0 || sumTokens(tokens) !== 0) {
+          this.usageByMessage.set(id, { cost, tokens });
+          emit({ kind: 'usage', cost: this.totalCost(), tokens: this.totalTokens() });
+        }
         return;
       }
       case 'message.part.updated': {
@@ -98,6 +110,18 @@ export class ServeEventReducer {
         emit({ kind: 'messageDelta', messageId: partID, delta: properties.delta });
         return;
       }
+      case 'session.diff': {
+        const files = (properties.diff ?? [])
+          .filter((entry): entry is { path: string; additions: number; deletions: number } =>
+            typeof entry.path === 'string' && entry.path !== '')
+          .map((entry) => ({
+            path: entry.path,
+            additions: entry.additions ?? 0,
+            deletions: entry.deletions ?? 0,
+          }));
+        if (files.length > 0) emit({ kind: 'files', files });
+        return;
+      }
       case 'session.error': {
         const name = properties.error?.name ?? 'unknown error';
         this.error = { name, message: properties.error?.data?.message ?? name };
@@ -108,6 +132,24 @@ export class ServeEventReducer {
         return;
       }
     }
+  }
+
+  private totalCost(): number {
+    let total = 0;
+    for (const entry of this.usageByMessage.values()) total += entry.cost;
+    return total;
+  }
+
+  private totalTokens(): UsageTokens {
+    const tokens: UsageTokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
+    for (const entry of this.usageByMessage.values()) {
+      tokens.input += entry.tokens.input;
+      tokens.output += entry.tokens.output;
+      tokens.reasoning += entry.tokens.reasoning;
+      tokens.cacheRead += entry.tokens.cacheRead;
+      tokens.cacheWrite += entry.tokens.cacheWrite;
+    }
+    return tokens;
   }
 
   private textOf(id: string): TextReducer {
@@ -271,3 +313,18 @@ export class OpenCodeServeEngine implements AgentEngine {
 }
 
 const TURN_ABORTED = Symbol('turn aborted');
+
+function toTokens(raw: unknown): UsageTokens {
+  const tokens = (raw as { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } } | undefined) ?? {};
+  return {
+    input: tokens.input ?? 0,
+    output: tokens.output ?? 0,
+    reasoning: tokens.reasoning ?? 0,
+    cacheRead: tokens.cache?.read ?? 0,
+    cacheWrite: tokens.cache?.write ?? 0,
+  };
+}
+
+function sumTokens(tokens: UsageTokens): number {
+  return tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite;
+}

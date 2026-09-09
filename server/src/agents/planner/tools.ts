@@ -19,25 +19,6 @@ export interface ToolRejection {
 }
 
 /**
- * `edit_document` — replaces the session's plan document wholesale.
- * Rejections (unknown/closed session) come back as tool results, not
- * transport errors.
- */
-export async function editDocument(
-  caller: ComposerCaller,
-  projectId: string,
-  sessionId: string,
-  document: string,
-): Promise<{ ok: true } | ToolRejection> {
-  const outcome = await caller.execute(projectId, {
-    type: 'requestPlanDocumentUpdate',
-    sessionId,
-    document,
-  });
-  return outcome.ok ? { ok: true } : { ok: false, message: outcome.rejection.message };
-}
-
-/**
  * `create_tickets` — emits the plan's tickets as validated cards and closes
  * the session. The tickets come from the session's markdown plan document
  * (its `# Title` + YAML-frontmatter blocks), not a structured argument —
@@ -47,34 +28,30 @@ export async function createTickets(
   caller: ComposerCaller,
   projectId: string,
   sessionId: string,
+  pipelineId: string,
+  document: string,
 ): Promise<{ ok: true; cards: number } | ToolRejection> {
   const outcome = await caller.execute(projectId, {
     type: 'requestTicketsCreate',
     sessionId,
+    pipelineId,
+    document,
   });
   return outcome.ok ? { ok: true, cards: outcome.cards ?? 0 } : { ok: false, message: outcome.rejection.message };
 }
 
-/** The planner's MCP tool definitions (the agent brief's two calls, D8). */
+/** The planner's MCP tool definition; plan edits use the native edit tool. */
 export const PLANNER_MCP_TOOLS: McpToolDefinition[] = [
-  {
-    name: 'edit_document',
-    description:
-      'Replaces the plan document with the complete, updated version. Call this every turn before replying.',
-    inputSchema: {
-      type: 'object',
-      properties: { document: { type: 'string', description: 'The full plan document' } },
-      required: ['document'],
-    },
-  },
   {
     name: 'create_tickets',
     description:
-      'Emits the plan document\'s tickets as cards (each `# Title` + YAML frontmatter block becomes a card). Only call on explicit user approval.',
+      'Synchronizes plan.md and emits its tickets as cards in the selected pipeline. Only call on explicit user approval.',
     inputSchema: {
       type: 'object',
-      properties: {},
-      required: [],
+      properties: {
+        pipelineId: { type: 'string', description: 'Target pipeline id from the current pipeline inventory' },
+      },
+      required: ['pipelineId'],
     },
   },
 ];

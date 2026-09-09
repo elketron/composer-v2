@@ -31,9 +31,10 @@ export type Command =
   | { type: 'requestAutomationToggle'; pipelineId: string; stepId: string; on: boolean }
   | { type: 'requestPlanningSessionCreate'; projectId: string }
   | { type: 'requestUserMessage'; sessionId: string; text: string }
-  // No HTTP action: issued by the planner agent's MCP tools.
+  // Planner persistence commands; ticket creation carries the native-edit
+  // artifact so the processor synchronizes it before committing cards.
   | { type: 'requestPlanDocumentUpdate'; sessionId: string; document: string }
-  | { type: 'requestTicketsCreate'; sessionId: string }
+  | { type: 'requestTicketsCreate'; sessionId: string; pipelineId: string; document: string }
   | { type: 'requestPipelineSave'; pipeline: Pipeline }
   | { type: 'requestPipelineDelete'; pipelineId: string }
   // The run resolves the pipeline from the card's assignment (one pipeline
@@ -50,7 +51,13 @@ export type Command =
   | { type: 'requestAssistantThreadArchive'; threadId: string }
   | { type: 'requestAssistantThreadRestore'; threadId: string }
   | { type: 'requestAssistantThreadScope'; threadId: string; projectIds: string[] }
-  | { type: 'requestAssistantMessage'; threadId: string; text: string }
+  | {
+      type: 'requestAssistantMessage';
+      threadId: string;
+      text: string;
+      parentId?: string;
+      projectIds?: string[];
+    }
   // Conversation controls (Phase 7).
   | { type: 'requestAssistantThreadStop'; threadId: string }
   | { type: 'requestAssistantRetry'; threadId: string }

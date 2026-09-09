@@ -7,7 +7,7 @@ import { serve } from '@hono/node-server';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { Bus } from './bus.js';
 import { EventStore } from './store/index.js';
 import { Processor } from './processor/index.js';
@@ -179,14 +179,14 @@ export async function boot(config: Config): Promise<{
 
 /** The planner's MCP child script (dist/mcp/planner.js) — resolved from the src or dist layout. */
 function mcpScriptPath(): string {
-  return process.env['COMPOSER_MCP_SCRIPT'] ?? fileURLToPath(new URL('../dist/mcp/planner.js', import.meta.url));
+  return process.env['COMPOSER_MCP_SCRIPT'] ?? bundledMcpPath('planner');
 }
 
 /** The assistant's MCP child script (dist/mcp/assistant.js). */
 function assistantMcpScriptPath(): string {
   return (
     process.env['COMPOSER_ASSISTANT_MCP_SCRIPT'] ??
-    fileURLToPath(new URL('../dist/mcp/assistant.js', import.meta.url))
+    bundledMcpPath('assistant')
   );
 }
 
@@ -194,8 +194,15 @@ function assistantMcpScriptPath(): string {
 function workerMcpScriptPath(): string {
   return (
     process.env['COMPOSER_WORKER_MCP_SCRIPT'] ??
-    fileURLToPath(new URL('../dist/mcp/worker.js', import.meta.url))
+    bundledMcpPath('worker')
   );
+}
+
+function bundledMcpPath(name: string): string {
+  const packaged = fileURLToPath(new URL(`./mcp/${name}.mjs`, import.meta.url));
+  return existsSync(packaged)
+    ? packaged
+    : fileURLToPath(new URL(`../dist/mcp/${name}.js`, import.meta.url));
 }
 
 const isMain =

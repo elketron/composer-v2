@@ -120,13 +120,14 @@ export class BoardService {
 
   /**
    * RequestCardCreate: the only way to author a card outside the planner.
-   * The server assigns the id, the default pipeline, and the first stage;
+   * The server assigns the id and places it in the selected pipeline;
    * the card lands via its `cardCreated` echo (and opens in the detail panel).
    */
   async createCard(draft: {
     title: string;
     description: string;
     type: CardType;
+    pipelineId: string;
   }): Promise<{ ok: boolean; reason?: string }> {
     const projectId = this.projectId();
     if (!projectId) return { ok: false, reason: 'unavailable' };
@@ -140,6 +141,7 @@ export class BoardService {
         title,
         ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
         type: cardTypeToWire(draft.type),
+        pipelineId: draft.pipelineId,
       },
     });
     if (!response.ok) {

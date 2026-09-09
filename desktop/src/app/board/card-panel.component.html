@@ -133,9 +133,15 @@
           </div>
         } @else {
           @if (lastRun(); as outcome) {
-            <div class="run-outcome" [class.failed]="outcome.status === 'failed' || outcome.status === 'returned'">
+            <div class="run-outcome" [class.failed]="outcome.status === 'failed'" [class.returned]="outcome.status === 'returned'">
               <span class="outcome-status">{{ outcome.status }}</span>
-              <span class="outcome-text">{{ outcome.error ?? 'the last run finished cleanly' }}</span>
+              <span class="outcome-text">
+                @if (outcome.status === 'returned') {
+                  {{ outcome.outcome ?? 'changes needed' }}{{ outcome.feedback ? ' — ' + outcome.feedback : '' }}
+                } @else {
+                  {{ outcome.error ?? 'the last run finished cleanly' }}
+                }
+              </span>
               <button class="open-run" (click)="openRunView()" title="the full-page run view">
                 run view
               </button>

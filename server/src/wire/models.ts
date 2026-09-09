@@ -254,7 +254,7 @@ export type PipelineRunStatus =
   | 'waiting'
   | 'completed'
   | 'failed'
-  | /** A backward transition (agent outcome or error condition) ended the run. */ 'returned'
+  | /** A successful outcome routed the card backward (changes_requested); not a failure. */ 'returned'
   | 'cancelled';
 
 /** Steps allocate `st-N`, runs allocate `R-N`. */

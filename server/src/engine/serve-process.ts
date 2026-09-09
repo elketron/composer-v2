@@ -15,11 +15,22 @@ export interface ServeEvent {
     sessionID?: string;
     partID?: string;
     part?: ServePart;
-    info?: { id?: string; role?: string };
+    info?: {
+      id?: string;
+      role?: string;
+      cost?: number;
+      tokens?: {
+        input?: number;
+        output?: number;
+        reasoning?: number;
+        cache?: { read?: number; write?: number };
+      };
+    };
     status?: { type?: string };
     error?: { name?: string; data?: { message?: string } };
     delta?: string;
     field?: string;
+    diff?: Array<{ path?: string; additions?: number; deletions?: number }>;
   };
 }
 
@@ -88,6 +99,7 @@ export class ServeProcessManager {
           COMPOSER_SERVER_URL: spec.serverUrl,
           ...(spec.projectId !== undefined ? { COMPOSER_PROJECT_ID: spec.projectId } : {}),
           COMPOSER_SESSION_ID: spec.sessionId,
+          ...(spec.planDocumentPath !== undefined ? { COMPOSER_PLAN_DOCUMENT_PATH: spec.planDocumentPath } : {}),
           // The assistant's MCP child keys its scope on the thread id; the
           // worker and planner children key on the session/project above.
           ...(spec.mcpTools === 'assistant' ? { COMPOSER_THREAD_ID: spec.sessionId } : {}),

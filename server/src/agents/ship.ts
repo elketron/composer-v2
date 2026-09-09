@@ -1,7 +1,6 @@
-// Shipping: writes the agent definitions into place if absent —
-// user-editable, never overwritten (idempotent).
+// Shipping: writes Composer-owned agent definitions into place.
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ASSISTANT_DEFINITION } from './assistant/definition.js';
@@ -14,15 +13,15 @@ import {
   TESTER_DEFINITION,
 } from './worker/definitions.js';
 
-/** Writes the agent definitions into the project if absent. Idempotent. */
+/** Refreshes the predefined agent definitions shipped by Composer. */
 export function ensureAgentFiles(projectDirectory: string): void {
   const agentDirectory = join(projectDirectory, '.opencode', 'agent');
   mkdirSync(agentDirectory, { recursive: true });
-  writeIfAbsent(agentDirectory, `${PLANNER_AGENT_NAME}.md`, PLANNER_DEFINITION);
-  writeIfAbsent(agentDirectory, `${CODER_AGENT_NAME}.md`, CODER_DEFINITION);
-  writeIfAbsent(agentDirectory, 'composer-tester.md', TESTER_DEFINITION);
-  writeIfAbsent(agentDirectory, 'composer-reviewer.md', REVIEWER_DEFINITION);
-  writeIfAbsent(agentDirectory, 'composer-security.md', SECURITY_DEFINITION);
+  writeDefinition(agentDirectory, `${PLANNER_AGENT_NAME}.md`, PLANNER_DEFINITION);
+  writeDefinition(agentDirectory, `${CODER_AGENT_NAME}.md`, CODER_DEFINITION);
+  writeDefinition(agentDirectory, 'composer-tester.md', TESTER_DEFINITION);
+  writeDefinition(agentDirectory, 'composer-reviewer.md', REVIEWER_DEFINITION);
+  writeDefinition(agentDirectory, 'composer-security.md', SECURITY_DEFINITION);
 }
 
 /**
@@ -33,12 +32,9 @@ export function ensureAgentFiles(projectDirectory: string): void {
 export function ensureAssistantWorkspace(workspaceDirectory: string): void {
   const agentDirectory = join(workspaceDirectory, '.opencode', 'agent');
   mkdirSync(agentDirectory, { recursive: true });
-  writeIfAbsent(agentDirectory, `${ASSISTANT_AGENT_NAME}.md`, ASSISTANT_DEFINITION);
+  writeDefinition(agentDirectory, `${ASSISTANT_AGENT_NAME}.md`, ASSISTANT_DEFINITION);
 }
 
-function writeIfAbsent(directory: string, name: string, definition: string): void {
-  const path = join(directory, name);
-  if (!existsSync(path)) {
-    writeFileSync(path, definition, { flag: 'wx' });
-  }
+function writeDefinition(directory: string, name: string, definition: string): void {
+  writeFileSync(join(directory, name), definition);
 }

@@ -104,24 +104,37 @@ export async function createTickets(
     p: Processor,
     scope: string | undefined,
     sessionId: string,
+    pipelineId: string,
+    document: string,
   ): Promise<CommandOutcome> {
     const found = p.findSession(scope, sessionId);
     if (!found) {
       return rejected('unknownSession', `Unknown session ${sessionId}`);
     }
+    try {
+      Planning.of(found.session).requireDrafting('its tickets were already emitted');
+    } catch (error) {
+      return toRejection(error);
+    }
+    if (document !== found.session.planDocument) {
+      await p.bus.publish(found.projectId, 'planDocumentUpdated', {
+        sessionId: found.session.id,
+        document,
+      });
+    }
+
     const cards = p.cardsOf(found.projectId);
     let tickets: TicketEmission[];
     try {
-      Planning.of(found.session).requireDrafting('its tickets were already emitted');
-      tickets = parseTickets(found.session.planDocument);
+      tickets = parseTickets(document);
       Planning.validateTickets(tickets, cards);
     } catch (error) {
       return toRejection(error);
     }
 
-    const pipeline = p.defaultPipelineOf(found.projectId);
+    const pipeline = p.pipelinesOf(found.projectId).get(pipelineId);
     if (pipeline === undefined) {
-      return rejected('invalidCommand', `Project ${found.projectId} has no pipeline to assign the tickets to`);
+      return rejected('unknownPipeline', `Unknown pipeline ${pipelineId}`);
     }
     const ids = allocateCardIds(cards, tickets.length);
     const emitted = materializeCards(tickets, {
@@ -151,5 +164,6 @@ export const planningCommands: CommandMap = [
   command('requestPlanningSessionCreate', (p, _scope, cmd) => createPlanningSession(p, cmd.projectId)),
   command('requestUserMessage', (p, scope, cmd) => userMessage(p, scope, cmd.sessionId, cmd.text)),
   command('requestPlanDocumentUpdate', (p, scope, cmd) => updatePlanDocument(p, scope, cmd.sessionId, cmd.document)),
-  command('requestTicketsCreate', (p, scope, cmd) => createTickets(p, scope, cmd.sessionId)),
+  command('requestTicketsCreate', (p, scope, cmd) =>
+    createTickets(p, scope, cmd.sessionId, cmd.pipelineId, cmd.document)),
 ];

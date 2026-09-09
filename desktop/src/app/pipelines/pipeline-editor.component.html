@@ -63,6 +63,14 @@
                   <lucide-icon [img]="icons.trash" [size]="11" />
                 </button>
               </div>
+
+              @for (route of stepRoutes(si); track route.key) {
+                <div class="node-route" [class.failure]="route.kind === 'failure'">
+                  <span class="route-label">{{ route.label }}</span>
+                  <span class="route-arrow" aria-hidden="true">→</span>
+                  <span class="route-target">{{ route.target }}</span>
+                </div>
+              }
             </div>
 
             @if (!$last) {
@@ -104,116 +112,130 @@
               </select>
             </label>
 
-            <label class="flag">
-              <input
-                type="checkbox"
-                [ngModel]="step.boardVisible"
-                (ngModelChange)="updateStep(selectedStepIndex()!, { boardVisible: $event })"
-              />
-              board swimlane
-            </label>
+            <section class="panel-group">
+              <span class="group-label">presentation</span>
+              <label class="flag">
+                <input
+                  type="checkbox"
+                  [ngModel]="step.boardVisible"
+                  (ngModelChange)="updateStep(selectedStepIndex()!, { boardVisible: $event })"
+                />
+                board swimlane
+              </label>
+            </section>
 
-            @switch (step.kind) {
-              @case ('agent') {
-                <label class="field agent">
-                  <span class="field-label">agent</span>
-                  <select [ngModel]="step.agentKind" (ngModelChange)="updateStep(selectedStepIndex()!, { agentKind: $event })">
-                    @for (kind of agentKinds; track kind) {
-                      <option [value]="kind">{{ kind }}</option>
-                    }
-                  </select>
-                </label>
-                <label class="field">
-                  <span class="field-label">instructions</span>
-                  <textarea
-                    rows="4"
-                    placeholder="instructions for the agent"
-                    [ngModel]="step.instructions"
-                    (ngModelChange)="updateStep(selectedStepIndex()!, { instructions: $event })"
-                  ></textarea>
-                </label>
-              }
-              @case ('command') {
-                <label class="field">
-                  <span class="field-label">command</span>
-                  <textarea
-                    rows="3"
-                    placeholder="shell command"
-                    [ngModel]="step.command"
-                    (ngModelChange)="updateStep(selectedStepIndex()!, { command: $event })"
-                  ></textarea>
-                </label>
-                <label class="field">
-                  <span class="field-label">label</span>
-                  <input
-                    type="text"
-                    placeholder="a short label (Build)"
-                    [ngModel]="step.description"
-                    (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
-                  />
-                </label>
-              }
-              @case ('human') {
-                <label class="field">
-                  <span class="field-label">approval prompt</span>
-                  <textarea
-                    rows="4"
-                    placeholder="approval prompt"
-                    [ngModel]="step.description"
-                    (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
-                  ></textarea>
-                </label>
-              }
-            }
-
-            <label class="field">
-              <span class="field-label">on failure</span>
-              <select
-                [ngModel]="step.errorReturnToStepId"
-                (ngModelChange)="updateStep(selectedStepIndex()!, { errorReturnToStepId: $event })"
-              >
-                <option value="">stay here</option>
-                @for (target of errorTargets(selectedStepIndex()!); track target.id) {
-                  <option [value]="target.id">return to {{ nodeLabel(target) }}</option>
+            <section class="panel-group">
+              <span class="group-label">execution</span>
+              @switch (step.kind) {
+                @case ('agent') {
+                  <label class="field agent">
+                    <span class="field-label">agent</span>
+                    <select [ngModel]="step.agentKind" (ngModelChange)="updateStep(selectedStepIndex()!, { agentKind: $event })">
+                      @for (agent of agentOptions(); track agent.id) {
+                        <option [value]="agent.id">{{ agent.label }}</option>
+                      }
+                    </select>
+                  </label>
+                  @if (agentDescription(step.agentKind); as description) {
+                    <p class="panel-hint">{{ description }}</p>
+                  }
                 }
-              </select>
-            </label>
+                @case ('command') {
+                  <label class="field">
+                    <span class="field-label">runtime step</span>
+                    <select (change)="applyRuntimeStep(selectedStepIndex()!, $any($event.target).value)">
+                      <option value="">add a predefined step…</option>
+                      @for (preset of runtimeSteps(); track preset.id) {
+                        <option [value]="preset.id">{{ preset.label }}</option>
+                      }
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">command</span>
+                    <textarea
+                      rows="3"
+                      placeholder="shell command"
+                      [ngModel]="step.command"
+                      (ngModelChange)="updateStep(selectedStepIndex()!, { command: $event })"
+                    ></textarea>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">label</span>
+                    <input
+                      type="text"
+                      placeholder="a short label (Build)"
+                      [ngModel]="step.description"
+                      (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
+                    />
+                  </label>
+                }
+                @case ('human') {
+                  <label class="field">
+                    <span class="field-label">approval prompt</span>
+                    <textarea
+                      rows="4"
+                      placeholder="approval prompt"
+                      [ngModel]="step.description"
+                      (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
+                    ></textarea>
+                  </label>
+                }
+              }
+            </section>
 
             @if (step.kind === 'agent') {
-              <button class="mini add-outcome" (click)="addOutcome(selectedStepIndex()!)">+ outcome</button>
-              @for (rule of step.outcomes; track $index) {
-                <div class="outcome-rule">
-                  <input
-                    type="text"
-                    placeholder="outcome name"
-                    [ngModel]="rule.outcome"
-                    (ngModelChange)="updateOutcome(selectedStepIndex()!, $index, { outcome: $event })"
-                  />
-                  <select
-                    [ngModel]="rule.toStepId"
-                    (ngModelChange)="updateOutcome(selectedStepIndex()!, $index, { toStepId: $event })"
-                  >
-                    <option value="">proceed</option>
-                    @for (target of errorTargets(selectedStepIndex()!); track target.id) {
-                      <option [value]="target.id">return to {{ nodeLabel(target) }}</option>
-                    }
-                  </select>
-                  <button class="mini danger" (click)="removeOutcome(selectedStepIndex()!, $index)" title="remove outcome">
-                    <lucide-icon [img]="icons.trash" [size]="11" />
-                  </button>
-                </div>
-              }
-              @if (step.outcomes.length > 0) {
-                <label class="flag">
-                  <input
-                    type="checkbox"
-                    [ngModel]="step.requiresOutcome"
-                    (ngModelChange)="updateStep(selectedStepIndex()!, { requiresOutcome: $event })"
-                  />
-                  the agent must report an outcome
-                </label>
-              }
+              <section class="panel-group">
+                <span class="group-label">outcomes</span>
+                <button class="mini add-outcome" (click)="addOutcome(selectedStepIndex()!)">+ outcome</button>
+                @for (rule of step.outcomes; track $index) {
+                  <div class="outcome-rule">
+                    <input
+                      type="text"
+                      placeholder="outcome name"
+                      [ngModel]="rule.outcome"
+                      (ngModelChange)="updateOutcome(selectedStepIndex()!, $index, { outcome: $event })"
+                    />
+                    <select
+                      [ngModel]="rule.toStepId"
+                      (ngModelChange)="updateOutcome(selectedStepIndex()!, $index, { toStepId: $event })"
+                    >
+                      <option value="">proceed</option>
+                      @for (target of errorTargets(selectedStepIndex()!); track target.id) {
+                        <option [value]="target.id">return to {{ nodeLabel(target) }}</option>
+                      }
+                    </select>
+                    <button class="mini danger" (click)="removeOutcome(selectedStepIndex()!, $index)" title="remove outcome">
+                      <lucide-icon [img]="icons.trash" [size]="11" />
+                    </button>
+                  </div>
+                }
+                @if (step.outcomes.length > 0) {
+                  <label class="flag">
+                    <input
+                      type="checkbox"
+                      [ngModel]="step.requiresOutcome"
+                      (ngModelChange)="updateStep(selectedStepIndex()!, { requiresOutcome: $event })"
+                    />
+                    the agent must report an outcome
+                  </label>
+                }
+              </section>
             }
+
+            <section class="panel-group">
+              <span class="group-label">on failure</span>
+              <label class="field">
+                <select
+                  [ngModel]="step.errorReturnToStepId"
+                  (ngModelChange)="updateStep(selectedStepIndex()!, { errorReturnToStepId: $event })"
+                >
+                  <option value="">stay here</option>
+                  @for (target of errorTargets(selectedStepIndex()!); track target.id) {
+                    <option [value]="target.id">return to {{ nodeLabel(target) }}</option>
+                  }
+                </select>
+              </label>
+            </section>
           }
         </aside>
       } @else {

@@ -65,13 +65,22 @@ export class Thread {
   }
 
   /** Appends a user message; the index lands past every folded message. */
-  messageEvents(text: string, clock: Clock, ids: IdGenerator): PendingEvent[] {
+  messageEvents(text: string, clock: Clock, ids: IdGenerator, parentId?: string): PendingEvent[] {
     this.requireOpen();
     if (text.trim() === '') {
       throw new CommandRejection('invalidCommand', 'Message text is required');
     }
+    const parent = parentId !== undefined
+      ? this.thread.messages.find((entry) => entry.id === parentId && !entry.activity)
+      : [...this.thread.messages]
+          .filter((entry) => !entry.activity)
+          .sort((a, b) => b.index - a.index)[0];
+    if (parentId !== undefined && parent === undefined) {
+      throw new CommandRejection('unknownSession', `Unknown message ${parentId}`);
+    }
     const message: ChatMessage = {
       id: ids(),
+      ...(parent !== undefined ? { parentId: parent.id } : {}),
       index: this.nextMessageIndex(),
       role: 'user',
       text,

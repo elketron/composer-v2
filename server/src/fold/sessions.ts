@@ -15,6 +15,8 @@ export const sessionHandlers: Record<string, FoldHandler> = {
       status: 'running',
       startedAt: body.startedAt,
       transcript: [],
+      ...(body.runId !== undefined ? { runId: body.runId } : {}),
+      ...(body.stepId !== undefined ? { stepId: body.stepId } : {}),
     });
   },
   agentSessionEnded: (state, envelope, projectId) => {
@@ -24,6 +26,13 @@ export const sessionHandlers: Record<string, FoldHandler> = {
     session.status = body.status;
     session.endedAt = body.endedAt;
     if (body.error !== undefined) session.error = body.error;
+  },
+  agentSessionObserved: (state, envelope, projectId) => {
+    const body = readBody(envelope, 'agentSessionObserved');
+    const session = projectStateOf(state, projectId).agentSessions.get(body.sessionId);
+    if (!session) return;
+    if (body.usage !== undefined) session.usage = structuredClone(body.usage);
+    if (body.files !== undefined) session.files = structuredClone(body.files);
   },
   agentToolCall: (state, envelope, projectId) => {
     const body = readBody(envelope, 'agentToolCall');

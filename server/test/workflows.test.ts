@@ -275,8 +275,11 @@ describe('the outcome tool end to end', () => {
     const moved = await stream.until((frame) => frame['eventType'] === 'cardStepMoved');
     expect((moved?.['body'] as { toStepId: string }).toStepId).toBe('st-1');
     const ended = await stream.until((frame) => frame['eventType'] === 'pipelineRunEnded');
-    expect((ended?.['body'] as { status: string }).status).toBe('returned');
-    expect((ended?.['body'] as { error?: string }).error).toBe('changes_requested: tests missing');
+    const body = ended?.['body'] as { status: string; outcome?: string; feedback?: string; error?: string };
+    expect(body.status).toBe('returned');
+    expect(body.outcome).toBe('changes_requested');
+    expect(body.feedback).toBe('tests missing');
+    expect(body.error).toBeUndefined();
   });
 });
 

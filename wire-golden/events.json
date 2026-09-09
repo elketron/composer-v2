@@ -310,6 +310,32 @@
     "id": "e-24",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "agentSessionObserved",
+    "body": {
+      "sessionId": "A-1",
+      "usage": {
+        "cost": 0.0012,
+        "tokens": {
+          "input": 120,
+          "output": 40,
+          "reasoning": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        }
+      },
+      "files": [
+        {
+          "path": "src/main.ts",
+          "additions": 12,
+          "deletions": 3
+        }
+      ]
+    }
+  },
+  {
+    "id": "e-25",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentToolCall",
     "body": {
       "sessionId": "A-1",
@@ -322,7 +348,7 @@
     }
   },
   {
-    "id": "e-25",
+    "id": "e-26",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "agentToolResult",
@@ -334,7 +360,7 @@
     }
   },
   {
-    "id": "e-26",
+    "id": "e-27",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineSaved",
@@ -394,7 +420,7 @@
     }
   },
   {
-    "id": "e-27",
+    "id": "e-28",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineDeleted",
@@ -403,7 +429,7 @@
     }
   },
   {
-    "id": "e-28",
+    "id": "e-29",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineRunStarted",
@@ -415,7 +441,7 @@
     }
   },
   {
-    "id": "e-29",
+    "id": "e-30",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineStepStarted",
@@ -428,7 +454,7 @@
     }
   },
   {
-    "id": "e-30",
+    "id": "e-31",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineStepFinished",
@@ -441,7 +467,7 @@
     }
   },
   {
-    "id": "e-31",
+    "id": "e-32",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineRunEnded",
@@ -451,11 +477,13 @@
       "pipelineId": "PL-1",
       "revision": 2,
       "status": "returned",
-      "error": "changes requested: needs tests"
+      "outcome": "changes_requested",
+      "feedback": "needs tests",
+      "routedToStepId": "st-1"
     }
   },
   {
-    "id": "e-32",
+    "id": "e-33",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineGateResponded",
@@ -467,7 +495,7 @@
     }
   },
   {
-    "id": "e-33",
+    "id": "e-34",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "pipelineOutcomeReported",
@@ -481,7 +509,7 @@
     }
   },
   {
-    "id": "e-34",
+    "id": "e-35",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "commandOutput",
@@ -494,7 +522,7 @@
     }
   },
   {
-    "id": "e-35",
+    "id": "e-36",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadCreated",
     "body": {
@@ -511,7 +539,7 @@
     }
   },
   {
-    "id": "e-36",
+    "id": "e-37",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadArchived",
     "body": {
@@ -520,7 +548,7 @@
     }
   },
   {
-    "id": "e-37",
+    "id": "e-38",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadRestored",
     "body": {
@@ -529,7 +557,7 @@
     }
   },
   {
-    "id": "e-38",
+    "id": "e-39",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadScopeChanged",
     "body": {
@@ -540,7 +568,7 @@
     }
   },
   {
-    "id": "e-39",
+    "id": "e-40",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantUserMessage",
     "body": {
@@ -555,7 +583,7 @@
     }
   },
   {
-    "id": "e-40",
+    "id": "e-41",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantMessageDelta",
     "body": {
@@ -565,7 +593,7 @@
     }
   },
   {
-    "id": "e-41",
+    "id": "e-42",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantMessageComplete",
     "body": {
@@ -581,7 +609,7 @@
     }
   },
   {
-    "id": "e-42",
+    "id": "e-43",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadStopped",
     "body": {
@@ -589,7 +617,7 @@
     }
   },
   {
-    "id": "e-43",
+    "id": "e-44",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantRetryRequested",
     "body": {
@@ -597,7 +625,7 @@
     }
   },
   {
-    "id": "e-44",
+    "id": "e-45",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadStatusChanged",
     "body": {
@@ -606,7 +634,7 @@
     }
   },
   {
-    "id": "e-45",
+    "id": "e-46",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantThreadRenamed",
     "body": {
@@ -615,7 +643,7 @@
     }
   },
   {
-    "id": "e-46",
+    "id": "e-47",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantResent",
     "body": {
@@ -630,7 +658,7 @@
     }
   },
   {
-    "id": "e-47",
+    "id": "e-48",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantToolCall",
     "body": {
@@ -642,7 +670,7 @@
     }
   },
   {
-    "id": "e-48",
+    "id": "e-49",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "assistantToolResult",
     "body": {
@@ -653,7 +681,7 @@
     }
   },
   {
-    "id": "e-49",
+    "id": "e-50",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "proposalDrafted",
     "body": {
@@ -678,7 +706,7 @@
     }
   },
   {
-    "id": "e-50",
+    "id": "e-51",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "proposalConfirmed",
     "body": {
@@ -708,7 +736,7 @@
     }
   },
   {
-    "id": "e-51",
+    "id": "e-52",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "proposalDiscarded",
     "body": {
@@ -716,7 +744,7 @@
     }
   },
   {
-    "id": "e-52",
+    "id": "e-53",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "docSaved",
@@ -730,7 +758,7 @@
     }
   },
   {
-    "id": "e-53",
+    "id": "e-54",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "docDeleted",
@@ -739,7 +767,7 @@
     }
   },
   {
-    "id": "e-54",
+    "id": "e-55",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "knowledgeSaved",
     "body": {
@@ -756,7 +784,7 @@
     }
   },
   {
-    "id": "e-55",
+    "id": "e-56",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "knowledgeDeleted",
     "body": {
@@ -764,7 +792,7 @@
     }
   },
   {
-    "id": "e-56",
+    "id": "e-57",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "workflowSaved",
@@ -791,7 +819,7 @@
     }
   },
   {
-    "id": "e-57",
+    "id": "e-58",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
     "eventType": "workflowDeleted",

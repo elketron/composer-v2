@@ -1,12 +1,12 @@
 .creator {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
   margin: 0 0 12px;
-  padding: 12px;
+  padding: 8px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: var(--panel);
+  background: var(--border);
 }
 
 .line {
@@ -43,6 +43,23 @@ textarea {
   flex: none;
 }
 
+.details {
+  color: var(--text-dim);
+  font-size: 12px;
+
+  summary {
+    width: max-content;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  textarea {
+    box-sizing: border-box;
+    width: 100%;
+    margin: 7px 0;
+  }
+}
+
 .type {
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -57,11 +74,6 @@ textarea {
     border-color: var(--type-accent);
     color: var(--type-accent);
   }
-}
-
-footer {
-  display: flex;
-  gap: 6px;
 }
 
 .create,

@@ -298,6 +298,30 @@ textarea {
   padding: 1px 6px;
 }
 
+.node-route {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 3px 8px 0;
+  font-size: 10px;
+
+  .route-label {
+    color: var(--accent-soft);
+  }
+
+  .route-arrow {
+    color: var(--text-faint);
+  }
+
+  .route-target {
+    color: var(--text-dim);
+  }
+
+  &.failure .route-label {
+    color: var(--err);
+  }
+}
+
 .connector {
   display: flex;
   align-items: center;
@@ -386,6 +410,21 @@ textarea {
   select,
   textarea {
     width: 100%;
+  }
+}
+
+.panel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+
+  .group-label {
+    color: var(--text-faint);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 }
 

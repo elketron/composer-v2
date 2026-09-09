@@ -11,7 +11,7 @@
  * catalog or commands), together with the gateway's copy in
  * desktop/electron/server-registry.js.
  */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 import type {
   AgentSession,
@@ -158,6 +158,9 @@ export interface AgentSessionStarted {
   sessionId: string;
   agentKind: string;
   startedAt: string;
+  /** The run/step this session serves (retry-safe run attribution). */
+  runId?: string;
+  stepId?: string;
 }
 
 export interface AgentSessionEnded {
@@ -166,6 +169,27 @@ export interface AgentSessionEnded {
   status: AgentSessionStatus;
   error?: string;
   endedAt: string;
+}
+
+/**
+ * An absolute snapshot of an agent session's accumulated usage (cost and
+ * tokens) and edited files. Re-emitted snapshots replace (never add), so
+ * a provider's repeated updates cannot double-count. Durable: the coding
+ * run's cost, tokens, and Edited Files panes read it live and after reload.
+ */
+export interface AgentSessionObserved {
+  sessionId: string;
+  usage?: {
+    cost: number;
+    tokens: {
+      input: number;
+      output: number;
+      reasoning: number;
+      cacheRead: number;
+      cacheWrite: number;
+    };
+  };
+  files?: Array<{ path: string; additions: number; deletions: number }>;
 }
 
 export interface AgentToolCall {
@@ -222,7 +246,14 @@ export interface PipelineRunEnded {
   pipelineId: string;
   revision: number;
   status: PipelineRunStatus;
+  /** Execution failures only (tool errors, timeouts, missing outcome). */
   error?: string;
+  /** A successful named outcome that routed the card (e.g. `changes_requested`). */
+  outcome?: string;
+  /** The reviewer/human feedback the routed card carries back to the coder. */
+  feedback?: string;
+  /** Where a successful outcome or a recovered failure sent the card. */
+  routedToStepId?: string;
 }
 
 /** A parked approval gate was answered; the run resumes. */
@@ -441,6 +472,7 @@ export interface EventBodyMap {
   projectRestored: ProjectRestored;
   agentSessionStarted: AgentSessionStarted;
   agentSessionEnded: AgentSessionEnded;
+  agentSessionObserved: AgentSessionObserved;
   agentToolCall: AgentToolCall;
   agentToolResult: AgentToolResult;
   pipelineSaved: PipelineSaved;
@@ -505,6 +537,7 @@ export const EVENT_NAMES = Object.keys({
   projectRestored: null,
   agentSessionStarted: null,
   agentSessionEnded: null,
+  agentSessionObserved: null,
   agentToolCall: null,
   agentToolResult: null,
   pipelineSaved: null,

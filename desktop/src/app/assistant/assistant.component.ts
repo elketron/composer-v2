@@ -76,6 +76,7 @@ export class AssistantComponent {
    * the details element's toggle event lands.
    */
   protected readonly scopeDraft = signal<ReadonlySet<string> | null>(null);
+  protected readonly scopeSaving = signal(false);
 
   // A signal so clearing it after send repaints under zoneless CD.
   protected readonly draft = signal('');
@@ -393,9 +394,12 @@ export class AssistantComponent {
 
   protected async saveScope(): Promise<void> {
     const thread = this.thread();
-    if (!thread) return;
+    if (!thread || this.scopeSaving()) return;
     const draft = this.scopeDraft() ?? new Set(thread.projectIds);
-    await this.assistant.setScope(thread.id, [...draft]);
+    this.scopeSaving.set(true);
+    const saved = await this.assistant.setScope(thread.id, [...draft]);
+    this.scopeSaving.set(false);
+    if (saved) this.scopeDraft.set(null);
   }
 
   protected send(): void {
@@ -405,7 +409,8 @@ export class AssistantComponent {
     }
     const text = this.draft();
     this.pinned.set(true);
-    void this.assistant.sendMessage(text).then((sent) => {
+    const projectIds = [...(this.scopeDraft() ?? new Set(this.thread()?.projectIds ?? []))];
+    void this.assistant.sendMessage(text, projectIds).then((sent) => {
       if (sent) {
         this.draft.set('');
         const area = this.composerArea()?.nativeElement;

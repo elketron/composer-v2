@@ -16,6 +16,9 @@ export interface RunInit {
   startedAt: string;
   endedAt?: string;
   error?: string;
+  outcome?: string;
+  feedback?: string;
+  routedToStepId?: string;
   stepId?: string;
   stepKind?: PipelineStepKind;
 }
@@ -29,6 +32,9 @@ export class Run {
   readonly startedAt: string;
   readonly endedAt?: string;
   readonly error?: string;
+  readonly outcome?: string;
+  readonly feedback?: string;
+  readonly routedToStepId?: string;
   readonly stepId?: string;
   readonly stepKind?: PipelineStepKind;
 
@@ -41,6 +47,9 @@ export class Run {
     this.startedAt = init.startedAt;
     if (init.endedAt !== undefined) this.endedAt = init.endedAt;
     if (init.error !== undefined) this.error = init.error;
+    if (init.outcome !== undefined) this.outcome = init.outcome;
+    if (init.feedback !== undefined) this.feedback = init.feedback;
+    if (init.routedToStepId !== undefined) this.routedToStepId = init.routedToStepId;
     if (init.stepId !== undefined) this.stepId = init.stepId;
     if (init.stepKind !== undefined) this.stepKind = init.stepKind;
   }
@@ -73,6 +82,9 @@ export class Run {
       startedAt: this.startedAt,
       ...(this.endedAt !== undefined ? { endedAt: this.endedAt } : {}),
       ...(this.error !== undefined ? { error: this.error } : {}),
+      ...(this.outcome !== undefined ? { outcome: this.outcome } : {}),
+      ...(this.feedback !== undefined ? { feedback: this.feedback } : {}),
+      ...(this.routedToStepId !== undefined ? { routedToStepId: this.routedToStepId } : {}),
       ...(this.stepId !== undefined ? { stepId: this.stepId } : {}),
       ...(this.stepKind !== undefined ? { stepKind: this.stepKind } : {}),
     };

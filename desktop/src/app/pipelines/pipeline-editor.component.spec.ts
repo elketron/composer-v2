@@ -95,7 +95,7 @@ describe('PipelineEditorComponent', () => {
     expect(el.querySelectorAll('.diagram .node')).toHaveLength(4);
     expect([...el.querySelectorAll('.node-label')].map((node) => node.textContent?.trim())).toEqual([
       'coder',
-      'command',
+      'Run tests',
       'approval',
       'done',
     ]);
@@ -118,8 +118,10 @@ describe('PipelineEditorComponent', () => {
 
     expect(el.querySelector('.panel .panel-title')?.textContent).toContain('step 1');
     expect(el.querySelector<HTMLSelectElement>('.field.agent select')!.value).toBe('coder');
-    expect(el.querySelector<HTMLTextAreaElement>('.field textarea')!.value).toBe('Implement the card.');
     expect(el.querySelector<HTMLInputElement>('.flag input[type="checkbox"]')!.checked).toBe(true);
+    // An agent step selects a predefined agent; it no longer exposes a
+    // free-form instructions field (the agent owns its instructions).
+    expect(el.querySelector<HTMLTextAreaElement>('.field textarea')).toBeNull();
   });
 
   it('authors and saves a new pipeline from the diagram and side panel', async () => {
@@ -131,7 +133,6 @@ describe('PipelineEditorComponent', () => {
     await type(fixture, el.querySelector<HTMLInputElement>('.edit-bar input.name')!, 'Quick fix');
     el.querySelector<HTMLButtonElement>('.node-select')!.click();
     await fixture.whenStable();
-    await type(fixture, el.querySelector<HTMLTextAreaElement>('.field textarea')!, 'Implement it');
     el.querySelector<HTMLButtonElement>('.edit-bar .save')!.click();
     await fixture.whenStable();
 
@@ -146,7 +147,6 @@ describe('PipelineEditorComponent', () => {
               kind: 'agent',
               boardVisible: true,
               agentKind: 'coder',
-              instructions: 'Implement it',
             },
             { id: 'st-2', kind: 'human', boardVisible: true, terminal: true },
           ],
@@ -202,6 +202,58 @@ describe('PipelineEditorComponent', () => {
     expect(events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.steps[0]).toMatchObject({
       outcomes: [{ outcome: 'rework' }],
     });
+  });
+
+  it('visualizes a step backward routes (outcomes and failure)', async () => {
+    events.emit(
+      wireEvent('pipelineSaved', {
+        pipeline: {
+          id: 'PL-1',
+          projectId: 'P-1',
+          name: 'review loop',
+          revision: 1,
+          steps: [
+            { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder' },
+            {
+              id: 'st-2',
+              kind: 'agent',
+              boardVisible: true,
+              agentKind: 'reviewer',
+              outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStepId: 'st-1' }],
+              requiresOutcome: true,
+              errorReturnToStepId: 'st-1',
+            },
+            { id: 'st-3', kind: 'human', boardVisible: true, terminal: true },
+          ],
+          updatedAt: new Date().toISOString(),
+        },
+      }),
+    );
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    await openEditor(fixture);
+
+    const nodes = [...el.querySelectorAll('.diagram .node')];
+    const routes = [...nodes[1]!.querySelectorAll('.node-route')];
+    expect(routes).toHaveLength(2);
+    expect(routes[0]!.textContent).toContain('changes_requested');
+    expect(routes[0]!.textContent).toContain('→');
+    expect(routes[0]!.textContent).toContain('coder');
+    expect(routes[1]!.classList).toContain('failure');
+    expect(routes[0]!.classList).not.toContain('failure');
+  });
+
+  it('separates presentation, execution, outcomes, and failure into groups', async () => {
+    seedPipeline();
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    await openEditor(fixture);
+
+    el.querySelectorAll<HTMLButtonElement>('.node-select')[0]!.click();
+    await fixture.whenStable();
+
+    const labels = [...el.querySelectorAll('.panel .group-label')].map((node) => node.textContent?.trim());
+    expect(labels).toEqual(['presentation', 'execution', 'outcomes', 'on failure']);
   });
 
   it('shows validation only after save and resets it for the next draft', async () => {

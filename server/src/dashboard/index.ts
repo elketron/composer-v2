@@ -42,11 +42,12 @@ export async function dashboardProjects(
         pipelineId: run.pipelineId,
       }))
       .sort((a, b) => a.cardId.localeCompare(b.cardId));
-    // The card's latest run feeds health: failed and returned runs are both
-    // actionable (a returned run means work came back from a later stage).
+    // The card's latest run feeds health: only execution failures are
+    // actionable (a `returned` run is a successful outcome route, e.g.
+    // changes_requested, not a failure).
     const failedRuns = [...new Set([...board.runs.values()].map((run) => run.cardId))]
       .map((cardId) => board.latestRunOf(cardId))
-      .filter((run): run is Run => run !== undefined && (run.status === 'failed' || run.status === 'returned'))
+      .filter((run): run is Run => run !== undefined && run.status === 'failed')
       .map((run) => ({
         runId: run.id,
         cardId: run.cardId,

@@ -50,6 +50,8 @@ export function appendProject(emit: FrameEmitter, project: Project, projectState
         sessionId: session.id,
         agentKind: session.agentKind ?? 'coder',
         startedAt: session.startedAt,
+        ...(session.runId !== undefined ? { runId: session.runId } : {}),
+        ...(session.stepId !== undefined ? { stepId: session.stepId } : {}),
       },
     );
     for (const entry of session.transcript) {
@@ -70,6 +72,17 @@ export function appendProject(emit: FrameEmitter, project: Project, projectState
           isError: entry.isError,
         });
       }
+    }
+    if (session.usage !== undefined || session.files !== undefined) {
+      emit(
+        project.id,
+        'agentSessionObserved',
+        {
+          sessionId: session.id,
+          ...(session.usage !== undefined ? { usage: structuredClone(session.usage) } : {}),
+          ...(session.files !== undefined ? { files: structuredClone(session.files) } : {}),
+        },
+      );
     }
     if (session.status !== 'running') {
       emit(
@@ -128,6 +141,9 @@ export function appendProject(emit: FrameEmitter, project: Project, projectState
         revision: run.revision,
         status: run.status,
         ...(run.error !== undefined ? { error: run.error } : {}),
+        ...(run.outcome !== undefined ? { outcome: run.outcome } : {}),
+        ...(run.feedback !== undefined ? { feedback: run.feedback } : {}),
+        ...(run.routedToStepId !== undefined ? { routedToStepId: run.routedToStepId } : {}),
       },
       run.endedAt ?? run.startedAt,
     );

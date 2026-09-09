@@ -38,6 +38,7 @@ const keep = (process.env['COMPOSER_BINDINGS'] ?? 'linux-x64-gnu,linux-x64-musl,
   });
 }
 const bundle = join(repo, 'server', 'dist-bundle', 'index.mjs');
+const mcpBundle = join(repo, 'server', 'dist-bundle', 'mcp');
 const nativeDist = join(repo, 'server', 'node_modules', '@surrealdb', 'node', 'dist');
 if (!existsSync(bundle)) throw new Error('the server bundle is missing');
 if (!existsSync(nativeDist)) throw new Error('@surrealdb/node is not installed');
@@ -45,6 +46,25 @@ if (!existsSync(nativeDist)) throw new Error('@surrealdb/node is not installed')
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 cpSync(bundle, join(stage, 'index.mjs'));
+{
+  const serverRequire = createRequire(join(repo, 'server', 'package.json'));
+  const { build } = await serverRequire('esbuild');
+  await build({
+    entryPoints: {
+      planner: join(repo, 'server', 'src', 'mcp', 'planner.ts'),
+      assistant: join(repo, 'server', 'src', 'mcp', 'assistant.ts'),
+      worker: join(repo, 'server', 'src', 'mcp', 'worker.ts'),
+    },
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    outdir: mcpBundle,
+    outExtension: { '.js': '.mjs' },
+    logLevel: 'warning',
+  });
+}
+cpSync(mcpBundle, join(stage, 'mcp'), { recursive: true });
 for (const file of readdirSync(nativeDist)) {
   if (!file.endsWith('.node')) continue;
   if (!keep.some((binding) => file.includes(binding))) continue;

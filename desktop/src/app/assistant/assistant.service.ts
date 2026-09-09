@@ -231,7 +231,7 @@ export class AssistantService {
   }
 
   /** requestAssistantMessage; the reply arrives on the stream. */
-  async sendMessage(text: string): Promise<boolean> {
+  async sendMessage(text: string, projectIds?: readonly string[]): Promise<boolean> {
     const value = text.trim();
     if (!value || this.isSending()) return false;
 
@@ -244,9 +244,12 @@ export class AssistantService {
       return false;
     }
     if (thread.id !== this.activeThreadIdSignal()) this.select(thread.id);
+    const parent = this.messages().at(-1);
     const response = await this.publish('requestAssistantMessage', {
       threadId: thread.id,
       text: value,
+      ...(parent?.id ? { parentId: parent.id } : {}),
+      ...(projectIds !== undefined ? { projectIds: [...projectIds] } : {}),
     });
     if (!response.ok) {
       this.isSending.set(false);
@@ -568,8 +571,9 @@ export class AssistantService {
               role: message.role,
               text: message.text,
               at: message.at,
-              id: message.id,
-              parentId: message.parentId ?? undefined,
+               id: message.id,
+               parentId: message.parentId ?? undefined,
+               activity: message.activity,
             })
           : message;
       const messages = thread.messages.filter((entry) => entry.index !== healed.index);

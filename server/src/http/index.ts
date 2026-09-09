@@ -15,6 +15,7 @@ import type { Processor } from '../processor/index.js';
 import type { EventStore } from '../store/index.js';
 import type { KnowledgeStore } from '../knowledge.js';
 import { registerActionRoute } from './action.js';
+import { registerCatalogRoutes } from './catalog.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerDocsRoutes } from './docs.js';
 import { type HttpDeps } from './deps.js';
@@ -37,6 +38,7 @@ export function router(
 
   const deps: HttpDeps = { bus, processor, store, knowledge, models };
   registerHealth(app);
+  registerCatalogRoutes(app);
   registerDashboardRoutes(app, deps);
   registerDocsRoutes(app, deps);
   registerWorkflowRoutes(app, deps);

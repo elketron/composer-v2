@@ -12,15 +12,22 @@
       }
     </nav>
     <app-type-selector [(selected)]="filter" />
-    <button class="new-card" (click)="creating.set(!creating())">
+    <button
+      #newCardButton
+      type="button"
+      class="new-card"
+      [attr.aria-expanded]="creating()"
+      [disabled]="!selectedPipeline()"
+      (click)="beginCreate()"
+    >
       + new card
     </button>
   </header>
 
   <div class="board-body">
     <div class="board-area">
-      @if (creating()) {
-        <app-card-creator (closed)="creating.set(false)" />
+      @if (creating() && selectedPipeline(); as pipeline) {
+        <app-card-creator [pipelineId]="pipeline.id" (closed)="closeCreator()" />
       }
 
       @if (selectedPipeline(); as pipeline) {

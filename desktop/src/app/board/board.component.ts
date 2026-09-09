@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, computed, inject, signal, viewChild } from '@angular/core';
 
 import { BoardFilter } from '../core/models/board.models';
 import { Pipeline } from '../core/models/pipeline.models';
@@ -43,6 +43,7 @@ export class BoardComponent {
 
   /** The explicitly selected tab; null falls back to the first pipeline. */
   private readonly selectedTabId = signal<string | null>(null);
+  private readonly newCardButton = viewChild<ElementRef<HTMLButtonElement>>('newCardButton');
 
   protected readonly selectedPipeline = computed<Pipeline | undefined>(() => {
     const id = this.selectedTabId();
@@ -54,7 +55,17 @@ export class BoardComponent {
     this.selectedPipeline()?.id === pipeline.id;
 
   protected selectTab(pipelineId: string): void {
+    this.creating.set(false);
     this.selectedTabId.set(pipelineId);
+  }
+
+  protected beginCreate(): void {
+    if (this.selectedPipeline() !== undefined) this.creating.set(true);
+  }
+
+  protected closeCreator(): void {
+    this.creating.set(false);
+    queueMicrotask(() => this.newCardButton()?.nativeElement.focus());
   }
 
   /** The tab's cards (its assigned pipeline), filtered by the type selector. */

@@ -74,18 +74,17 @@ export async function drivePipeline(
       ...(failure !== undefined ? { error: failure } : {}),
     });
     if (failure !== undefined) {
-      await endRun(bus, task, pipeline, step, 'failed', failure);
+      await endRunFailed(bus, task, pipeline, step, failure, step.errorReturnToStepId);
       return;
     }
     if (returnTo !== undefined) {
       const note = returnTo.report.note?.trim();
-      await endRun(
+      await endRunOutcome(
         bus,
         task,
         pipeline,
         step,
-        'returned',
-        note ? `${returnTo.report.outcome}: ${note}` : `outcome '${returnTo.report.outcome}' returned the card`,
+        returnTo.report.outcome,
         note || undefined,
         returnTo.target,
       );
@@ -94,17 +93,10 @@ export async function drivePipeline(
     if (step.kind === 'human' && result.ok && result.decision !== undefined) {
       gate = result.decision;
       if (!gate.approved) {
-        await endRun(
-          bus,
-          task,
-          pipeline,
-          step,
-          'returned',
-          gate.comment !== undefined && gate.comment.trim() !== ''
-            ? `changes requested: ${gate.comment.trim()}`
-            : 'changes requested at the approval gate',
-          gate.comment,
-        );
+        const feedback = gate.comment !== undefined && gate.comment.trim() !== ''
+          ? gate.comment.trim()
+          : 'changes requested at the approval gate';
+        await endRunOutcome(bus, task, pipeline, step, 'changes_requested', feedback, step.errorReturnToStepId);
         return;
       }
     }
@@ -127,23 +119,27 @@ export async function drivePipeline(
   }
 }
 
-async function endRun(
+/**
+ * A successful named outcome (or a human gate rejection) routed the card
+ * backward: the step succeeded, the feedback rides the card back to the
+ * coder, and the run ends as a non-failure outcome route — never an error.
+ */
+async function endRunOutcome(
   bus: Bus,
   task: RunTask,
   pipeline: Pipeline,
   step: PipelineStep,
-  status: 'failed' | 'returned',
-  error: string,
-  comment?: string,
-  returnTo: string | undefined = step.errorReturnToStepId,
+  outcome: string,
+  feedback: string | undefined,
+  routedTo: string | undefined,
 ): Promise<void> {
-  if (returnTo !== undefined) {
+  if (routedTo !== undefined) {
     await bus.publish(task.projectId, 'cardStepMoved', {
       cardId: task.cardId,
       pipelineId: pipeline.id,
       fromStepId: step.id,
-      toStepId: returnTo,
-      ...(comment !== undefined ? { comment } : {}),
+      toStepId: routedTo,
+      ...(feedback !== undefined ? { comment: feedback } : {}),
     });
   }
   await bus.publish(task.projectId, 'pipelineRunEnded', {
@@ -151,8 +147,42 @@ async function endRun(
     cardId: task.cardId,
     pipelineId: pipeline.id,
     revision: pipeline.revision,
-    status: returnTo !== undefined ? 'returned' : status,
+    status: 'returned',
+    outcome,
+    ...(feedback !== undefined ? { feedback } : {}),
+    ...(routedTo !== undefined ? { routedToStepId: routedTo } : {}),
+  });
+}
+
+/**
+ * Execution failure: the step failed. The card may move to a recovery step
+ * (the step's error return), but the run itself stays a failure — a routed
+ * recovery is not a successful outcome.
+ */
+async function endRunFailed(
+  bus: Bus,
+  task: RunTask,
+  pipeline: Pipeline,
+  step: PipelineStep,
+  error: string,
+  returnTo: string | undefined,
+): Promise<void> {
+  if (returnTo !== undefined) {
+    await bus.publish(task.projectId, 'cardStepMoved', {
+      cardId: task.cardId,
+      pipelineId: pipeline.id,
+      fromStepId: step.id,
+      toStepId: returnTo,
+    });
+  }
+  await bus.publish(task.projectId, 'pipelineRunEnded', {
+    runId: task.runId,
+    cardId: task.cardId,
+    pipelineId: pipeline.id,
+    revision: pipeline.revision,
+    status: 'failed',
     ...(error !== '' ? { error } : {}),
+    ...(returnTo !== undefined ? { routedToStepId: returnTo } : {}),
   });
 }
 

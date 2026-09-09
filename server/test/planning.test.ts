@@ -214,19 +214,22 @@ describe('planning commands', () => {
     });
     expect(existing.ok).toBe(true);
 
+    const planDocument = [
+      ticketBlock({ title: 'Alpha', cardType: 'coding', key: 'a' }),
+      ticketBlock({ title: 'Beta', cardType: 'design', key: 'b', blockedBy: ['a', 'T-1'] }),
+      ticketBlock({ title: 'Gamma', cardType: 'docs', blockedBy: ['b'] }),
+    ].join('\n\n');
     await processor.execute(projectId, {
       type: 'requestPlanDocumentUpdate',
       sessionId,
-      document: [
-        ticketBlock({ title: 'Alpha', cardType: 'coding', key: 'a' }),
-        ticketBlock({ title: 'Beta', cardType: 'design', key: 'b', blockedBy: ['a', 'T-1'] }),
-        ticketBlock({ title: 'Gamma', cardType: 'docs', blockedBy: ['b'] }),
-      ].join('\n\n'),
+      document: planDocument,
     });
 
     const result = await processor.execute(projectId, {
       type: 'requestTicketsCreate',
       sessionId,
+      pipelineId: 'PL-1',
+      document: planDocument,
     });
     expect(result).toEqual({ ok: true, cards: 3 });
 
@@ -255,6 +258,24 @@ describe('planning commands', () => {
     expect(card?.pipelineId).toBe('PL-1');
     expect(card?.stepId).toBe('st-1');
     expect(card?.stepStates).toEqual({});
+  });
+
+  it('create_tickets_requires_a_known_target_pipeline', async () => {
+    const document = ticketBlock({ title: 'Alpha' });
+    await processor.execute(projectId, {
+      type: 'requestPlanDocumentUpdate',
+      sessionId,
+      document,
+    });
+    expect(await processor.execute(projectId, {
+      type: 'requestTicketsCreate',
+      sessionId,
+      pipelineId: 'PL-99',
+      document,
+    })).toEqual({
+      ok: false,
+      rejection: { code: 'unknownPipeline', message: 'Unknown pipeline PL-99' },
+    });
   });
 
   it('create_tickets_rejects_invalid_input', async () => {
@@ -288,6 +309,8 @@ describe('planning commands', () => {
       const result = await processor.execute(projectId, {
         type: 'requestTicketsCreate',
         sessionId: case_.sessionId,
+        pipelineId: 'PL-1',
+        document: case_.document,
       });
       expect(result).toEqual({
         ok: false,
@@ -297,14 +320,17 @@ describe('planning commands', () => {
   });
 
   it('done_session_rejects_document_updates_and_ticket_reemission', async () => {
+    const document = ticketBlock({ title: 'Alpha', key: 'a' });
     await processor.execute(projectId, {
       type: 'requestPlanDocumentUpdate',
       sessionId,
-      document: ticketBlock({ title: 'Alpha', key: 'a' }),
+      document,
     });
     const done = await processor.execute(projectId, {
       type: 'requestTicketsCreate',
       sessionId,
+      pipelineId: 'PL-1',
+      document,
     });
     expect(done).toEqual({ ok: true, cards: 1 });
 
@@ -331,6 +357,8 @@ describe('planning commands', () => {
     const again = await processor.execute(projectId, {
       type: 'requestTicketsCreate',
       sessionId,
+      pipelineId: 'PL-1',
+      document,
     });
     expect(again).toEqual({
       ok: false,
@@ -352,6 +380,8 @@ describe('planning commands', () => {
     await processor.execute(projectId, {
       type: 'requestTicketsCreate',
       sessionId,
+      pipelineId: 'PL-1',
+      document: ticketBlock({ title: 'Alpha', key: 'a' }),
     });
 
     const snapshot = snapshotEvents(bus.state);
@@ -431,7 +461,10 @@ describe('the planning turn', () => {
   });
 
   it('a_chat_turn_commits_the_edited_plan_document', async () => {
-    engine.enqueue(async ({ tools, emit }) => {
+    engine.enqueue(async ({ spec, tools, emit }) => {
+      expect(spec.projectDirectory).toContain('composer-planner-');
+      expect(spec.planDocumentPath).toBe(`${spec.projectDirectory}/plan.md`);
+      expect(spec.prompt).toContain('- PL-1: Standard coding card');
       emit({ kind: 'messageDelta', messageId: 'm1', delta: 'drafting ' });
       emit({ kind: 'messageDelta', messageId: 'm1', delta: 'the plan' });
       const result = await tools.editDocument('<plan><goal>board</goal></plan>');
@@ -454,6 +487,27 @@ describe('the planning turn', () => {
     expect(deltas.map((frame) => (frame.body as { delta: string }).delta).join('')).toBe('drafting the plan');
     const complete = recorded.filter((frame) => frame.eventType === 'agentMessageComplete').at(-1);
     expect(complete?.body).toMatchObject({ sessionId, message: { index: 2, role: 'agent', text: 'drafted the plan' } });
+    expect(recorded.findLastIndex((frame) => frame.eventType === 'planDocumentUpdated'))
+      .toBeLessThan(recorded.findLastIndex((frame) => frame.eventType === 'agentMessageComplete'));
+  });
+
+  it('a_document_shaped_final_message_does_not_replace_the_plan_file', async () => {
+    await processor.execute(projectId, {
+      type: 'requestPlanDocumentUpdate',
+      sessionId,
+      document: '# Durable plan',
+    });
+    engine.enqueue(async () => '# Chat-only plan\n\nThis was not written to plan.md.');
+
+    await processor.execute(projectId, {
+      type: 'requestUserMessage',
+      sessionId,
+      text: 'revise it',
+    });
+    await waitUntil(() => session(projectId, sessionId).messages.at(-1)?.role === 'agent');
+
+    expect(session(projectId, sessionId).planDocument).toBe('# Durable plan');
+    expect(session(projectId, sessionId).messages.at(-1)?.text).toContain('# Chat-only plan');
   });
 
   it('two_messages_in_one_turn_get_distinct_indices_and_pair_with_their_deltas', async () => {
@@ -516,7 +570,7 @@ describe('the planning turn', () => {
       return 'drafted';
     });
     engine.enqueue(async ({ tools }) => {
-      const result = await tools.createTickets();
+      const result = await tools.createTickets('PL-1');
       expect(result).toEqual({ ok: true, cards: 2 });
       return 'committed';
     });

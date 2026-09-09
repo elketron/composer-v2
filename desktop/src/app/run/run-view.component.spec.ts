@@ -78,7 +78,7 @@ describe('RunViewComponent', () => {
     expect(output).toContain('the file contents');
 
     expect(el.querySelector('.pane.build')!.textContent).toContain('npm test');
-    expect(el.querySelector('.pane.context')!.textContent).toContain('todo');
+    expect(el.querySelector('.pane.context')!.textContent).toContain('pipeline');
   });
 
   it('stop publishes requestPipelineStop for the card', async () => {

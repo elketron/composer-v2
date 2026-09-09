@@ -223,6 +223,10 @@
   font-size: 12px;
   color: var(--text-dim);
   padding: 3px 0;
+
+  .muted {
+    color: var(--text-faint);
+  }
 }
 
 .files-delta {
@@ -238,31 +242,47 @@
   }
 }
 
-.todo-row {
+.file-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 0;
+
+  .file-path {
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.pipeline-row {
   display: flex;
   align-items: baseline;
   gap: 8px;
   font-size: 12px;
   padding: 3px 0;
 
-  .todo-label {
+  .pipeline-label {
     color: var(--text-dim);
   }
 
-  .todo-status {
+  .pipeline-status {
     margin-left: auto;
     color: var(--text-faint);
   }
 
-  &.running .todo-label {
+  &.running .pipeline-label {
     color: var(--text);
   }
 
-  &.ok .todo-status {
+  &.ok .pipeline-status {
     color: var(--ok);
   }
 
-  &.failed .todo-status {
+  &.failed .pipeline-status {
     color: var(--err);
   }
 }

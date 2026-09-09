@@ -100,6 +100,11 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
   projectRestored: { projectId: 'P-1', restoredAt: TS },
   agentSessionStarted: { cardId: 'T-1', sessionId: 'A-1', agentKind: 'coder', startedAt: TS },
   agentSessionEnded: { cardId: 'T-1', sessionId: 'A-1', status: 'ended', endedAt: TS },
+  agentSessionObserved: {
+    sessionId: 'A-1',
+    usage: { cost: 0.0012, tokens: { input: 120, output: 40, reasoning: 0, cacheRead: 0, cacheWrite: 0 } },
+    files: [{ path: 'src/main.ts', additions: 12, deletions: 3 }],
+  },
   agentToolCall: {
     sessionId: 'A-1',
     toolCallId: 'call-1',
@@ -153,7 +158,9 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
     pipelineId: 'PL-1',
     revision: 2,
     status: 'returned' as const,
-    error: 'changes requested: needs tests',
+    outcome: 'changes_requested',
+    feedback: 'needs tests',
+    routedToStepId: 'st-1',
   },
   pipelineGateResponded: { runId: 'R-1', cardId: 'T-1', approved: true, comment: 'ship it' },
   pipelineOutcomeReported: {

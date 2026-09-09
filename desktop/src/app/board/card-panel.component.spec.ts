@@ -370,7 +370,7 @@ describe('CardPanelComponent', () => {
     expect(outcome?.querySelector('.open-run')).toBeTruthy();
   });
 
-  it('styles a returned run as actionable', async () => {
+  it('styles a returned run as a non-failure outcome route', async () => {
     events.emit(
       wireEvent('pipelineRunStarted', { runId: 'R-1', cardId: 'T-148', pipelineId: 'PL-1', revision: 1 }),
     );
@@ -381,14 +381,18 @@ describe('CardPanelComponent', () => {
         pipelineId: 'PL-1',
         revision: 1,
         status: WirePipelineRunStatus.PIPELINE_RUN_STATUS_RETURNED,
-        error: 'changes requested: needs tests',
+        outcome: 'changes_requested',
+        feedback: 'needs tests',
+        routedToStepId: 'st-1',
       }),
     );
 
     const fixture = await render('T-148');
     const outcome = el(fixture).querySelector('.run-outcome');
-    expect(outcome?.classList).toContain('failed');
+    expect(outcome?.classList).toContain('returned');
+    expect(outcome?.classList).not.toContain('failed');
     expect(outcome?.textContent).toContain('returned');
-    expect(outcome?.textContent).toContain('changes requested: needs tests');
+    expect(outcome?.textContent).toContain('changes_requested');
+    expect(outcome?.textContent).toContain('needs tests');
   });
 });

@@ -172,11 +172,9 @@ export function missingStepField(step: PipelineStepJson): string | null {
   switch (step.kind) {
     case 'agent':
       if (step.agentKind === undefined || step.agentKind === '') {
-        return 'an agent step needs an agentKind';
+        return 'an agent step needs an agent';
       }
-      if (step.instructions === undefined || step.instructions.trim() === '') {
-        return 'an agent step needs instructions';
-      }
+      // The selected agent owns its instructions; a step only names the agent.
       return null;
     case 'command':
       if (step.command === undefined || step.command.trim() === '') {

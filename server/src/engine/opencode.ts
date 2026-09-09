@@ -78,6 +78,7 @@ export class OpenCodeEngine implements AgentEngine {
         COMPOSER_SERVER_URL: spec.serverUrl,
         ...(spec.projectId !== undefined ? { COMPOSER_PROJECT_ID: spec.projectId } : {}),
         COMPOSER_SESSION_ID: spec.sessionId,
+        ...(spec.planDocumentPath !== undefined ? { COMPOSER_PLAN_DOCUMENT_PATH: spec.planDocumentPath } : {}),
         // The assistant's MCP child keys its scope on the thread id (the
         // server re-validates the thread's project scope per tool call).
         ...(spec.mcpTools === 'assistant' ? { COMPOSER_THREAD_ID: spec.sessionId } : {}),

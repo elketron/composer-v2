@@ -174,10 +174,16 @@ describe('PipelineService', () => {
       id: 'e4',
       projectId: 'P-1',
       occurredAt: '',
-      pipelineRunEnded: { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', revision: 2, status: 'returned', error: 'changes requested' },
+      pipelineRunEnded: { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', revision: 2, status: 'returned', outcome: 'changes_requested', feedback: 'needs tests', routedToStepId: 'st-1' },
     });
     expect(service.runForCard('T-1')).toBeUndefined();
-    expect(service.lastRunForCard('T-1')).toMatchObject({ runId: 'R-1', status: 'returned', error: 'changes requested' });
+    expect(service.lastRunForCard('T-1')).toMatchObject({
+      runId: 'R-1',
+      status: 'returned',
+      outcome: 'changes_requested',
+      feedback: 'needs tests',
+      routedToStepId: 'st-1',
+    });
   });
 
   it('ignores step events for runs it does not track', () => {
@@ -270,10 +276,11 @@ describe('PipelineService', () => {
     emit({ id: 'r8', projectId: 'P-1', occurredAt: '2026-09-05T00:00:07Z', commandOutput: { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', stepId: 'st-2', line: 'npm test' } });
 
     const transcript = service.transcriptFor('A-1');
-    expect(transcript).toHaveLength(3);
-    expect(transcript[0]).toMatchObject({ kind: 'message', streaming: true, text: 'working on it' });
+    // The message completes in place across the intervening tool call — one
+    // finalized message, not a stale streaming bubble plus a duplicate.
+    expect(transcript).toHaveLength(2);
+    expect(transcript[0]).toMatchObject({ kind: 'message', streaming: false, text: 'working on it', messageIndex: 1 });
     expect(transcript[1]).toMatchObject({ kind: 'tool', toolName: 'write' });
-    expect(transcript[2]).toMatchObject({ kind: 'message', streaming: false, text: 'working on it' });
     const tool = transcript[1] as { kind: 'tool'; result?: { content: string } };
     expect(tool.result?.content).toBe('written');
     expect(service.runForCard('T-1')?.sessionId).toBe('A-1');

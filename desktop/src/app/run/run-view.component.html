@@ -78,6 +78,37 @@
           <div class="context-block">
             <span class="context-label">usage</span>
             <div class="usage-rows">
+              @if (sessionUsage(); as usage) {
+                <div class="usage-row">
+                  <span>cost</span>
+                  <span>{{ costLabel(usage.cost) }}</span>
+                </div>
+                <div class="usage-row">
+                  <span>input tokens</span>
+                  <span>{{ usage.tokens.input }}</span>
+                </div>
+                <div class="usage-row">
+                  <span>output tokens</span>
+                  <span>{{ usage.tokens.output }}</span>
+                </div>
+                @if (usage.tokens.reasoning > 0) {
+                  <div class="usage-row">
+                    <span>reasoning tokens</span>
+                    <span>{{ usage.tokens.reasoning }}</span>
+                  </div>
+                }
+                @if (usage.tokens.cacheRead > 0 || usage.tokens.cacheWrite > 0) {
+                  <div class="usage-row">
+                    <span>cache read / write</span>
+                    <span>{{ usage.tokens.cacheRead }} / {{ usage.tokens.cacheWrite }}</span>
+                  </div>
+                }
+              } @else {
+                <div class="usage-row">
+                  <span>cost &amp; tokens</span>
+                  <span class="muted">not yet reported</span>
+                </div>
+              }
               <div class="usage-row">
                 <span>tool calls</span>
                 <span>{{ toolCount() }}</span>
@@ -94,13 +125,13 @@
           </div>
 
           <div class="context-block">
-            <span class="context-label">todo</span>
-            <div class="todo-rows">
+            <span class="context-label">pipeline</span>
+            <div class="pipeline-rows">
               @for (entry of steps(); track entry.step.id) {
-                <div class="todo-row {{ entry.status }}">
+                <div class="pipeline-row {{ entry.status }}">
                   <span class="status-dot" [class.pulse]="entry.status === 'running'"></span>
-                  <span class="todo-label">{{ entry.step.description ?? entry.step.instructions ?? entry.step.agentKind ?? entry.step.kind }}</span>
-                  <span class="todo-status">{{ entry.status }}</span>
+                  <span class="pipeline-label">{{ entry.step.description ?? entry.step.instructions ?? entry.step.agentKind ?? entry.step.kind }}</span>
+                  <span class="pipeline-status">{{ entry.status }}</span>
                 </div>
               } @empty {
                 <p class="state-empty inline">no assigned pipeline</p>
@@ -109,16 +140,25 @@
           </div>
 
           <div class="context-block">
-            <span class="context-label">modified files</span>
-            @if (cardState.fileStats; as stats) {
+            <span class="context-label">edited files</span>
+            @if (sessionFiles().length > 0) {
               <div class="files-rows">
                 <div class="usage-row">
-                  <span>across {{ stats.files }} files</span>
+                  <span>across {{ sessionFiles().length }} files</span>
                   <span class="files-delta">
-                    <span class="add">+{{ stats.added }}</span>
-                    <span class="del">−{{ stats.removed }}</span>
+                    <span class="add">+{{ fileAdditions() }}</span>
+                    <span class="del">−{{ fileDeletions() }}</span>
                   </span>
                 </div>
+                @for (file of sessionFiles(); track file.path) {
+                  <div class="file-row">
+                    <span class="file-path">{{ file.path }}</span>
+                    <span class="files-delta">
+                      <span class="add">+{{ file.additions }}</span>
+                      <span class="del">−{{ file.deletions }}</span>
+                    </span>
+                  </div>
+                }
               </div>
             } @else {
               <p class="state-empty inline">no file changes yet</p>

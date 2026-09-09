@@ -14,6 +14,8 @@ export interface AgentTurnSpec {
   projectDirectory?: string;
   /** The turn's message: the user's text plus the in-context document. */
   prompt: string;
+  /** Planner-only native-edit artifact synchronized into durable state. */
+  planDocumentPath?: string;
   /** The runtime's own session id, for continuity across turns. */
   engineSessionId?: string;
   /** Composer's HTTP base — the MCP tools' callback target. */
@@ -42,7 +44,25 @@ export type AgentTurnEvent =
   | { kind: 'messageDelta'; messageId: string; delta: string }
   | { kind: 'messageComplete'; messageId: string; text: string }
   | { kind: 'toolCall'; toolCallId: string; toolName: string; args?: unknown }
-  | { kind: 'toolResult'; toolCallId: string; content: string; isError: boolean };
+  | { kind: 'toolResult'; toolCallId: string; content: string; isError: boolean }
+  | { kind: 'usage'; cost: number; tokens: UsageTokens }
+  | { kind: 'files'; files: FileObservation[] };
+
+/** The runtime's token accounting for one turn (absolute session snapshot). */
+export interface UsageTokens {
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** One edited file the runtime observed (its diff summary for that session). */
+export interface FileObservation {
+  path: string;
+  additions: number;
+  deletions: number;
+}
 
 export interface AgentTurnOutcome {
   ok: boolean;

@@ -131,7 +131,9 @@
             } @empty {
               <span class="scope-empty">no active projects</span>
             }
-            <button type="button" class="scope-save" (click)="saveScope()">apply scope</button>
+            <button type="button" class="scope-save" [disabled]="scopeSaving()" (click)="saveScope()">
+              {{ scopeSaving() ? 'applying...' : 'apply scope' }}
+            </button>
           </div>
         </details>
       </header>
@@ -364,10 +366,10 @@
           (ngModelChange)="draft.set($event); resize(composer)"
           (keydown)="keydown($event)"
           [placeholder]="editing() ? 'edit your message — resend opens an alternate branch…' : 'ask across the selected projects…'"
-          [disabled]="sending()"
+          [disabled]="sending() || scopeSaving()"
         ></textarea>
         <span class="hint">enter to {{ editing() ? 'resend' : 'send' }} · shift+enter for a newline</span>
-        <button type="submit" class="send" [disabled]="sending() || !draft().trim()">
+        <button type="submit" class="send" [disabled]="sending() || scopeSaving() || !draft().trim()">
           {{ editing() ? 'resend' : 'send' }}
         </button>
       </form>

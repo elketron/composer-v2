@@ -6,6 +6,7 @@ import { allocateId } from '../processor/helpers.js';
 import { nowIso } from '../wire/envelope.js';
 import { ensureAgentFiles } from '../agents/index.js';
 import { resolveModel } from '../store/settings.js';
+import { ReservedIndexes } from '../domain/transcript.js';
 import type { Bus } from '../bus.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from '../engine/types.js';
 import type { PipelineStep } from '../wire/models.js';
@@ -48,6 +49,8 @@ export async function runAgentStep(
     sessionId,
     agentKind: step.agentKind ?? 'coder',
     startedAt: nowIso(),
+    runId: task.runId,
+    stepId: step.id,
   });
 
   const settings = (await options.getModel?.()) ?? {};
@@ -67,6 +70,17 @@ export async function runAgentStep(
     // The workers' own surface: workflow recording + retrieval. The
     // planner's write tools stay the planner's.
     mcpTools: 'worker',
+  };
+  // Deltas and their completion must agree on one transcript index; the
+  // engine's message identity reserves it (the fold lags the emit stream).
+  const reserved = new ReservedIndexes();
+  const messageBase = (): { index: number }[] => {
+    const session = [...bus.state.byProject.values()]
+      .flatMap((project) => [...project.agentSessions.values()])
+      .find((candidate) => candidate.id === sessionId);
+    return (session?.transcript ?? [])
+      .filter((entry) => entry.kind === 'message')
+      .map((entry) => (entry as { kind: 'message'; message: { index: number } }).message);
   };
   const onEvent = (event: AgentTurnEvent): void => {
     if (event.kind === 'toolCall') {
@@ -91,13 +105,32 @@ export async function runAgentStep(
         .catch((error) => console.error('runner: failed to publish a tool result:', error));
       return;
     }
+    if (event.kind === 'usage') {
+      void bus
+        .publish(task.projectId, 'agentSessionObserved', {
+          sessionId,
+          usage: { cost: event.cost, tokens: event.tokens },
+        })
+        .catch((error) => console.error('runner: failed to publish usage:', error));
+      return;
+    }
+    if (event.kind === 'files') {
+      void bus
+        .publish(task.projectId, 'agentSessionObserved', {
+          sessionId,
+          files: event.files,
+        })
+        .catch((error) => console.error('runner: failed to publish files:', error));
+      return;
+    }
+    const messageIndex = reserved.reserve(sessionId, event.messageId, messageBase());
     const body =
       event.kind === 'messageDelta'
-        ? { sessionId, messageIndex: nextAgentMessageIndex(bus, sessionId), delta: event.delta }
+        ? { sessionId, messageIndex, delta: event.delta }
         : {
             sessionId,
             message: {
-              index: nextAgentMessageIndex(bus, sessionId),
+              index: messageIndex,
               role: 'agent',
               text: event.text,
               at: nowIso(),
@@ -133,12 +166,4 @@ export async function runAgentStep(
 /** The run task's outcome report for one step, if one landed (a function read: property narrowing resets). */
 function reportedOutcome(task: RunTask, stepId: string): { stepId: string; outcome: string; note?: string } | undefined {
   return task.outcome?.stepId === stepId ? (task.outcome ?? undefined) : undefined;
-}
-
-function nextAgentMessageIndex(bus: Bus, sessionId: string): number {
-  const session = [...bus.state.byProject.values()]
-    .flatMap((project) => [...project.agentSessions.values()])
-    .find((session) => session.id === sessionId);
-  const messages = session?.transcript.filter((entry) => entry.kind === 'message') ?? [];
-  return messages.reduce((max, entry) => (entry.kind === 'message' ? Math.max(max, entry.message.index) : max), 0) + 1;
 }

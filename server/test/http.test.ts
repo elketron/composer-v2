@@ -64,6 +64,15 @@ describe('the boot contract', () => {
     expect(Number.isInteger(body['pid'])).toBe(true);
   });
 
+  it('catalog_serves_the_predefined_agents_and_runtime_steps', async () => {
+    const response = await fetch(`${server.url}/catalog`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { agents: { id: string }[]; runtimeSteps: { id: string; command: string }[] };
+    expect(body.agents.map((agent) => agent.id)).toEqual(['coder', 'tester', 'reviewer', 'security']);
+    expect(body.runtimeSteps.some((step) => step.id === 'build')).toBe(true);
+    expect(body.runtimeSteps.find((step) => step.id === 'run-tests')?.command).toBe('pnpm test');
+  });
+
   it('directories_browses_the_server_filesystem', async () => {
     const root = join(dir, 'projects');
     mkdirSync(join(root, 'zeta'), { recursive: true });

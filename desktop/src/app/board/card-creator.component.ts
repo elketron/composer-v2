@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, effect, inject, input, output, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { CARD_TYPE_META, CARD_TYPES, CardType } from '../core/models/board.models';
@@ -20,6 +20,7 @@ export class CardCreatorComponent {
   private readonly board = inject(BoardService);
 
   readonly closed = output<void>();
+  readonly pipelineId = input.required<string>();
 
   protected readonly typeOptions = CARD_TYPES;
   protected readonly typeMeta = CARD_TYPE_META;
@@ -29,6 +30,11 @@ export class CardCreatorComponent {
   protected readonly type = signal<CardType>('coding');
   protected readonly error = signal<string | null>(null);
   protected readonly submitting = signal(false);
+  private readonly titleInput = viewChild<ElementRef<HTMLInputElement>>('titleInput');
+
+  constructor() {
+    effect(() => this.titleInput()?.nativeElement.focus());
+  }
 
   protected submit(): void {
     if (this.submitting()) return;
@@ -38,6 +44,7 @@ export class CardCreatorComponent {
         title: this.title(),
         description: this.description(),
         type: this.type(),
+        pipelineId: this.pipelineId(),
       })
       .then((result) => {
         this.submitting.set(false);
@@ -48,5 +55,11 @@ export class CardCreatorComponent {
 
   protected cancel(): void {
     this.closed.emit();
+  }
+
+  protected keydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    this.cancel();
   }
 }

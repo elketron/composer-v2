@@ -90,6 +90,22 @@ describe('ServeEventReducer', () => {
     ]);
   });
 
+  it('assistant usage and session diffs surface as turn events', () => {
+    const r = reducer();
+    const events: AgentTurnEvent[] = [];
+    const emit = (event: AgentTurnEvent): void => events.push(event);
+    // A snapshot re-emit must not double-count (upsert by message id).
+    r.apply(event('message.updated', { sessionID: SESSION, info: { id: 'msg_a', role: 'assistant', cost: 0.5, tokens: { input: 10, output: 4 } } }), SESSION, emit);
+    r.apply(event('message.updated', { sessionID: SESSION, info: { id: 'msg_a', role: 'assistant', cost: 0.5, tokens: { input: 10, output: 4 } } }), SESSION, emit);
+    r.apply(event('session.diff', { sessionID: SESSION, diff: [{ path: 'src/a.ts', additions: 2, deletions: 1 }] }), SESSION, emit);
+
+    expect(events).toEqual([
+      { kind: 'usage', cost: 0.5, tokens: { input: 10, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0 } },
+      { kind: 'usage', cost: 0.5, tokens: { input: 10, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0 } },
+      { kind: 'files', files: [{ path: 'src/a.ts', additions: 2, deletions: 1 }] },
+    ]);
+  });
+
   it('session.error carries the failure and distinguishes aborts', () => {
     const r = reducer();
     const events: AgentTurnEvent[] = [];

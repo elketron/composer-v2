@@ -17,9 +17,25 @@ import {
 
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
-import { Pipeline, PipelineStepKind, PIPELINE_AGENT_KINDS } from '../core/models/pipeline.models';
+import { RestClient } from '../core/rest';
+import {
+  Pipeline,
+  PipelineCatalog,
+  PipelineStepKind,
+  PIPELINE_AGENT_KINDS,
+  type PipelineAgentCatalogEntry,
+  type RuntimeStepCatalogEntry,
+} from '../core/models/pipeline.models';
 import { PipelineService } from './pipeline.service';
 import { EditorDraft, StepDraft } from './editor-draft';
+
+/** One backward route a step announces (outcome or failure recovery). */
+interface StepRoute {
+  readonly key: string;
+  readonly label: string;
+  readonly target: string;
+  readonly kind: 'outcome' | 'failure';
+}
 
 /**
  * The pipeline editor (S4, staged in Phase 10; the linear visual editor in
@@ -42,12 +58,13 @@ export class PipelineEditorComponent {
   private readonly shell = inject(ShellService);
   private readonly pipelines = inject(PipelineService);
   private readonly confirm = inject(ConfirmService);
+  private readonly rest = inject(RestClient);
 
   protected readonly projectId = computed(() => this.shell.activeTabId());
   protected readonly list = computed(() => this.pipelines.pipelines());
 
-  /** The agent kinds the picker offers: the shipped pipeline agents. */
-  protected readonly agentKinds: readonly string[] = PIPELINE_AGENT_KINDS;
+  /** The server's executor catalog (agents + runtime steps); empty until loaded. */
+  protected readonly catalog = signal<PipelineCatalog>({ agents: [], runtimeSteps: [] });
 
   protected readonly kinds: readonly PipelineStepKind[] = ['agent', 'command', 'human'];
 
@@ -94,6 +111,45 @@ export class PipelineEditorComponent {
       const draft = this.editing();
       if (draft !== null && draft.projectId !== this.projectId()) this.cancel();
     });
+    effect(() => {
+      if (this.rest.serverBase !== null) void this.loadCatalog();
+    });
+  }
+
+  private async loadCatalog(): Promise<void> {
+    const response = await this.rest.get<PipelineCatalog>('/catalog');
+    if (response === null || !response.ok) return;
+    const agents = Array.isArray(response.body.agents) ? response.body.agents : [];
+    const runtimeSteps = Array.isArray(response.body.runtimeSteps) ? response.body.runtimeSteps : [];
+    this.catalog.set({ agents, runtimeSteps });
+  }
+
+  // ---- Executor catalog ----
+
+  /** The selectable predefined agents (catalog first, local kinds as fallback). */
+  protected readonly agentOptions = computed<readonly PipelineAgentCatalogEntry[]>(() => {
+    const agents = this.catalog().agents;
+    if (agents.length > 0) return agents;
+    return PIPELINE_AGENT_KINDS.map((id) => ({ id, label: id, description: '' }));
+  });
+
+  protected readonly runtimeSteps = computed<readonly RuntimeStepCatalogEntry[]>(
+    () => this.catalog().runtimeSteps,
+  );
+
+  protected agentLabel(agentKind: string): string {
+    return this.agentOptions().find((agent) => agent.id === agentKind)?.label ?? (agentKind || 'agent');
+  }
+
+  protected agentDescription(agentKind: string): string {
+    return this.agentOptions().find((agent) => agent.id === agentKind)?.description ?? '';
+  }
+
+  /** Applies a runtime preset's command to the selected command step. */
+  protected applyRuntimeStep(index: number, presetId: string): void {
+    const preset = this.runtimeSteps().find((step) => step.id === presetId);
+    if (preset === undefined) return;
+    this.updateStep(index, { command: preset.command });
   }
 
   // ---- List (browse) mode ----
@@ -123,9 +179,9 @@ export class PipelineEditorComponent {
     if (step.terminal) return 'done';
     switch (step.kind) {
       case 'agent':
-        return step.agentKind.trim() !== '' ? step.agentKind : 'agent';
+        return step.agentKind.trim() !== '' ? this.agentLabel(step.agentKind) : 'agent';
       case 'command':
-        return 'command';
+        return step.description?.trim() || 'command';
       case 'human':
         return 'approval';
     }
@@ -135,12 +191,43 @@ export class PipelineEditorComponent {
     if (step.terminal) return 'completion';
     switch (step.kind) {
       case 'agent':
-        return step.instructions || 'instructions';
+        return this.agentLabel(step.agentKind);
       case 'command':
         return step.command || 'shell command';
       case 'human':
         return step.description || 'approval prompt';
     }
+  }
+
+  /** The step's backward routes: named outcomes plus its failure recovery. */
+  protected stepRoutes(index: number): StepRoute[] {
+    const draft = this.editing();
+    const step = draft?.steps[index];
+    if (draft === null || step === undefined || step.terminal) return [];
+    const routes: StepRoute[] = [];
+    for (const rule of step.outcomes) {
+      if (rule.toStepId.trim() === '') continue;
+      routes.push({
+        key: `outcome-${rule.outcome}-${rule.toStepId}`,
+        label: rule.outcome.trim() || 'outcome',
+        target: this.nodeLabelFor(draft, rule.toStepId),
+        kind: 'outcome',
+      });
+    }
+    if (step.errorReturnToStepId.trim() !== '') {
+      routes.push({
+        key: 'failure',
+        label: 'failure',
+        target: this.nodeLabelFor(draft, step.errorReturnToStepId),
+        kind: 'failure',
+      });
+    }
+    return routes;
+  }
+
+  private nodeLabelFor(draft: EditorDraft, id: string): string {
+    const target = draft.steps.find((step) => step.id === id);
+    return target === undefined ? id : this.nodeLabel(target);
   }
 
   // ---- Entering / leaving edit mode ----
