@@ -581,11 +581,11 @@ describe('the assistant turn', () => {
     expect(replayed?.toolCalls).toEqual(thread.toolCalls);
   });
 
-  it('a_multi_part_turn_lands_only_the_final_reply', async () => {
+  it('a_multi_part_turn_keeps_intermediate_output_as_activity', async () => {
     const id = await createThread();
     engine.enqueue(async ({ emit }) => {
-      // An intermediate part (e.g. text before a tool call): streams live,
-      // never lands durably.
+      // An intermediate part (e.g. text before a tool call) becomes durable
+      // turn activity while the final part remains the normal reply.
       emit({ kind: 'messageDelta', messageId: 'm1', delta: 'Let me look around.' });
       emit({ kind: 'messageComplete', messageId: 'm1', text: 'Let me look around.' });
       // The turn's final message (the fake pairs the return with the last delta).
@@ -603,12 +603,16 @@ describe('the assistant turn', () => {
     await waitUntil(() => threadOf(id).status === 'idle');
 
     const agentMessages = threadOf(id).messages.filter((message) => message.role === 'agent');
-    expect(agentMessages).toHaveLength(1);
-    expect(agentMessages[0]?.text).toBe('Here is the summary.');
-    // Exactly one durable completion frame landed (the intermediate part
-    // streamed as ephemeral deltas only).
+    expect(agentMessages).toHaveLength(2);
+    expect(agentMessages[0]).toMatchObject({
+      text: 'Let me look around.',
+      activity: true,
+      parentId: threadOf(id).messages[0]?.id,
+    });
+    expect(agentMessages[1]?.text).toBe('Here is the summary.');
+    expect(agentMessages[1]?.activity).toBeUndefined();
     const completions = recorded.filter((frame) => frame.eventType === 'assistantMessageComplete');
-    expect(completions).toHaveLength(1);
+    expect(completions).toHaveLength(2);
     expect(completions[0]?.projectId).toBeUndefined();
   });
 

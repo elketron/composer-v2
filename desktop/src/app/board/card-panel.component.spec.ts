@@ -44,17 +44,11 @@ describe('CardPanelComponent', () => {
           name: 'Standard coding card',
           revision: 1,
           updatedAt: '',
-          stages: [
-            { id: 'sg-1', label: 'New', kanbanVisible: true },
-            { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
-            { id: 'sg-3', label: 'Validation', kanbanVisible: true },
-            { id: 'sg-4', label: 'Approval', kanbanVisible: true },
-            { id: 'sg-5', label: 'Done', kanbanVisible: true, terminal: true },
-          ],
           steps: [
-            { id: 'st-1', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_AGENT, stageId: 'sg-2', agentKind: 'coder', instructions: 'Implement the card.' },
-            { id: 'st-2', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_COMMAND, stageId: 'sg-3', command: 'npm test', description: 'Run tests' },
-            { id: 'st-3', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_HUMAN, stageId: 'sg-4', description: 'Approval' },
+            { id: 'st-1', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_AGENT, boardVisible: true, agentKind: 'coder', instructions: 'Implement the card.' },
+            { id: 'st-2', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_COMMAND, boardVisible: false, command: 'npm test', description: 'Run tests' },
+            { id: 'st-3', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_HUMAN, boardVisible: true, description: 'Approval' },
+            { id: 'st-4', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_HUMAN, boardVisible: true, terminal: true },
           ],
         },
       }),
@@ -66,12 +60,12 @@ describe('CardPanelComponent', () => {
       id: 'T-148',
       title: 'Diff overlay: syntax highlighting',
       description: 'Wire shiki, cache per language, lazy-load grammars.',
-      stageId: 'sg-2',
+      stepId: 'st-2',
       assignee: { role: 'coder', model: 'gpt-5.4', effort: 'medium' },
     });
     seedCard(events, {
       id: 'T-141',
-      stageId: 'sg-3',
+      stepId: 'st-3',
       stepStates: {
         'st-1': WireStepStateStatus.STEP_STATE_OK,
         'st-2': WireStepStateStatus.STEP_STATE_RUNNING,
@@ -80,12 +74,12 @@ describe('CardPanelComponent', () => {
     seedCard(events, {
       id: 'T-146',
       type: WireCardType.CARD_TYPE_DESIGN,
-      stageId: 'sg-2',
+      stepId: 'st-2',
     });
-    seedCard(events, { id: 'T-139', stageId: 'sg-3' });
+    seedCard(events, { id: 'T-139', stepId: 'st-3' });
     seedCard(events, { id: 'T-152', blockedBy: ['T-148'] });
-    seedCard(events, { id: 'T-150', type: WireCardType.CARD_TYPE_DESIGN, stageId: 'sg-2' });
-    seedCard(events, { id: 'T-131', stageId: 'sg-4' });
+    seedCard(events, { id: 'T-150', type: WireCardType.CARD_TYPE_DESIGN, stepId: 'st-2' });
+    seedCard(events, { id: 'T-131', stepId: 'st-3' });
   }
 
   async function render(cardId: string) {
@@ -143,7 +137,7 @@ describe('CardPanelComponent', () => {
     expect(changed.type).toBe('docs');
     expect(changed.stepStates).toEqual({});
     // The stage is pipeline-local; the type change does not move it.
-    expect(changed.stageId).toBe('sg-3');
+    expect(changed.stepId).toBe('st-3');
   });
 
   it('lists blockers and blocking cards as clickable chips', async () => {
@@ -181,10 +175,10 @@ describe('CardPanelComponent', () => {
   it('force-moves via the stage select', async () => {
     const fixture = await render('T-150');
     const select = el(fixture).querySelector<HTMLSelectElement>('.force-move select')!;
-    select.value = 'sg-4';
+    select.value = 'st-4';
     select.dispatchEvent(new Event('change'));
     await fixture.whenStable();
-    expect(service.cardsById().get('T-150')?.stageId).toBe('sg-4');
+    expect(service.cardsById().get('T-150')?.stepId).toBe('st-4');
   });
 
   it('archives the card and closes the panel', async () => {
@@ -211,10 +205,10 @@ describe('CardPanelComponent', () => {
     // T-131 sits at Approval; complete it, then drag it back (the
     // rejection flow) and record the comment.
     events.emit(
-      wireEvent('cardStageMoved', { cardId: 'T-131', pipelineId: 'PL-1', toStageId: 'sg-5' }),
+      wireEvent('cardStepMoved', { cardId: 'T-131', pipelineId: 'PL-1', toStepId: 'st-4' }),
     );
     TestBed.tick();
-    await service.requestMove('T-131', 'sg-2');
+    await service.requestMove('T-131', 'st-2');
     service.recordRejectionComment('needs more tests');
     const fixture = await render('T-131');
     expect(el(fixture).querySelector('.rejection')?.textContent).toContain('needs more tests');
@@ -232,7 +226,6 @@ describe('CardPanelComponent', () => {
         pipelineId: 'PL-1',
         stepId: 'st-3',
         kind: WirePipelineStepKind.PIPELINE_STEP_KIND_HUMAN,
-        stageId: 'sg-4',
       }),
     );
 
@@ -277,7 +270,6 @@ describe('CardPanelComponent', () => {
         pipelineId: 'PL-1',
         stepId: 'st-1',
         kind: WirePipelineStepKind.PIPELINE_STEP_KIND_AGENT,
-        stageId: 'sg-2',
       }),
     );
     const running = await render('T-148');
@@ -292,7 +284,7 @@ describe('CardPanelComponent', () => {
 
   it('disables the run and offers reopen once the card is completed', async () => {
     events.emit(
-      wireEvent('cardStageMoved', { cardId: 'T-148', pipelineId: 'PL-1', toStageId: 'sg-5' }),
+      wireEvent('cardStepMoved', { cardId: 'T-148', pipelineId: 'PL-1', toStepId: 'st-4' }),
     );
     const fixture = await render('T-148');
     const view = el(fixture);
@@ -315,11 +307,10 @@ describe('CardPanelComponent', () => {
           name: 'Docs pass',
           revision: 1,
           updatedAt: '',
-          stages: [
-            { id: 'd-1', label: 'Draft', kanbanVisible: true },
-            { id: 'd-2', label: 'Done', kanbanVisible: true, terminal: true },
+          steps: [
+            { id: 'd-1', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_AGENT, boardVisible: true, agentKind: 'coder', instructions: 'Write.' },
+            { id: 'd-2', kind: WirePipelineStepKind.PIPELINE_STEP_KIND_HUMAN, boardVisible: true, terminal: true },
           ],
-          steps: [{ id: 'ds-1', kind: 'agent', stageId: 'd-1', agentKind: 'coder', instructions: 'Write.' }],
         },
       }),
     );

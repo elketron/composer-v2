@@ -1,6 +1,5 @@
 import {
   PipelineJson,
-  PipelineStageJson,
   PipelineStepJson,
   WirePipelineRunStatus,
   WirePipelineStepKind,
@@ -13,75 +12,35 @@ export type PipelineStepKind = WirePipelineStepKind;
 /** The state of a pipeline run (Phase 10: runs are first-class records). */
 export type PipelineRunStatus = WirePipelineRunStatus;
 
-export interface PipelineStageData {
-  readonly id: string;
-  readonly label: string;
-  readonly kanbanVisible: boolean;
-  readonly terminal?: boolean;
-  /** The named outcomes an agent step in this stage may report (S36 enforces). */
-  readonly outcomes?: readonly { readonly outcome: string; readonly toStageId?: string }[];
-  /** Agent steps in this stage must signal their outcome through the tool (S36). */
-  readonly requiresOutcome?: boolean;
-  /** A failed step in this stage returns the task to this earlier stage. */
-  readonly errorReturnToStageId?: string;
-}
+/**
+ * The shipped pipeline agent kinds (mirror of server/src/agents/names.ts):
+ * an agent step names exactly one of these — the backend agents it ships.
+ */
+export const PIPELINE_AGENT_KINDS: readonly string[] = ['coder', 'tester', 'reviewer', 'security'];
 
-/** One stage of a pipeline's forward path. Immutable. */
-export class PipelineStage {
-  constructor(readonly data: PipelineStageData) {}
-
-  get id(): string {
-    return this.data.id;
-  }
-
-  get label(): string {
-    return this.data.label;
-  }
-
-  get kanbanVisible(): boolean {
-    return this.data.kanbanVisible;
-  }
-
-  get terminal(): boolean {
-    return this.data.terminal === true;
-  }
-
-  get errorReturnToStageId(): string | undefined {
-    return this.data.errorReturnToStageId;
-  }
-
-  with(changes: Partial<PipelineStageData>): PipelineStage {
-    return new PipelineStage({ ...this.data, ...changes });
-  }
-
-  toWire(): PipelineStageJson {
-    const { id, label } = this.data;
-    return {
-      id,
-      label,
-      kanbanVisible: this.data.kanbanVisible,
-      ...(this.data.terminal ? { terminal: true } : {}),
-      ...(this.data.outcomes?.length
-        ? { outcomes: this.data.outcomes.map((rule) => ({ ...rule })) }
-        : {}),
-      ...(this.data.requiresOutcome ? { requiresOutcome: true } : {}),
-      ...(this.data.errorReturnToStageId ? { errorReturnToStageId: this.data.errorReturnToStageId } : {}),
-    };
-  }
+/** One agent-reported named outcome and where it routes. */
+export interface StepOutcomeRule {
+  readonly outcome: string;
+  readonly toStepId?: string;
 }
 
 export interface PipelineStepData {
   readonly id: string;
   readonly kind: PipelineStepKind;
-  /** The stage of this pipeline the step works in. */
-  readonly stageId: string;
+  /** Whether the step becomes a board swimlane (the first step must). */
+  readonly boardVisible: boolean;
+  /** The completion step; exactly one per pipeline, and it must be last. */
+  readonly terminal?: boolean;
   readonly agentKind?: string;
   readonly instructions?: string;
   readonly command?: string;
   readonly description?: string;
+  readonly outcomes?: readonly StepOutcomeRule[];
+  readonly requiresOutcome?: boolean;
+  readonly errorReturnToStepId?: string;
 }
 
-/** One step of a user-authored pipeline. Immutable. */
+/** One step of a user-authored pipeline: a board-visible swimlane plus its execution. Immutable. */
 export class PipelineStep {
   constructor(readonly data: PipelineStepData) {}
 
@@ -93,8 +52,12 @@ export class PipelineStep {
     return this.data.kind;
   }
 
-  get stageId(): string {
-    return this.data.stageId;
+  get boardVisible(): boolean {
+    return this.data.boardVisible;
+  }
+
+  get terminal(): boolean {
+    return this.data.terminal === true;
   }
 
   get agentKind(): string | undefined {
@@ -113,20 +76,51 @@ export class PipelineStep {
     return this.data.description;
   }
 
+  get outcomes(): readonly StepOutcomeRule[] {
+    return this.data.outcomes ?? [];
+  }
+
+  get requiresOutcome(): boolean {
+    return this.data.requiresOutcome === true;
+  }
+
+  get errorReturnToStepId(): string | undefined {
+    return this.data.errorReturnToStepId;
+  }
+
+  /** The swimlane/lane label the board and editor show for the step. */
+  get label(): string {
+    if (this.terminal) return 'done';
+    switch (this.kind) {
+      case 'agent':
+        return this.agentKind?.trim() || 'agent';
+      case 'command':
+        return this.description?.trim() || 'command';
+      case 'human':
+        return 'approval';
+    }
+  }
+
   with(changes: Partial<PipelineStepData>): PipelineStep {
     return new PipelineStep({ ...this.data, ...changes });
   }
 
   toWire(): PipelineStepJson {
-    const { id, kind, stageId } = this.data;
+    const { id, kind } = this.data;
     return {
       id,
       kind,
-      stageId,
+      boardVisible: this.data.boardVisible,
+      ...(this.data.terminal ? { terminal: true } : {}),
       ...(this.data.agentKind ? { agentKind: this.data.agentKind } : {}),
       ...(this.data.instructions ? { instructions: this.data.instructions } : {}),
       ...(this.data.command ? { command: this.data.command } : {}),
       ...(this.data.description ? { description: this.data.description } : {}),
+      ...(this.data.outcomes?.length
+        ? { outcomes: this.data.outcomes.map((rule) => ({ ...rule })) }
+        : {}),
+      ...(this.data.requiresOutcome ? { requiresOutcome: true } : {}),
+      ...(this.data.errorReturnToStepId ? { errorReturnToStepId: this.data.errorReturnToStepId } : {}),
     };
   }
 
@@ -146,8 +140,8 @@ export class PipelineStep {
     }
   }
 
-  static empty(id: string, kind: PipelineStepKind, stageId: string): PipelineStep {
-    return new PipelineStep({ id, kind, stageId });
+  static empty(id: string, kind: PipelineStepKind): PipelineStep {
+    return new PipelineStep({ id, kind, boardVisible: true });
   }
 }
 
@@ -156,9 +150,7 @@ export interface PipelineData {
   readonly name: string;
   /** 1-based; the server allocates the next revision on a changed save. */
   readonly revision: number;
-  /** The ordered stage path (index = forward order). */
-  readonly stages: readonly PipelineStage[];
-  /** The ordered execution steps (each references a stage of this pipeline). */
+  /** The ordered steps (index = forward order; each board-visible step is a swimlane). */
   readonly steps: readonly PipelineStep[];
 }
 
@@ -178,66 +170,52 @@ export class Pipeline {
     return this.data.revision;
   }
 
-  get stages(): readonly PipelineStage[] {
-    return this.data.stages;
-  }
-
   get steps(): readonly PipelineStep[] {
     return this.data.steps;
   }
 
-  get terminalStageId(): string | undefined {
-    return this.data.stages.find((stage) => stage.terminal)?.id;
-  }
-
-  stageById(id: string): PipelineStage | undefined {
-    return this.data.stages.find((stage) => stage.id === id);
-  }
-
-  stageOrder(id: string): number {
-    return this.data.stages.findIndex((stage) => stage.id === id);
+  get terminalStepId(): string | undefined {
+    return this.data.steps.find((step) => step.terminal)?.id;
   }
 
   stepById(id: string): PipelineStep | undefined {
     return this.data.steps.find((step) => step.id === id);
   }
 
+  stepOrder(id: string): number {
+    return this.data.steps.findIndex((step) => step.id === id);
+  }
+
+  firstStep(): PipelineStep {
+    return this.data.steps[0]!;
+  }
+
   /**
-   * The card's Kanban column: the last visible stage at or before its
-   * stage in the forward path (hidden stages project backward).
+   * The card's board swimlane: the last board-visible step at or before its
+   * step in the forward path (hidden steps project backward).
    */
-  visibleStageOf(stageId: string): string | undefined {
-    const order = this.stageOrder(stageId);
+  visibleStepOf(stepId: string): string | undefined {
+    const order = this.stepOrder(stepId);
     if (order < 0) return undefined;
     for (let index = order; index >= 0; index--) {
-      const stage = this.data.stages[index];
-      if (stage?.kanbanVisible) return stage.id;
+      const step = this.data.steps[index];
+      if (step?.boardVisible) return step.id;
     }
     return undefined;
   }
 
-  /** The Kanban columns: the visible stages, in forward order. */
-  columns(): readonly PipelineStage[] {
-    return this.data.stages.filter((stage) => stage.kanbanVisible);
+  /** The board swimlanes: the board-visible steps, in forward order. */
+  columns(): readonly PipelineStep[] {
+    return this.data.steps.filter((step) => step.boardVisible);
   }
 
   /**
-   * Execution inside a hidden stage: the card stays in its previous visible
-   * column and this labels where the run actually is (null = visible).
+   * Execution inside a hidden step: the card stays in its previous visible
+   * swimlane and this labels where the run actually is (null = visible).
    */
-  hiddenStageLabel(stageId: string): string | null {
-    if (this.visibleStageOf(stageId) === stageId) return null;
-    return this.stageById(stageId)?.label ?? stageId;
-  }
-
-  /** The run line's step summary (approval / command / the agent kind). */
-  stepSummary(stepId: string | undefined): string | null {
-    if (stepId === undefined) return null;
-    const step = this.stepById(stepId);
-    if (step === undefined) return null;
-    if (step.kind === 'human') return 'approval';
-    if (step.kind === 'command') return step.description ?? 'command';
-    return step.agentKind ?? 'agent';
+  hiddenStepLabel(stepId: string): string | null {
+    if (this.visibleStepOf(stepId) === stepId) return null;
+    return this.stepById(stepId)?.label ?? stepId;
   }
 
   with(changes: Partial<PipelineData>): Pipeline {
@@ -250,7 +228,6 @@ export class Pipeline {
       projectId: '',
       name: this.data.name,
       revision: this.data.revision,
-      stages: this.data.stages.map((stage) => stage.toWire()),
       steps: this.data.steps.map((step) => step.toWire()),
       updatedAt: '',
     };
@@ -261,30 +238,22 @@ export class Pipeline {
       id: json.id ?? '',
       name: json.name ?? '',
       revision: json.revision ?? 1,
-      stages: (json.stages ?? []).map(
-        (stage) =>
-          new PipelineStage({
-            id: stage.id ?? '',
-            label: stage.label ?? '',
-            kanbanVisible: stage.kanbanVisible !== false,
-            ...(stage.terminal ? { terminal: true } : {}),
-            ...(stage.outcomes?.length
-              ? { outcomes: stage.outcomes.map((rule) => ({ ...rule })) }
-              : {}),
-            ...(stage.requiresOutcome ? { requiresOutcome: true } : {}),
-            ...(stage.errorReturnToStageId ? { errorReturnToStageId: stage.errorReturnToStageId } : {}),
-          }),
-      ),
       steps: (json.steps ?? []).map(
         (step) =>
           new PipelineStep({
             id: step.id ?? '',
             kind: step.kind ?? 'agent',
-            stageId: step.stageId ?? '',
+            boardVisible: step.boardVisible !== false,
+            ...(step.terminal ? { terminal: true } : {}),
             ...(step.agentKind ? { agentKind: step.agentKind } : {}),
             ...(step.instructions ? { instructions: step.instructions } : {}),
             ...(step.command ? { command: step.command } : {}),
             ...(step.description ? { description: step.description } : {}),
+            ...(step.outcomes?.length
+              ? { outcomes: step.outcomes.map((rule) => ({ ...rule })) }
+              : {}),
+            ...(step.requiresOutcome ? { requiresOutcome: true } : {}),
+            ...(step.errorReturnToStepId ? { errorReturnToStepId: step.errorReturnToStepId } : {}),
           }),
       ),
     });
@@ -298,7 +267,6 @@ export interface RunProgress {
   /** The pipeline revision the run pinned at start. */
   readonly revision: number;
   readonly status: 'running' | 'waiting';
-  readonly stageId?: string;
   readonly stepId?: string;
   readonly stepKind?: PipelineStepKind;
   /** RFC 3339 timestamp of the current step's start (the run view's elapsed). */

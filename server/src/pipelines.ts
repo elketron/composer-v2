@@ -1,7 +1,7 @@
 // The default coding pipeline (v1 M3, staged in Phase 10): every project
 // seeds it exactly once — the boot seed checks both the pipeline's
 // presence and its deletion tombstone, so a deleted default stays dead
-// (and its id is reusable). The Review stage carries the shipped outcome
+// (and its id is reusable). The Review step carries the shipped outcome
 // rules (S36): the reviewer's verdict drives the transition, and a
 // requested rework returns the card to Implementation.
 
@@ -17,38 +17,27 @@ export function defaultPipeline(projectId: string): Pipeline {
     projectId,
     name: 'Standard coding card',
     revision: 1,
-    stages: [
-      { id: 'sg-1', label: 'New', kanbanVisible: true },
-      { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
-      { id: 'sg-3', label: 'Validation', kanbanVisible: true, errorReturnToStageId: 'sg-2' },
-      {
-        id: 'sg-4',
-        label: 'Review',
-        kanbanVisible: true,
-        outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStageId: 'sg-2' }],
-        requiresOutcome: true,
-      },
-      { id: 'sg-5', label: 'Approval', kanbanVisible: true, errorReturnToStageId: 'sg-2' },
-      { id: 'sg-6', label: 'Done', kanbanVisible: true, terminal: true },
-    ],
     steps: [
       {
         id: 'st-1',
         kind: 'agent',
-        stageId: 'sg-2',
+        boardVisible: true,
         agentKind: 'coder',
         instructions: 'Implement the card per its description.',
       },
-      { id: 'st-2', kind: 'command', stageId: 'sg-3', command: 'npm run build', description: 'Build' },
-      { id: 'st-3', kind: 'command', stageId: 'sg-3', command: 'npm test', description: 'Run tests' },
+      { id: 'st-2', kind: 'command', boardVisible: false, command: 'npm run build', description: 'Build' },
+      { id: 'st-3', kind: 'command', boardVisible: false, command: 'npm test', description: 'Run tests' },
       {
         id: 'st-4',
         kind: 'agent',
-        stageId: 'sg-4',
+        boardVisible: true,
         agentKind: 'reviewer',
         instructions: 'Review the implemented card.',
+        outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStepId: 'st-1' }],
+        requiresOutcome: true,
       },
-      { id: 'st-5', kind: 'human', stageId: 'sg-5', description: 'Approval' },
+      { id: 'st-5', kind: 'human', boardVisible: true, description: 'Approval', errorReturnToStepId: 'st-1' },
+      { id: 'st-6', kind: 'human', boardVisible: true, terminal: true },
     ],
     updatedAt: '',
   };

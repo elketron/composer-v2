@@ -204,7 +204,7 @@
           </article>
           @if (message.isUser) {
             @if (activityFor(message); as activity) {
-              @if (activity.length > 0) {
+              @if (activity.length > 0 || isLive(message)) {
                 <div class="tool-activity" [class.live]="isLive(message)">
                   <button
                     type="button"
@@ -215,28 +215,41 @@
                     <span class="tool-activity-label">
                       @if (isLive(message)) {
                         working…
-                      } @else if (activity.length === 1) {
-                        used 1 tool
                       } @else {
-                        used {{ activity.length }} tools
+                        {{ activityLabel(activity) }}
                       }
                     </span>
                     <span class="tool-activity-chevron">{{ isExpanded(message) ? '▾' : '▸' }}</span>
                   </button>
                   @if (isExpanded(message)) {
                     <ul class="tool-list">
-                      @for (entry of activity; track entry.toolCallId) {
-                        <li class="tool-entry" [class.error]="entry.isError === true">
-                          <span class="tool-name">{{ toolLabel(entry) }}</span>
-                          @if (entry.summary; as summary) {
-                            <span class="tool-summary">{{ summary }}</span>
-                          } @else {
-                            <span class="tool-summary pending">
-                              {{ isLive(message) ? 'running…' : 'no output recorded' }}
-                            </span>
-                          }
-                        </li>
-                      }
+                       @for (entry of activity; track entry.id) {
+                         @if (entry.kind === 'message') {
+                           <li class="tool-entry activity-message">
+                             <span class="tool-name">assistant</span>
+                             <span class="tool-summary">{{ entry.text }}</span>
+                           </li>
+                         } @else {
+                           <li class="tool-entry" [class.error]="entry.tool.isError === true">
+                             <span class="tool-name">{{ toolLabel(entry.tool) }}</span>
+                             @if (entry.tool.summary; as summary) {
+                               <span class="tool-summary">{{ summary }}</span>
+                             } @else {
+                               <span class="tool-summary pending">
+                                 {{ isLive(message) ? 'running…' : 'no output recorded' }}
+                               </span>
+                             }
+                           </li>
+                         }
+                       }
+                       @if (isLive(message)) {
+                         <li class="tool-entry activity-message streaming">
+                           <span class="tool-name">assistant</span>
+                           <span class="tool-summary">
+                             {{ streamingMessage()?.text || 'thinking…' }}
+                           </span>
+                         </li>
+                       }
                     </ul>
                   }
                 </div>
@@ -245,20 +258,6 @@
           }
         }
 
-        @if (streamingMessage(); as message) {
-          <article class="message agent streaming">
-            <header class="message-meta">
-              <span class="role">ASSISTANT</span>
-              <span class="message-index">m{{ message.index }}</span>
-            </header>
-            @if (message.text) {
-              <div class="message-text">{{ message.text }}</div>
-            } @else {
-              <div class="message-text thinking">thinking…</div>
-            }
-            <span class="stream-dot pulse" aria-label="assistant responding"></span>
-          </article>
-        }
       </div>
 
       @if (draftProposal(); as proposal) {

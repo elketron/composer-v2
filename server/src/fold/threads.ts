@@ -38,7 +38,7 @@ export const threadHandlers: Record<string, FoldHandler> = {
     // The reply closes the turn — but never un-marks a stopped or failed
     // thread (the stop's partial completion and the failure message both
     // land through this event).
-    if (thread.status === 'running') thread.status = 'idle';
+    if (thread.status === 'running' && body.message.activity !== true) thread.status = 'idle';
   },
   assistantThreadStopped: (state, envelope) => {
     const body = readBody(envelope, 'assistantThreadStopped');

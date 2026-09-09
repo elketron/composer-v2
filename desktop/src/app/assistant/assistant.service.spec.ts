@@ -151,6 +151,35 @@ describe('AssistantService', () => {
     ]);
   });
 
+  it('keeps intermediate output off the visible transcript without closing the turn', () => {
+    emitThread();
+    events.emit(
+      wireGlobalEvent('assistantUserMessage', {
+        threadId: 'TH-1',
+        message: { index: 1, role: 'user', text: 'inspect it', at: '', id: 'u-1' },
+      }),
+    );
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: {
+          index: 2,
+          role: 'agent',
+          text: 'I will inspect it.',
+          at: '',
+          id: 'a-1',
+          parentId: 'u-1',
+          activity: true,
+        },
+      }),
+    );
+
+    expect(service.thread()?.status).toBe('RUNNING');
+    expect(service.isSending()).toBe(false);
+    expect(service.messages().map((message) => message.text)).toEqual(['inspect it']);
+    expect(service.thread()?.messages.at(-1)?.activity).toBe(true);
+  });
+
   it('scope changes fold and publish wholesale', async () => {
     emitThread();
     await service.setScope('TH-1', ['P-1', 'P-2']);

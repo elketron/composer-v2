@@ -69,9 +69,15 @@ export class ServeProcessManager {
 
     const port = await freePort();
     let resolveConnected!: () => void;
-    const connectedPromise = new Promise<void>((resolve) => {
+    let rejectConnected!: (error: unknown) => void;
+    const connectedPromise = new Promise<void>((resolve, reject) => {
       resolveConnected = resolve;
+      rejectConnected = reject;
     });
+    // The child can exit during the health loop, before ensure reaches its
+    // eventual await. Mark the rejection handled immediately while keeping
+    // the original promise rejectable for that await.
+    void connectedPromise.catch(() => undefined);
     const child = spawn(
       this.binary,
       ['serve', '--port', String(port)],
@@ -80,7 +86,11 @@ export class ServeProcessManager {
         env: {
           ...process.env,
           COMPOSER_SERVER_URL: spec.serverUrl,
-          COMPOSER_THREAD_ID: spec.sessionId,
+          ...(spec.projectId !== undefined ? { COMPOSER_PROJECT_ID: spec.projectId } : {}),
+          COMPOSER_SESSION_ID: spec.sessionId,
+          // The assistant's MCP child keys its scope on the thread id; the
+          // worker and planner children key on the session/project above.
+          ...(spec.mcpTools === 'assistant' ? { COMPOSER_THREAD_ID: spec.sessionId } : {}),
           OPENCODE_CONFIG_CONTENT: JSON.stringify(mcpConfig(spec)),
           ...(spec.projectDirectory !== undefined
             ? { PWD: spec.projectDirectory, OLDPWD: spec.projectDirectory }
@@ -102,6 +112,7 @@ export class ServeProcessManager {
     child.on('close', () => {
       serve.alive = false;
       this.serves.delete(spec.sessionId);
+      if (!serve.connected) rejectConnected(new Error('the opencode server exited before its event stream connected'));
     });
     this.serves.set(spec.sessionId, serve);
 
@@ -114,6 +125,9 @@ export class ServeProcessManager {
       } catch {
         // Not up yet.
       }
+      if (!serve.alive) {
+        throw new Error('the opencode server exited before becoming healthy');
+      }
       if (Date.now() > deadline) {
         serve.alive = false;
         child.kill('SIGKILL');
@@ -123,15 +137,28 @@ export class ServeProcessManager {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
 
-    void readEvents(serve, () => {
+    void readEvents(serve, this.spawnWaitMs, () => {
       serve.connected = true;
       resolveConnected();
+    }).catch((error: unknown) => {
+      rejectConnected(error);
     }).finally(() => {
       // A dropped reader respawns on the next turn.
       serve.alive = false;
       serve.connected = false;
     });
-    await connectedPromise;
+    try {
+      await connectedPromise;
+    } catch (error) {
+      serve.alive = false;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // Already gone.
+      }
+      if (this.serves.get(spec.sessionId) === serve) this.serves.delete(spec.sessionId);
+      throw error;
+    }
     return serve;
   }
 
@@ -146,14 +173,39 @@ export class ServeProcessManager {
       }
     }
   }
+
+  /** Kills and forgets one chat's serve (a turn whose session is done). */
+  release(sessionId: string): void {
+    const serve = this.serves.get(sessionId);
+    if (serve === undefined) return;
+    this.serves.delete(sessionId);
+    serve.alive = false;
+    try {
+      serve.child.kill('SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  }
 }
 
 /** Reads the serve's SSE feed; resolves when the stream ends. */
-async function readEvents(serve: ServeHandle, onConnected: () => void): Promise<void> {
-  const response = await fetch(`${serve.base}/event`);
-  if (!response.ok || response.body === null) return;
-  onConnected();
+async function readEvents(serve: ServeHandle, connectTimeoutMs: number, onConnected: () => void): Promise<void> {
+  // The timeout guards only the connection handshake. AbortSignal.timeout()
+  // would remain armed after headers arrive and kill every healthy SSE stream
+  // once the spawn-wait duration elapsed.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), connectTimeoutMs);
+  timeout.unref?.();
+  let response: Response;
+  try {
+    response = await fetch(`${serve.base}/event`, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) throw new Error(`event stream failed with ${response.status}`);
+  if (response.body === null) throw new Error('event stream response had no body');
   const reader = response.body.getReader();
+  onConnected();
   const decoder = new TextDecoder();
   let buffer = '';
   for (;;) {

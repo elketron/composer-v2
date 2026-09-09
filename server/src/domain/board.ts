@@ -36,7 +36,7 @@ export class Board {
     return this.project.pipelines.get(id);
   }
 
-  /** The pipeline a card is assigned to (the card's stage is one of its stages). */
+  /** The pipeline a card is assigned to (the card's step is one of its steps). */
   pipelineOf(card: Pick<Card, 'pipelineId'>): Pipeline | undefined {
     return this.project.pipelines.get(card.pipelineId);
   }
@@ -67,12 +67,12 @@ export class Board {
     );
   }
 
-  /** Whether a card sits in its pipeline's terminal (completion) stage. */
-  isDone(card: Pick<Card, 'pipelineId' | 'stageId'>): boolean {
-    return this.pipelineOf(card)?.isTerminalStage(card.stageId) === true;
+  /** Whether a card sits at its pipeline's terminal (completion) step. */
+  isDone(card: Pick<Card, 'pipelineId' | 'stepId'>): boolean {
+    return this.pipelineOf(card)?.isTerminalStep(card.stepId) === true;
   }
 
-  /** Blocked while any blocker exists and has not reached its own pipeline's terminal stage. */
+  /** Blocked while any blocker exists and has not reached its own pipeline's terminal step. */
   isBlocked(card: Pick<Card, 'blockedBy'>): boolean {
     return isBlockedIn(this.project.cards, card, this.project.pipelines);
   }

@@ -11,6 +11,7 @@ export interface AssistantMessageData {
   readonly at?: string | Date;
   readonly id?: string;
   readonly parentId?: string;
+  readonly activity?: boolean;
 }
 
 export class AssistantMessage {
@@ -22,6 +23,8 @@ export class AssistantMessage {
   readonly id: string;
   /** The message this one follows; null = thread root. */
   readonly parentId: string | null;
+  /** Intermediate output rendered inside the parent turn's activity pane. */
+  readonly activity: boolean;
 
   constructor(data: AssistantMessageData) {
     this.index = data.index;
@@ -30,6 +33,7 @@ export class AssistantMessage {
     this.at = toIso(data.at);
     this.id = data.id ?? '';
     this.parentId = data.parentId ?? null;
+    this.activity = data.activity === true;
   }
 
   get isUser(): boolean {

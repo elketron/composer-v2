@@ -82,37 +82,24 @@ describe('the mcp json-rpc surface', () => {
     expect(result.isError).toBe(false);
   });
 
-  it('create_tickets_defaults_the_card_type_and_ignores_unknown_fields', async () => {
-    const { caller, commands } = scriptedCaller([{ ok: true }]);
-    await handleMessage(
+  it('create_tickets_emits_the_command_from_the_document', async () => {
+    const { caller, commands } = scriptedCaller([{ ok: true, cards: 2 }]);
+    const response = await handleMessage(
       {
         jsonrpc: '2.0',
         id: 3,
         method: 'tools/call',
-        params: {
-          name: 'create_tickets',
-          arguments: {
-            tickets: [
-              { title: 'a', cardType: 'docs', description: 'd' },
-              { title: 'b', cardType: 'design' },
-              // The schema's field is `cardType`; an unknown `type` is ignored.
-              { title: 'c', type: 'design' },
-            ],
-          },
-        },
+        params: { name: 'create_tickets', arguments: {} },
       },
       caller,
       context,
     );
-    expect(commands[0]?.command).toEqual({
-      type: 'requestTicketsCreate',
-      sessionId: 'S-1',
-      tickets: [
-        { title: 'a', cardType: 'docs', description: 'd', blockedBy: [] },
-        { title: 'b', cardType: 'design', description: '', blockedBy: [] },
-        { title: 'c', cardType: 'coding', description: '', blockedBy: [] },
-      ],
-    });
+    expect(commands).toEqual([
+      { projectId: 'P-1', command: { type: 'requestTicketsCreate', sessionId: 'S-1' } },
+    ]);
+    const result = response!['result'] as { content: { text: string }[]; isError: boolean };
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ committed: true, cards: 2 });
+    expect(result.isError).toBe(false);
   });
 
   it('rejections_surface_as_tool_results', async () => {

@@ -15,9 +15,7 @@ import { createTickets, editDocument } from '../agents/planner/index.js';
 /** The tool surface a scripted turn sees (the planner's MCP tools). */
 export interface FakeTurnTools {
   editDocument(document: string): Promise<{ ok: true } | { ok: false; message: string }>;
-  createTickets(
-    tickets: unknown,
-  ): Promise<{ ok: true; cards: number } | { ok: false; message: string }>;
+  createTickets(): Promise<{ ok: true; cards: number } | { ok: false; message: string }>;
 }
 
 export type FakeTurn = (context: {
@@ -56,8 +54,8 @@ export class FakeEngine implements AgentEngine {
     const tools: FakeTurnTools = {
       editDocument: (document) =>
         editDocument(this.caller, spec.projectId ?? '', spec.sessionId, document),
-      createTickets: (tickets) =>
-        createTickets(this.caller, spec.projectId ?? '', spec.sessionId, tickets),
+      createTickets: () =>
+        createTickets(this.caller, spec.projectId ?? '', spec.sessionId),
     };
     if (turn === undefined) {
       return { ok: false, error: 'FakeEngine has no scripted turn left' };

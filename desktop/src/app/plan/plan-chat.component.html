@@ -15,21 +15,48 @@
         </header>
         <div class="message-text">{{ message.text }}</div>
       </article>
-    }
-
-    @if (streamingMessage(); as message) {
-      <article class="message agent streaming">
-        <header class="message-meta">
-          <span class="role">AGENT</span>
-          <span class="message-index">m{{ message.index }}</span>
-        </header>
-        @if (message.text) {
-          <div class="message-text">{{ message.text }}</div>
-        } @else {
-          <div class="message-text thinking">thinking…</div>
+      @if (message.isUser) {
+        @if (activityFor(message); as activity) {
+          @if (activity.length > 0 || isLive(message)) {
+            <div class="turn-activity" [class.live]="isLive(message)">
+              <button
+                type="button"
+                class="turn-activity-head"
+                (click)="toggleActivity(message)"
+                [attr.aria-expanded]="isExpanded(message)"
+              >
+                <span>{{ isLive(message) ? 'working…' : activityLabel(activity) }}</span>
+                <span class="turn-activity-chevron">{{ isExpanded(message) ? '▾' : '▸' }}</span>
+              </button>
+              @if (isExpanded(message)) {
+                <ul class="activity-list">
+                  @for (entry of activity; track entry.id) {
+                    @if (entry.kind === 'message') {
+                      <li class="activity-entry">
+                        <span class="activity-name">planner</span>
+                        <span class="activity-summary">{{ entry.text }}</span>
+                      </li>
+                    } @else {
+                      <li class="activity-entry" [class.error]="entry.tool.isError === true">
+                        <span class="activity-name">{{ toolLabel(entry.tool) }}</span>
+                        <span class="activity-summary" [class.pending]="!entry.tool.summary">
+                          {{ entry.tool.summary || (isLive(message) ? 'running…' : 'no output recorded') }}
+                        </span>
+                      </li>
+                    }
+                  }
+                  @if (isLive(message)) {
+                    <li class="activity-entry streaming">
+                      <span class="activity-name">planner</span>
+                      <span class="activity-summary">{{ streamingMessage()?.text || 'thinking…' }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+            </div>
+          }
         }
-        <span class="stream-dot pulse" aria-label="planner responding"></span>
-      </article>
+      }
     }
   </div>
 

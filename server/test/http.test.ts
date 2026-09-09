@@ -275,12 +275,12 @@ describe('the boot contract', () => {
     });
     expect(bulk).toEqual({ status: 200, json: { ok: true } });
 
-    // update:card (stageId) — the drag.
+    // update:card (stepId) — the drag.
     const moved = await action({
       type: 'update',
       on: 'card',
       projectId: 'P-1',
-      body: { id: 'T-1', stageId: 'sg-3' },
+      body: { id: 'T-1', stepId: 'st-3' },
     });
     expect(moved.json).toEqual({ ok: true });
 
@@ -293,12 +293,12 @@ describe('the boot contract', () => {
     });
     expect(stepState.json).toEqual({ ok: true });
 
-    // update:automation — the stage toggle.
+    // update:automation — the step toggle.
     const automation = await action({
       type: 'update',
       on: 'automation',
       projectId: 'P-1',
-      body: { pipelineId: 'PL-1', stageId: 'sg-3', on: false },
+      body: { pipelineId: 'PL-1', stepId: 'st-3', on: false },
     });
     expect(automation.json).toEqual({ ok: true });
 
@@ -325,7 +325,7 @@ describe('the boot contract', () => {
       type: 'update',
       on: 'card',
       projectId: 'P-1',
-      body: { id: 'T-1', stageId: 'sg-2', type: 'docs' },
+      body: { id: 'T-1', stepId: 'st-2', type: 'docs' },
     });
     expect(ambiguous.status).toBe(400);
 
@@ -337,14 +337,14 @@ describe('the boot contract', () => {
       'cardCreated',
       'cardCreated',
       'dependencyStateChanged',
-      'cardStageMoved',
+      'cardStepMoved',
       'cardStepStateUpdated',
       'automationToggled',
       'cardTypeChanged',
       'cardArchived',
     ]);
-    const dependent = frames[4]?.body as { card: { id: string; blockedBy: string[]; pipelineId: string; stageId: string; stepStates: Record<string, string> } };
-    expect(dependent.card).toMatchObject({ id: 'T-2', blockedBy: ['T-1'], pipelineId: 'PL-1', stageId: 'sg-1' });
+    const dependent = frames[4]?.body as { card: { id: string; blockedBy: string[]; pipelineId: string; stepId: string; stepStates: Record<string, string> } };
+    expect(dependent.card).toMatchObject({ id: 'T-2', blockedBy: ['T-1'], pipelineId: 'PL-1', stepId: 'st-1' });
     expect(dependent.card.stepStates).toEqual({});
   }, 15_000);
 

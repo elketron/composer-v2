@@ -59,4 +59,6 @@ export interface AgentEngine {
   ): Promise<AgentTurnOutcome>;
   /** Releases engine-held resources (serve processes); best-effort. */
   close?(): void | Promise<void>;
+  /** Releases one session's engine process (a finished turn); best-effort. */
+  releaseSession?(sessionId: string): void | Promise<void>;
 }

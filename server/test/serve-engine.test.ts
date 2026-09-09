@@ -2,13 +2,21 @@
 // events out. The process/HTTP orchestration around it is verified by the
 // documented real-engine smokes (no real LLM or runtime in unit tests).
 
-import { describe, expect, it } from 'vitest';
-import { ServeEventReducer } from '../src/engine/serve.js';
-import type { AgentTurnEvent } from '../src/engine/types.js';
+import type { ChildProcess } from 'node:child_process';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { OpenCodeServeClient } from '../src/engine/serve-client.js';
+import { ServeProcessManager, type ServeHandle } from '../src/engine/serve-process.js';
+import { OpenCodeServeEngine, ServeEventReducer } from '../src/engine/serve.js';
+import type { AgentTurnEvent, AgentTurnSpec } from '../src/engine/types.js';
 
 const SESSION = 'ses_thread';
 const NO_EVENTS: AgentTurnEvent[] = [];
 const reducer = () => new ServeEventReducer();
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 function event(type: string, properties: Record<string, unknown>): { type: string; properties: Record<string, unknown> } {
   return { type, properties };
@@ -109,5 +117,65 @@ describe('ServeEventReducer', () => {
     r.apply(event('session.idle', { sessionID: SESSION }), SESSION, emit);
     r.settle(emit);
     expect(events.at(-1)).toEqual({ kind: 'messageComplete', messageId: 'prt_a', text: 'partial ans' });
+  });
+});
+
+describe('OpenCodeServeEngine cancellation', () => {
+  const turnSpec = (signal?: AbortSignal): AgentTurnSpec => ({
+    sessionId: 'thread-1',
+    prompt: 'hello',
+    serverUrl: 'http://composer.test',
+    mcpScriptPath: '/tmp/mcp.js',
+    agentName: 'assistant',
+    timeoutMs: 50,
+    ...(signal !== undefined ? { signal } : {}),
+  });
+
+  function stubServe(): ServeHandle {
+    const serve: ServeHandle = {
+      base: 'http://opencode.test',
+      child: {} as ChildProcess,
+      alive: true,
+      connected: true,
+      connectedPromise: Promise.resolve(),
+      listeners: new Set(),
+    };
+    vi.spyOn(ServeProcessManager.prototype, 'ensure').mockResolvedValue(serve);
+    vi.spyOn(OpenCodeServeClient.prototype, 'ensureSession').mockResolvedValue('ses_runtime');
+    vi.spyOn(OpenCodeServeClient.prototype, 'prompt').mockResolvedValue(new Response(null, { status: 204 }));
+    return serve;
+  }
+
+  it('ends at the turn timeout when the abort request fails and no terminal event arrives', async () => {
+    vi.useFakeTimers();
+    const serve = stubServe();
+    const abort = vi.spyOn(OpenCodeServeClient.prototype, 'abort').mockRejectedValue(new Error('abort endpoint down'));
+    const release = vi.spyOn(ServeProcessManager.prototype, 'release');
+    const engine = new OpenCodeServeEngine();
+
+    const resultPromise = engine.run(turnSpec(), () => undefined);
+    await vi.advanceTimersByTimeAsync(50);
+
+    await expect(resultPromise).resolves.toEqual({ ok: false, error: 'aborted', engineSessionId: 'ses_runtime' });
+    expect(abort).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledWith('thread-1');
+    expect(serve.listeners.size).toBe(0);
+  });
+
+  it('ends on AbortSignal without waiting for a terminal event', async () => {
+    const serve = stubServe();
+    const abort = vi.spyOn(OpenCodeServeClient.prototype, 'abort').mockResolvedValue();
+    const release = vi.spyOn(ServeProcessManager.prototype, 'release');
+    const controller = new AbortController();
+    const engine = new OpenCodeServeEngine();
+
+    const resultPromise = engine.run(turnSpec(controller.signal), () => undefined);
+    await vi.waitFor(() => expect(serve.listeners.size).toBe(1));
+    controller.abort();
+
+    await expect(resultPromise).resolves.toEqual({ ok: false, error: 'aborted', engineSessionId: 'ses_runtime' });
+    expect(abort).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledWith('thread-1');
+    expect(serve.listeners.size).toBe(0);
   });
 });

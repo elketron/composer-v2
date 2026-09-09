@@ -2,6 +2,7 @@ import {
   ChatMessage,
   PlanningSession,
   normalizePlanningSessionStatus,
+  parsePlanDocument,
 } from './plan.models';
 
 describe('plan models', () => {
@@ -49,5 +50,89 @@ describe('plan models', () => {
     expect(session.status).toBe('DONE');
     expect(session.messages[0] instanceof ChatMessage).toBe(true);
     expect(session.planDocument).toBe('doc');
+  });
+
+  it('parses the markdown plan into prose and ticket segments', () => {
+    const segments = parsePlanDocument([
+      'A short goal.',
+      '',
+      '#[Add dark mode]',
+      '',
+      '---',
+      'cardType: design',
+      'blockedBy: [T-12, t2]',
+      '---',
+      '',
+      'Toggle the theme.',
+    ].join('\n'));
+
+    expect(segments).toEqual([
+      { kind: 'prose', markdown: 'A short goal.' },
+      {
+        kind: 'ticket',
+        ticket: { title: 'Add dark mode', cardType: 'design', blockedBy: ['T-12', 't2'], description: 'Toggle the theme.' },
+      },
+    ]);
+  });
+
+  it('treats an unbracketed heading as prose, not a ticket', () => {
+    const segments = parsePlanDocument(['# A normal title', '', '---', 'cardType: design', '---', '', 'body'].join('\n'));
+    expect(segments).toEqual([
+      { kind: 'prose', markdown: '# A normal title\n\n---\ncardType: design\n---\n\nbody' },
+    ]);
+  });
+
+  it('keeps a ticket with unterminated frontmatter as prose', () => {
+    const document = [
+      '#[Malformed ticket]',
+      '',
+      '---',
+      'cardType: design',
+      '',
+      'This description must not be discarded into frontmatter.',
+    ].join('\n');
+
+    expect(parsePlanDocument(document)).toEqual([{ kind: 'prose', markdown: document }]);
+  });
+
+  it('keeps a ticket with an invalid card type as prose', () => {
+    const document = ['#[Ticket]', '', '---', 'cardType: Design', '---', '', 'Body text.'].join('\n');
+
+    expect(parsePlanDocument(document)).toEqual([{ kind: 'prose', markdown: document }]);
+  });
+
+  it('splits plan-level markdown after a complete ticket description', () => {
+    const segments = parsePlanDocument([
+      '#[Ticket]',
+      '',
+      '---',
+      'cardType: docs',
+      '---',
+      '',
+      'First description paragraph.',
+      '',
+      '- Description detail',
+      '',
+      '## Notes',
+      '',
+      'This is plan prose, not part of the ticket.',
+    ].join('\n'));
+
+    expect(segments).toEqual([
+      {
+        kind: 'ticket',
+        ticket: {
+          title: 'Ticket',
+          cardType: 'docs',
+          blockedBy: [],
+          description: 'First description paragraph.\n\n- Description detail',
+        },
+      },
+      { kind: 'prose', markdown: '## Notes\n\nThis is plan prose, not part of the ticket.' },
+    ]);
+  });
+
+  it('returns no segments for an empty document', () => {
+    expect(parsePlanDocument('')).toEqual([]);
   });
 });

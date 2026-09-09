@@ -26,6 +26,12 @@
   gap: 6px;
   padding: 2px 2px 6px;
   flex: none;
+  // The swimlane header stays pinned while the column's cards scroll
+  // beneath it (the board-columns host is the vertical scroll container).
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
 }
 
 .col-label {

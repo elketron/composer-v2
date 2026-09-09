@@ -15,7 +15,7 @@
           "ui"
         ],
         "pipelineId": "PL-1",
-        "stageId": "sg-2",
+        "stepId": "st-2",
         "blockedBy": [],
         "assignee": {
           "role": "coder",
@@ -42,12 +42,12 @@
     "id": "e-02",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
-    "eventType": "cardStageMoved",
+    "eventType": "cardStepMoved",
     "body": {
       "cardId": "T-1",
       "pipelineId": "PL-1",
-      "fromStageId": "sg-2",
-      "toStageId": "sg-3",
+      "fromStepId": "st-2",
+      "toStepId": "st-3",
       "comment": "needs tests"
     }
   },
@@ -59,7 +59,7 @@
     "body": {
       "cardId": "T-1",
       "pipelineId": "PL-1",
-      "stageId": "sg-1"
+      "stepId": "st-1"
     }
   },
   {
@@ -125,7 +125,7 @@
     "eventType": "automationToggled",
     "body": {
       "pipelineId": "PL-1",
-      "stageId": "sg-2",
+      "stepId": "st-2",
       "on": true
     }
   },
@@ -220,7 +220,7 @@
           "description": "",
           "tags": [],
           "pipelineId": "PL-1",
-          "stageId": "sg-1",
+          "stepId": "st-1",
           "blockedBy": [],
           "stepStates": {},
           "createdAt": "2026-09-04T12:00:00.123456Z",
@@ -345,78 +345,49 @@
         "name": "Standard coding card",
         "revision": 2,
         "updatedAt": "2026-09-04T12:00:00.123456Z",
-        "stages": [
-          {
-            "id": "sg-1",
-            "label": "New",
-            "kanbanVisible": true
-          },
-          {
-            "id": "sg-2",
-            "label": "Implementation",
-            "kanbanVisible": true
-          },
-          {
-            "id": "sg-3",
-            "label": "Validation",
-            "kanbanVisible": true,
-            "errorReturnToStageId": "sg-2"
-          },
-          {
-            "id": "sg-4",
-            "label": "Review",
-            "kanbanVisible": true,
-            "outcomes": [
-              {
-                "outcome": "approved"
-              },
-              {
-                "outcome": "changes_requested",
-                "toStageId": "sg-2"
-              }
-            ],
-            "requiresOutcome": true
-          },
-          {
-            "id": "sg-5",
-            "label": "Approval",
-            "kanbanVisible": true,
-            "errorReturnToStageId": "sg-2"
-          },
-          {
-            "id": "sg-6",
-            "label": "Done",
-            "kanbanVisible": true,
-            "terminal": true
-          }
-        ],
         "steps": [
           {
             "id": "st-1",
             "kind": "agent",
-            "stageId": "sg-2",
+            "boardVisible": true,
             "agentKind": "coder",
             "instructions": "Implement the card per its description."
           },
           {
             "id": "st-2",
             "kind": "command",
-            "stageId": "sg-3",
+            "boardVisible": false,
             "command": "npm test",
             "description": "Run tests"
           },
           {
             "id": "st-3",
             "kind": "agent",
-            "stageId": "sg-4",
+            "boardVisible": true,
             "agentKind": "reviewer",
-            "instructions": "Review the implemented card."
+            "instructions": "Review the implemented card.",
+            "outcomes": [
+              {
+                "outcome": "approved"
+              },
+              {
+                "outcome": "changes_requested",
+                "toStepId": "st-1"
+              }
+            ],
+            "requiresOutcome": true
           },
           {
             "id": "st-4",
             "kind": "human",
-            "stageId": "sg-5",
+            "boardVisible": true,
             "description": "Approval"
+          },
+          {
+            "id": "st-5",
+            "kind": "human",
+            "boardVisible": true,
+            "terminal": true
           }
         ]
       }
@@ -453,8 +424,7 @@
       "cardId": "T-1",
       "pipelineId": "PL-1",
       "stepId": "st-1",
-      "kind": "agent",
-      "stageId": "sg-2"
+      "kind": "agent"
     }
   },
   {

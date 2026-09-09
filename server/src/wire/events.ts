@@ -11,7 +11,7 @@
  * catalog or commands), together with the gateway's copy in
  * desktop/electron/server-registry.js.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 9;
 
 import type {
   AgentSession,
@@ -40,23 +40,23 @@ export interface CardCreated {
 }
 
 /**
- * The card moved to a stage of its assigned pipeline — a validated manual
- * move (with the rejection comment when it leaves the terminal stage) or a
+ * The card moved to a step of its assigned pipeline — a validated manual
+ * move (with the rejection comment when it leaves the terminal step) or a
  * run-driven transition.
  */
-export interface CardStageMoved {
+export interface CardStepMoved {
   cardId: string;
   pipelineId: string;
-  fromStageId?: string;
-  toStageId: string;
+  fromStepId?: string;
+  toStepId: string;
   comment?: string;
 }
 
-/** Assignment always places the card in the pipeline's first stage; assigning a completed card reopens it. */
+/** Assignment always places the card at the pipeline's first step; assigning a completed card reopens it. */
 export interface CardPipelineAssigned {
   cardId: string;
   pipelineId: string;
-  stageId: string;
+  stepId: string;
 }
 
 export interface CardTypeChanged {
@@ -88,10 +88,10 @@ export interface DependencyStateChanged {
   blockedBy: string[];
 }
 
-/** Automation toggles are keyed per pipeline stage (Phase 10). */
+/** Automation toggles are keyed per pipeline step (Phase 10). */
 export interface AutomationToggled {
   pipelineId: string;
-  stageId: string;
+  stepId: string;
   on: boolean;
 }
 
@@ -170,6 +170,7 @@ export interface AgentSessionEnded {
 
 export interface AgentToolCall {
   sessionId: string;
+  parentIndex?: number;
   toolCallId: string;
   toolName: string;
   args: unknown;
@@ -204,7 +205,6 @@ export interface PipelineStepStarted {
   pipelineId: string;
   stepId: string;
   kind: PipelineStepKind;
-  stageId: string;
 }
 
 export interface PipelineStepFinished {
@@ -419,7 +419,7 @@ export interface WorkflowDeleted {
 
 export interface EventBodyMap {
   cardCreated: CardCreated;
-  cardStageMoved: CardStageMoved;
+  cardStepMoved: CardStepMoved;
   cardPipelineAssigned: CardPipelineAssigned;
   cardTypeChanged: CardTypeChanged;
   cardAssigned: CardAssigned;
@@ -483,7 +483,7 @@ export type EventBody<N extends EventName = EventName> = EventBodyMap[N];
 /** Every event name, in catalog order (the golden fixture's order). */
 export const EVENT_NAMES = Object.keys({
   cardCreated: null,
-  cardStageMoved: null,
+  cardStepMoved: null,
   cardPipelineAssigned: null,
   cardTypeChanged: null,
   cardAssigned: null,

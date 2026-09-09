@@ -1,14 +1,14 @@
 // The worker's prompts: the card is the work order; the runtime's own
 // tools are the surface. The per-worker opening verb and working rules
-// (the coder's are v1's), the stage's outcome brief (S36), and the stage
+// (the coder's are v1's), the step's outcome brief (S36), and the step
 // ordering the drive loop uses to skip ahead.
 
-import type { Card, Pipeline, PipelineStage, PipelineStep } from '../wire/models.js';
+import type { Card, Pipeline, PipelineStep } from '../wire/models.js';
 
-/** A stage's forward order in its pipeline (absent = last, so unknown stages never skip ahead). */
-export function stageOrderOf(pipeline: Pipeline, stageId: string): number {
-  const index = pipeline.stages.findIndex((stage) => stage.id === stageId);
-  return index >= 0 ? index : pipeline.stages.length;
+/** A step's forward order in its pipeline (absent = last, so unknown steps never skip ahead). */
+export function stepOrderOf(pipeline: Pipeline, stepId: string): number {
+  const index = pipeline.steps.findIndex((step) => step.id === stepId);
+  return index >= 0 ? index : pipeline.steps.length;
 }
 
 /** The worker's brief: the card is the work order; the runtime's own tools are the surface. */
@@ -33,28 +33,40 @@ export function promptFor(agentKind: string, card: Card, step: PipelineStep, out
 }
 
 /**
- * The agent brief's outcome section (S36): the stage's named outcomes and
- * what each does. Present only when the stage defines outcomes.
+ * The agent brief's outcome section (S36): the step's named outcomes and
+ * what each does. Present only when the step defines outcomes.
  */
-export function outcomeBriefOf(pipeline: Pipeline, stage: PipelineStage | undefined): string | undefined {
-  const rules = stage?.outcomes ?? [];
+export function outcomeBriefOf(pipeline: Pipeline, step: PipelineStep | undefined): string | undefined {
+  const rules = step?.outcomes ?? [];
   if (rules.length === 0) return undefined;
   const lines = rules.map((rule) => {
     const target =
-      rule.toStageId !== undefined
-        ? `the card returns to ${
-            pipeline.stages.find((candidate) => candidate.id === rule.toStageId)?.label ?? rule.toStageId
-          }`
+      rule.toStepId !== undefined
+        ? `the card returns to ${stepLabel(pipeline.steps.find((candidate) => candidate.id === rule.toStepId)) ?? rule.toStepId}`
         : 'the pipeline proceeds to the next step';
     return `- ${rule.outcome} — ${target}`;
   });
   return [
-    "Outcomes: when the work is done, call `composer_report_outcome` with exactly one of this stage's outcome names:",
+    "Outcomes: when the work is done, call `composer_report_outcome` with exactly one of this step's outcome names:",
     ...lines,
-    stage?.requiresOutcome === true
-      ? 'This stage requires the call: a finished turn without it fails the step.'
+    step?.requiresOutcome === true
+      ? 'This step requires the call: a finished turn without it fails the step.'
       : 'The call is optional: a finished turn without it proceeds.',
   ].join('\n');
+}
+
+/** The swimlane/lane name a step shows (terminal done, agent kind, …). */
+function stepLabel(step: PipelineStep | undefined): string | undefined {
+  if (step === undefined) return undefined;
+  if (step.terminal === true) return 'done';
+  switch (step.kind) {
+    case 'agent':
+      return step.agentKind?.trim() || 'agent';
+    case 'command':
+      return step.description?.trim() || 'command';
+    case 'human':
+      return 'approval';
+  }
 }
 
 function defaultInstructionOf(agentKind: string): string {

@@ -21,19 +21,19 @@ export type Command =
   | { type: 'requestProjectRestore'; projectId: string }
   | { type: 'requestCardCreate'; card: Card }
   | { type: 'requestCardsCreate'; cards: Card[] }
-  | { type: 'requestCardStageMove'; cardId: string; toStageId: string; override: boolean; comment?: string }
+  | { type: 'requestCardStepMove'; cardId: string; toStepId: string; override: boolean; comment?: string }
   | { type: 'requestCardPipelineAssign'; cardId: string; pipelineId: string }
   | { type: 'requestCardReopen'; cardId: string }
   | { type: 'requestCardTypeChange'; cardId: string; toType: CardType }
   | { type: 'requestCardAssign'; cardId: string; assignee?: Assignee }
   | { type: 'requestCardArchive'; cardId: string }
   | { type: 'requestStepStateUpdate'; cardId: string; stepId: string; status: SubStateStatus }
-  | { type: 'requestAutomationToggle'; pipelineId: string; stageId: string; on: boolean }
+  | { type: 'requestAutomationToggle'; pipelineId: string; stepId: string; on: boolean }
   | { type: 'requestPlanningSessionCreate'; projectId: string }
   | { type: 'requestUserMessage'; sessionId: string; text: string }
   // No HTTP action: issued by the planner agent's MCP tools.
   | { type: 'requestPlanDocumentUpdate'; sessionId: string; document: string }
-  | { type: 'requestTicketsCreate'; sessionId: string; tickets: TicketEmission[] }
+  | { type: 'requestTicketsCreate'; sessionId: string }
   | { type: 'requestPipelineSave'; pipeline: Pipeline }
   | { type: 'requestPipelineDelete'; pipelineId: string }
   // The run resolves the pipeline from the card's assignment (one pipeline
@@ -111,7 +111,7 @@ export type RejectionCode =
   | 'unknownCard'
   | 'unknownSession'
   | 'unknownPipeline'
-  | 'unknownStage'
+  | 'unknownStep'
   | 'blocked'
   | 'invalidType'
   | 'invalidCommand'
@@ -132,5 +132,6 @@ export type CommandOutcome =
   // `runId` rides run starts: the MCP/tool callers can name the attempt.
   // `transition` rides outcome reports: the tool result tells the model
   // what its verdict will do.
-  | { ok: true; savedPath?: string; runId?: string; transition?: string }
+  // `cards` rides ticket emission: the agent's tool result names the count.
+  | { ok: true; savedPath?: string; runId?: string; transition?: string; cards?: number }
   | { ok: false; rejection: Rejection };

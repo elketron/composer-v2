@@ -133,7 +133,7 @@ function card(id: string, title: string) {
     description: '',
     tags: [],
     pipelineId: 'PL-1' as const,
-    stageId: 'sg-2',
+    stepId: 'st-2',
     blockedBy: [],
     stepStates: {},
     createdAt: '2026-09-06T01:00:00Z',

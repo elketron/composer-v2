@@ -2,9 +2,9 @@
 // turns (v1 planner route, sans the spect machinery). One engine turn per
 // user message; turns serialize per session — a message that arrives while
 // a turn is in flight is already folded into state and picked up by the
-// turn loop's next run. The agent's replies stream as `agentMessageDelta`
-// (ephemeral) and land as `agentMessageComplete`; document edits and
-// ticket emissions ride the MCP tools' validated commands, not this path.
+// turn loop's next run. Replies stream as `agentMessageDelta`; intermediate
+// completions become turn activity and the final completion stays the normal
+// reply. Document edits and ticket emissions ride the MCP tools instead.
 //
 // The shared turn lifecycle (subscription, in-flight lock, engine-session
 // continuity, transcript index reservations, the follower loop) lives in
@@ -61,6 +61,9 @@ export class PlanningOrchestrator {
   private readonly engine: AgentEngine;
   private readonly options: Required<Pick<PlanningOptions, 'agentName' | 'timeoutMs'>> & PlanningOptions;
   private readonly coordinator: TurnCoordinator;
+  private readonly turnParents = new Map<string, number>();
+  private readonly lastCompletion = new Map<string, { messageId: string; text: string }>();
+  private readonly activityWrites = new Map<string, Promise<void>>();
 
   constructor(bus: Bus, engine: AgentEngine, options: PlanningOptions = {}) {
     this.bus = bus;
@@ -106,11 +109,21 @@ export class PlanningOrchestrator {
           timeoutMs: this.options.timeoutMs,
         };
       },
+      beforeRun: (key) => {
+        const { projectId, sessionId } = splitTurnKey(key);
+        const user = [...(this.sessionOf(projectId, sessionId)?.session.messages ?? [])]
+          .reverse()
+          .find((message) => message.role === 'user');
+        if (user !== undefined) this.turnParents.set(key, user.index);
+      },
       onEvent: (key, event) => this.onEngineEvent(key, event),
       onFailure: async (key, outcome) => {
         const { projectId, sessionId } = splitTurnKey(key);
         // The desktop's send-lock clears on the next agent message; a
         // failed turn publishes the failure as one so the UI unblocks.
+        const buffered = this.lastCompletion.get(key);
+        if (buffered !== undefined) this.promoteCompletion(key, buffered);
+        await this.activityWrites.get(key);
         await this.publishAgentMessage(
           key,
           projectId,
@@ -118,6 +131,15 @@ export class PlanningOrchestrator {
           `failure:${sessionId}`,
           `The planner turn failed: ${outcome.error ?? 'unknown error'}`,
         );
+      },
+      onSuccess: async (key) => {
+        const { projectId, sessionId } = splitTurnKey(key);
+        const final = this.lastCompletion.get(key);
+        this.lastCompletion.delete(key);
+        await this.activityWrites.get(key);
+        if (final !== undefined) {
+          await this.publishAgentMessage(key, projectId, sessionId, final.messageId, final.text);
+        }
       },
       nextQueued: (key, count) => {
         const { projectId, sessionId } = splitTurnKey(key);
@@ -130,6 +152,11 @@ export class PlanningOrchestrator {
         const { projectId, sessionId } = splitTurnKey(key);
         const found = this.sessionOf(projectId, sessionId);
         return found === undefined ? 0 : userMessageCount(found.session.messages);
+      },
+      cleanup: (key) => {
+        this.lastCompletion.delete(key);
+        this.activityWrites.delete(key);
+        this.turnParents.delete(key);
       },
     });
   }
@@ -158,6 +185,10 @@ export class PlanningOrchestrator {
       const { projectId, sessionId } = splitTurnKey(key);
       const found = this.sessionOf(projectId, sessionId);
       if (!found) return;
+      const completed = this.lastCompletion.get(key);
+      if (completed !== undefined && completed.messageId !== event.messageId) {
+        this.promoteCompletion(key, completed);
+      }
       void this.bus.publish(projectId, 'agentMessageDelta', {
         sessionId,
         messageIndex: this.coordinator.indexes.reserve(key, event.messageId, found.session.messages),
@@ -165,9 +196,52 @@ export class PlanningOrchestrator {
       });
       return;
     }
+    if (event.kind === 'toolCall') {
+      const { projectId, sessionId } = splitTurnKey(key);
+      this.enqueueActivity(key, () =>
+        this.bus.publish(projectId, 'agentToolCall', {
+          sessionId,
+          ...(this.turnParents.get(key) !== undefined
+            ? { parentIndex: this.turnParents.get(key) }
+            : {}),
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          args: event.args,
+        }),
+      );
+      return;
+    }
+    if (event.kind === 'toolResult') {
+      const { projectId, sessionId } = splitTurnKey(key);
+      this.enqueueActivity(key, () =>
+        this.bus.publish(projectId, 'agentToolResult', {
+          sessionId,
+          toolCallId: event.toolCallId,
+          content: capActivitySummary(event.content),
+          isError: event.isError,
+        }),
+      );
+      return;
+    }
     if (event.kind !== 'messageComplete') return;
+    const previous = this.lastCompletion.get(key);
+    if (previous !== undefined && previous.messageId !== event.messageId) {
+      this.promoteCompletion(key, previous);
+    }
+    this.lastCompletion.set(key, { messageId: event.messageId, text: event.text });
+  }
+
+  private promoteCompletion(key: string, completion: { messageId: string; text: string }): void {
+    this.lastCompletion.delete(key);
     const { projectId, sessionId } = splitTurnKey(key);
-    void this.publishAgentMessage(key, projectId, sessionId, event.messageId, event.text);
+    this.enqueueActivity(key, () =>
+      this.publishAgentMessage(key, projectId, sessionId, completion.messageId, completion.text, true),
+    );
+  }
+
+  private enqueueActivity(key: string, write: () => Promise<unknown>): void {
+    const previous = this.activityWrites.get(key) ?? Promise.resolve();
+    this.activityWrites.set(key, previous.then(write).then(() => undefined));
   }
 
   private async publishAgentMessage(
@@ -176,13 +250,23 @@ export class PlanningOrchestrator {
     sessionId: string,
     messageId: string,
     text: string,
+    activity = false,
   ): Promise<void> {
     const found = this.sessionOf(projectId, sessionId);
     if (!found) return;
     const index = this.coordinator.indexes.reserve(key, messageId, found.session.messages);
     await this.bus.publish(projectId, 'agentMessageComplete', {
       sessionId,
-      message: { index, role: 'agent', text, at: nowIso() },
+      message: {
+        index,
+        role: 'agent',
+        text,
+        at: nowIso(),
+        ...(activity ? { activity: true } : {}),
+        ...(activity && this.turnParents.get(key) !== undefined
+          ? { parentIndex: this.turnParents.get(key) }
+          : {}),
+      },
     });
   }
 
@@ -195,6 +279,14 @@ export class PlanningOrchestrator {
       ...(directory !== undefined ? { directory } : {}),
     };
   }
+}
+
+const ACTIVITY_SUMMARY_CAP = 2_000;
+
+function capActivitySummary(content: string): string {
+  return content.length <= ACTIVITY_SUMMARY_CAP
+    ? content
+    : `${content.slice(0, ACTIVITY_SUMMARY_CAP)}…`;
 }
 
 function buildPrompt(document: string, text: string): string {

@@ -1,8 +1,8 @@
 // The assistant turn's per-thread projection (SRV-005): the mutable state a
 // turn leaves around — the abort controller, the part currently streaming,
 // the last completed part, and the reply lineage — plus the projection of
-// engine events onto the thread's wire (tool activity, deltas, the one
-// durable reply per turn, and the failure/stop terminal handling). The
+// engine events onto the thread's wire (tool activity, deltas, durable
+// intermediate activity, the final reply, and failure/stop handling). The
 // assistant orchestrator owns only routing and the shared `TurnCoordinator`;
 // this class owns the assistant-specific turn state.
 
@@ -19,11 +19,13 @@ export class AssistantTurnProjector {
   /** Thread id → the part currently streaming (its partial text, for stop). */
   private readonly streaming = new Map<string, { messageId: string; text: string }>();
   /**
-   * Thread id → the turn's last completed message part. Intermediate parts
-   * stream live but never land durably — one reply per turn, the final one
-   * (the tool strip carries the in-between story). Flushed at run end.
+   * Thread id → the turn's last completed message part. Earlier parts become
+   * durable activity when another part starts; this final candidate flushes
+   * as the normal reply at run end.
    */
   private readonly lastCompletion = new Map<string, { messageId: string; text: string }>();
+  /** Intermediate completion writes must land before the final reply. */
+  private readonly activityWrites = new Map<string, Promise<void>>();
   /** Thread id → the user message id the in-flight turn answers (reply lineage). */
   private readonly turnParents = new Map<string, string>();
 
@@ -81,6 +83,10 @@ export class AssistantTurnProjector {
       const thread = this.threadOf(threadId);
       if (!thread) return;
       const stream = this.streaming.get(threadId);
+      const completed = this.lastCompletion.get(threadId);
+      if (completed !== undefined && completed.messageId !== event.messageId) {
+        this.promoteCompletion(threadId, completed);
+      }
       if (stream === undefined || stream.messageId !== event.messageId) {
         this.streaming.set(threadId, { messageId: event.messageId, text: event.delta });
       } else {
@@ -94,8 +100,10 @@ export class AssistantTurnProjector {
       return;
     }
     if (event.kind === 'messageComplete') {
-      // The part's authoritative text buffers for the flush at run end;
-      // nothing durable lands mid-turn (one reply per turn).
+      const previous = this.lastCompletion.get(threadId);
+      if (previous !== undefined && previous.messageId !== event.messageId) {
+        this.promoteCompletion(threadId, previous);
+      }
       this.lastCompletion.set(threadId, { messageId: event.messageId, text: event.text });
       const stream = this.streaming.get(threadId);
       if (stream?.messageId === event.messageId) this.streaming.delete(threadId);
@@ -108,6 +116,7 @@ export class AssistantTurnProjector {
   async flush(threadId: string): Promise<void> {
     const last = this.lastCompletion.get(threadId);
     this.lastCompletion.delete(threadId);
+    await this.activityWrites.get(threadId);
     if (last !== undefined) {
       await this.publish(threadId, last.messageId, last.text);
     }
@@ -115,6 +124,7 @@ export class AssistantTurnProjector {
 
   /** A failed turn: a user stop lands the partial, else a failure + `failed` status. */
   async fail(threadId: string, outcome: AgentTurnOutcome): Promise<void> {
+    await this.activityWrites.get(threadId);
     if (this.controllers.get(threadId)?.signal.aborted) {
       // A user stop: the latest content lands as the turn's one reply — the
       // part that was streaming, else the last completed part — and the
@@ -140,9 +150,27 @@ export class AssistantTurnProjector {
     this.controllers.delete(threadId);
     this.lastCompletion.delete(threadId);
     this.streaming.delete(threadId);
+    this.activityWrites.delete(threadId);
   }
 
-  private async publish(threadId: string, engineMessageId: string, text: string): Promise<void> {
+  private promoteCompletion(
+    threadId: string,
+    completion: { messageId: string; text: string },
+  ): void {
+    this.lastCompletion.delete(threadId);
+    const previous = this.activityWrites.get(threadId) ?? Promise.resolve();
+    this.activityWrites.set(
+      threadId,
+      previous.then(() => this.publish(threadId, completion.messageId, completion.text, true)),
+    );
+  }
+
+  private async publish(
+    threadId: string,
+    engineMessageId: string,
+    text: string,
+    activity = false,
+  ): Promise<void> {
     const thread = this.threadOf(threadId);
     if (!thread) return;
     // The completion lands past every folded message: a user message that
@@ -158,6 +186,7 @@ export class AssistantTurnProjector {
       message: {
         id: randomUUID(),
         ...(parentId !== undefined ? { parentId } : {}),
+        ...(activity ? { activity: true } : {}),
         index,
         role: 'agent',
         text,

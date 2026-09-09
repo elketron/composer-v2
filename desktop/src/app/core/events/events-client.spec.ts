@@ -98,12 +98,12 @@ describe('EventsClient', () => {
       id: 'e-1',
       projectId: 'P-1',
       occurredAt: '2026-08-19T12:00:00.000000Z',
-      eventType: 'cardStageMoved',
-      body: { cardId: 'T-1', pipelineId: 'PL-1', toStageId: 'sg-3' },
+      eventType: 'cardStepMoved',
+      body: { cardId: 'T-1', pipelineId: 'PL-1', toStepId: 'st-3' },
     });
 
     expect(seen).toHaveLength(1);
-    expect(seen[0].cardStageMoved).toEqual({ cardId: 'T-1', pipelineId: 'PL-1', toStageId: 'sg-3' });
+    expect(seen[0].cardStepMoved).toEqual({ cardId: 'T-1', pipelineId: 'PL-1', toStepId: 'st-3' });
   });
 
   it('maps command DTOs onto the action envelope before posting', async () => {
@@ -122,9 +122,9 @@ describe('EventsClient', () => {
 
     await client.publish({
       projectId: 'P-1',
-      requestCardStageMove: {
+      requestCardStepMove: {
         cardId: 'T-1',
-        toStageId: 'sg-3',
+        toStepId: 'st-3',
         override: false,
         comment: '',
       },
@@ -154,7 +154,7 @@ describe('EventsClient', () => {
     expect(posted).toEqual([
       {
         path: 'action',
-        body: { type: 'update', on: 'card', projectId: 'P-1', body: { id: 'T-1', stageId: 'sg-3' } },
+        body: { type: 'update', on: 'card', projectId: 'P-1', body: { id: 'T-1', stepId: 'st-3' } },
       },
       {
         path: 'action',
@@ -300,8 +300,8 @@ describe('EventsClient (gateway)', () => {
       id,
       projectId,
       occurredAt: '2026-08-19T12:00:00.000000Z',
-      eventType: 'cardStageMoved',
-      body: { cardId: 'T-1', pipelineId: 'PL-1', toStageId: 'sg-3' },
+      eventType: 'cardStepMoved',
+      body: { cardId: 'T-1', pipelineId: 'PL-1', toStepId: 'st-3' },
     };
   }
 
@@ -330,7 +330,7 @@ describe('EventsClient (gateway)', () => {
 
     await client.publish({
       projectId: 'alpha',
-      requestCardStageMove: { cardId: 'T-1', toStageId: 'sg-3' },
+      requestCardStepMove: { cardId: 'T-1', toStepId: 'st-3' },
     });
 
     expect(server.posted).toHaveLength(1);

@@ -51,7 +51,7 @@ async function callTool(
       result = outcome.ok ? { committed: true } : { committed: false, rejection: outcome.message };
     }
   } else if (name === 'create_tickets') {
-    const outcome = await createTickets(caller, context.projectId, context.sessionId, args['tickets']);
+    const outcome = await createTickets(caller, context.projectId, context.sessionId);
     result = outcome.ok ? { committed: true, cards: outcome.cards } : { committed: false, rejection: outcome.message };
   } else {
     result = { committed: false, rejection: `unknown tool ${name}` };

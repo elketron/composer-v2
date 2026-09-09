@@ -565,7 +565,7 @@ describe('AssistantComponent', () => {
     const box = el.querySelector('.tool-activity');
     expect(box?.classList.contains('live')).toBe(true);
     expect(box?.textContent).toContain('working…');
-    expect([...el.querySelectorAll('.tool-entry .tool-name')].map((name) => name.textContent?.trim())).toEqual([
+    expect([...el.querySelectorAll('.tool-entry:not(.activity-message) .tool-name')].map((name) => name.textContent?.trim())).toEqual([
       'overview',
       'read_file · src/app/app.ts',
     ]);
@@ -613,7 +613,7 @@ describe('AssistantComponent', () => {
     expect(el.querySelector('.tool-activity')?.textContent).toContain('Two projects need you.');
   });
 
-  it('a turn with no tool activity renders no box', async () => {
+  it('a turn with no recorded activity still renders its live stream in the box', async () => {
     const fixture = TestBed.createComponent(AssistantComponent);
     emitThread();
     events.emit(
@@ -624,6 +624,17 @@ describe('AssistantComponent', () => {
     );
     await fixture.whenStable();
     fixture.detectChanges();
-    expect((fixture.nativeElement as HTMLElement).querySelector('.tool-activity')).toBeNull();
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('.tool-activity.live')?.textContent).toContain('thinking…');
+
+    events.emit(
+      wireGlobalEvent('assistantMessageComplete', {
+        threadId: 'TH-1',
+        message: { index: 2, role: 'agent', text: 'hello', at: '', id: 'am-2', parentId: 'am-1' },
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(element.querySelector('.tool-activity')).toBeNull();
   });
 });

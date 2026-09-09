@@ -7,6 +7,7 @@ import { nowIso } from '../wire/envelope.js';
 import type { ChatMessage, PlanningSession } from '../wire/models.js';
 import type { CommandOutcome, TicketEmission } from '../wire/commands.js';
 import { Planning } from '../domain/planning.js';
+import { parseTickets } from '../domain/plan-document.js';
 import { allocateCardIds, materializeCards, publishCardBatch } from './card-batch.js';
 import { command, allocateId, ok, rejected, toRejection, type CommandMap } from './helpers.js';
 import type { Processor } from './index.js';
@@ -103,15 +104,16 @@ export async function createTickets(
     p: Processor,
     scope: string | undefined,
     sessionId: string,
-    tickets: TicketEmission[],
   ): Promise<CommandOutcome> {
     const found = p.findSession(scope, sessionId);
     if (!found) {
       return rejected('unknownSession', `Unknown session ${sessionId}`);
     }
     const cards = p.cardsOf(found.projectId);
+    let tickets: TicketEmission[];
     try {
       Planning.of(found.session).requireDrafting('its tickets were already emitted');
+      tickets = parseTickets(found.session.planDocument);
       Planning.validateTickets(tickets, cards);
     } catch (error) {
       return toRejection(error);
@@ -133,7 +135,7 @@ export async function createTickets(
     await p.bus.publish(found.projectId, 'planningSessionCompleted', {
       sessionId: found.session.id,
     });
-    return ok();
+    return { ok: true, cards: tickets.length };
   }
 
   // ---- Card helpers ----
@@ -149,5 +151,5 @@ export const planningCommands: CommandMap = [
   command('requestPlanningSessionCreate', (p, _scope, cmd) => createPlanningSession(p, cmd.projectId)),
   command('requestUserMessage', (p, scope, cmd) => userMessage(p, scope, cmd.sessionId, cmd.text)),
   command('requestPlanDocumentUpdate', (p, scope, cmd) => updatePlanDocument(p, scope, cmd.sessionId, cmd.document)),
-  command('requestTicketsCreate', (p, scope, cmd) => createTickets(p, scope, cmd.sessionId, cmd.tickets)),
+  command('requestTicketsCreate', (p, scope, cmd) => createTickets(p, scope, cmd.sessionId)),
 ];

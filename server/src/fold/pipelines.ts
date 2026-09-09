@@ -58,7 +58,6 @@ export const pipelineHandlers: Record<string, FoldHandler> = {
       project.runs.set(
         run.id,
         run.with({
-          stageId: body.stageId,
           stepId: body.stepId,
           stepKind: body.kind,
           // Only a gate waits; an agent or command step runs.
@@ -66,14 +65,14 @@ export const pipelineHandlers: Record<string, FoldHandler> = {
         }),
       );
     }
-    // The run owns stage transitions: the card follows the step's stage
-    // (hidden stages project to the previous visible column client-side).
+    // The run owns step transitions: the card follows the executing step
+    // (hidden steps project to the previous visible swimlane client-side).
     const card = project.cards.get(body.cardId);
     if (card) {
       project.cards.set(
         body.cardId,
         card.with({
-          stageId: body.stageId,
+          stepId: body.stepId,
           stepStates: { ...card.stepStates, [body.stepId]: 'running' },
           updatedAt: envelope.occurredAt,
         }),

@@ -8,9 +8,31 @@
     }
   </header>
 
-  @if (rendered(); as html) {
+  @if (segments().length > 0) {
     <div class="document-body">
-      <div class="document-text markdown" [innerHTML]="html"></div>
+      @for (segment of segments(); track $index) {
+        @if (segment.kind === 'prose') {
+          <div class="document-text markdown" [innerHTML]="markdown(segment.markdown)"></div>
+        } @else {
+          <article class="ticket" [style.--type-accent]="meta(segment.ticket.cardType).accentVar">
+            <header class="ticket-head">
+              <lucide-icon class="ticket-icon" [img]="meta(segment.ticket.cardType).icon" [size]="12" />
+              <span class="ticket-title">{{ segment.ticket.title }}</span>
+              <span class="ticket-type">{{ meta(segment.ticket.cardType).label }}</span>
+            </header>
+            @if (segment.ticket.blockedBy.length > 0) {
+              <div class="ticket-deps">
+                @for (dep of segment.ticket.blockedBy; track dep) {
+                  <span class="dep-chip">{{ dep }}</span>
+                }
+              </div>
+            }
+            @if (segment.ticket.description) {
+              <div class="ticket-body markdown" [innerHTML]="markdown(segment.ticket.description)"></div>
+            }
+          </article>
+        }
+      }
     </div>
   } @else {
     <div class="state-empty">

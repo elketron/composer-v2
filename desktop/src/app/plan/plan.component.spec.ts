@@ -88,7 +88,7 @@ describe('PlanComponent', () => {
       ),
     );
     await fixture.whenStable();
-    expect(element.querySelector('.message.streaming .thinking')?.textContent).toContain('thinking');
+    expect(element.querySelector('.turn-activity.live .activity-summary')?.textContent).toContain('thinking');
 
     events.emit(
       wireEvent(
@@ -105,7 +105,7 @@ describe('PlanComponent', () => {
       ),
     );
     await fixture.whenStable();
-    expect(element.querySelector('.message.streaming .message-text')?.textContent).toContain(
+    expect(element.querySelector('.turn-activity.live .activity-summary')?.textContent).toContain(
       'Drafting the plan…',
     );
 

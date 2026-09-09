@@ -1,24 +1,22 @@
 import { Assignee, AutomationState, Card, CardData } from './board.models';
-import { Pipeline, PipelineStage } from './pipeline.models';
+import { Pipeline, PipelineStep } from './pipeline.models';
 
-/** The standard staged pipeline (sg-1..sg-5; Done terminal). */
+/** The standard step path (st-1..st-4; st-4 terminal). */
 function pipeline(): Pipeline {
   return new Pipeline({
     id: 'PL-1',
     name: 'Standard coding card',
     revision: 1,
-    stages: [
-      new PipelineStage({ id: 'sg-1', label: 'New', kanbanVisible: true }),
-      new PipelineStage({ id: 'sg-2', label: 'Implementation', kanbanVisible: true }),
-      new PipelineStage({ id: 'sg-3', label: 'Validation', kanbanVisible: true }),
-      new PipelineStage({ id: 'sg-4', label: 'Approval', kanbanVisible: true }),
-      new PipelineStage({ id: 'sg-5', label: 'Done', kanbanVisible: true, terminal: true }),
+    steps: [
+      new PipelineStep({ id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement.' }),
+      new PipelineStep({ id: 'st-2', kind: 'command', boardVisible: false, command: 'npm test' }),
+      new PipelineStep({ id: 'st-3', kind: 'human', boardVisible: true, description: 'Approval' }),
+      new PipelineStep({ id: 'st-4', kind: 'human', boardVisible: true, terminal: true }),
     ],
-    steps: [],
   });
 }
 
-function card(overrides: Partial<CardData> & Pick<CardData, 'id' | 'type' | 'stageId'>): Card {
+function card(overrides: Partial<CardData> & Pick<CardData, 'id' | 'type' | 'stepId'>): Card {
   return new Card({
     title: 't',
     description: '',
@@ -32,45 +30,38 @@ function card(overrides: Partial<CardData> & Pick<CardData, 'id' | 'type' | 'sta
   });
 }
 
-/** The real done-ness rule: a card is done in its own pipeline's terminal stage. */
+/** The real done-ness rule: a card is done at its own pipeline's terminal step. */
 function doneFactory(pipelines: ReadonlyMap<string, Pipeline>): (card: Card) => boolean {
-  return (card: Card) => pipelines.get(card.pipelineId)?.terminalStageId === card.stageId;
+  return (card: Card) => pipelines.get(card.pipelineId)?.terminalStepId === card.stepId;
 }
 
-describe('Pipeline stage projection', () => {
-  it('projects the Kanban columns from the visible stages, in order', () => {
-    expect(pipeline().columns().map((stage) => stage.id)).toEqual([
-      'sg-1',
-      'sg-2',
-      'sg-3',
-      'sg-4',
-      'sg-5',
-    ]);
+describe('Pipeline step projection', () => {
+  it('projects the board swimlanes from the board-visible steps, in order', () => {
+    expect(pipeline().columns().map((step) => step.id)).toEqual(['st-1', 'st-3', 'st-4']);
   });
 
-  it('keeps a card in a hidden stage on its previous visible column', () => {
-    const stages = [
-      new PipelineStage({ id: 'sg-1', label: 'New', kanbanVisible: true }),
-      new PipelineStage({ id: 'sg-2', label: 'Implementation', kanbanVisible: true }),
-      new PipelineStage({ id: 'sg-3', label: 'Build', kanbanVisible: false }),
-      new PipelineStage({ id: 'sg-4', label: 'Done', kanbanVisible: true, terminal: true }),
+  it('keeps a card in a hidden step on its previous visible swimlane', () => {
+    const steps = [
+      new PipelineStep({ id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'x' }),
+      new PipelineStep({ id: 'st-2', kind: 'command', boardVisible: false, command: 'true' }),
+      new PipelineStep({ id: 'st-3', kind: 'human', boardVisible: true, terminal: true }),
     ];
-    const p = new Pipeline({ id: 'PL-1', name: 'x', revision: 1, stages, steps: [] });
-    expect(p.visibleStageOf('sg-3')).toBe('sg-2');
-    expect(p.visibleStageOf('sg-4')).toBe('sg-4');
-    expect(p.terminalStageId).toBe('sg-4');
+    const p = new Pipeline({ id: 'PL-1', name: 'x', revision: 1, steps });
+    expect(p.visibleStepOf('st-2')).toBe('st-1');
+    expect(p.visibleStepOf('st-3')).toBe('st-3');
+    expect(p.terminalStepId).toBe('st-3');
   });
 });
 
 describe('Card', () => {
-  it('is blocked while any blocker has not reached its terminal stage', () => {
+  it('is blocked while any blocker has not reached its terminal step', () => {
     const done = doneFactory(new Map([['PL-1', pipeline()]]));
     const cards = [
-      card({ id: 'T-1', type: 'coding', stageId: 'sg-2' }),
-      card({ id: 'T-2', type: 'coding', stageId: 'sg-5' }),
-      card({ id: 'T-3', type: 'coding', stageId: 'sg-1', blockedBy: ['T-1'] }),
-      card({ id: 'T-4', type: 'coding', stageId: 'sg-1', blockedBy: ['T-2'] }),
-      card({ id: 'T-5', type: 'coding', stageId: 'sg-1', blockedBy: ['T-missing'] }),
+      card({ id: 'T-1', type: 'coding', stepId: 'st-1' }),
+      card({ id: 'T-2', type: 'coding', stepId: 'st-4' }),
+      card({ id: 'T-3', type: 'coding', stepId: 'st-1', blockedBy: ['T-1'] }),
+      card({ id: 'T-4', type: 'coding', stepId: 'st-1', blockedBy: ['T-2'] }),
+      card({ id: 'T-5', type: 'coding', stepId: 'st-1', blockedBy: ['T-missing'] }),
     ];
     const byId = new Map(cards.map((c) => [c.id, c]));
     expect(cards[2].isBlockedIn(byId, done)).toBe(true);
@@ -80,31 +71,29 @@ describe('Card', () => {
 
   it('resolves blockers and blocking cards', () => {
     const cards = [
-      card({ id: 'T-1', type: 'coding', stageId: 'sg-2' }),
-      card({ id: 'T-3', type: 'coding', stageId: 'sg-1', blockedBy: ['T-1'] }),
-      card({ id: 'T-5', type: 'coding', stageId: 'sg-1', blockedBy: ['T-1'] }),
+      card({ id: 'T-1', type: 'coding', stepId: 'st-1' }),
+      card({ id: 'T-3', type: 'coding', stepId: 'st-1', blockedBy: ['T-1'] }),
+      card({ id: 'T-5', type: 'coding', stepId: 'st-1', blockedBy: ['T-1'] }),
     ];
     const byId = new Map(cards.map((c) => [c.id, c]));
     expect(cards[1].blockers(byId).map((c) => c.id)).toEqual(['T-1']);
     expect(cards[0].blocking(cards).map((c) => c.id)).toEqual(['T-3', 'T-5']);
   });
 
-  it('detects rejection moves: a drag out of the terminal stage', () => {
-    const done = doneFactory(new Map([['PL-1', pipeline()]]));
-    const completed = card({ id: 'T-1', type: 'coding', stageId: 'sg-5' });
-    void done;
-    expect(completed.isRejectionMove('sg-2', 'sg-5')).toBe(true);
-    expect(completed.isRejectionMove('sg-5', 'sg-5')).toBe(false);
-    expect(card({ id: 'T-2', type: 'coding', stageId: 'sg-4' }).isRejectionMove('sg-2', 'sg-5')).toBe(false);
-    expect(card({ id: 'T-3', type: 'coding', stageId: 'sg-2' }).isRejectionMove('sg-1', undefined)).toBe(false);
+  it('detects rejection moves: a drag out of the terminal step', () => {
+    const completed = card({ id: 'T-1', type: 'coding', stepId: 'st-4' });
+    expect(completed.isRejectionMove('st-1', 'st-4')).toBe(true);
+    expect(completed.isRejectionMove('st-4', 'st-4')).toBe(false);
+    expect(card({ id: 'T-2', type: 'coding', stepId: 'st-3' }).isRejectionMove('st-1', 'st-4')).toBe(false);
+    expect(card({ id: 'T-3', type: 'coding', stepId: 'st-1' }).isRejectionMove('st-1', undefined)).toBe(false);
   });
 
   it('copies with changes, leaving the original untouched', () => {
-    const original = card({ id: 'T-1', type: 'coding', stageId: 'sg-1', title: 'before' });
-    const moved = original.with({ stageId: 'sg-2', title: 'after' });
-    expect(moved.stageId).toBe('sg-2');
+    const original = card({ id: 'T-1', type: 'coding', stepId: 'st-1', title: 'before' });
+    const moved = original.with({ stepId: 'st-2', title: 'after' });
+    expect(moved.stepId).toBe('st-2');
     expect(moved.title).toBe('after');
-    expect(original.stageId).toBe('sg-1');
+    expect(original.stepId).toBe('st-1');
     expect(original.title).toBe('before');
   });
 
@@ -112,7 +101,7 @@ describe('Card', () => {
     const working = card({
       id: 'T-1',
       type: 'coding',
-      stageId: 'sg-2',
+      stepId: 'st-1',
       stepStates: { 'st-1': 'ok', 'st-2': 'running' },
     });
     expect(working.stepStates['st-1']).toBe('ok');
@@ -136,16 +125,16 @@ describe('Assignee', () => {
 describe('AutomationState', () => {
   it('starts with every toggle off (state rides the events)', () => {
     const state = AutomationState.initial();
-    expect(state.isOn('PL-1', 'sg-2')).toBe(false);
-    expect(state.isOn('PL-1', 'sg-3')).toBe(false);
+    expect(state.isOn('PL-1', 'st-1')).toBe(false);
+    expect(state.isOn('PL-1', 'st-2')).toBe(false);
   });
 
-  it('toggles a stage on and back off, keyed per pipeline and stage', () => {
-    const on = AutomationState.initial().toggle('PL-1', 'sg-2');
-    expect(on.isOn('PL-1', 'sg-2')).toBe(true);
-    expect(on.toggle('PL-1', 'sg-2').isOn('PL-1', 'sg-2')).toBe(false);
-    // Another pipeline's same-named stage is independent.
-    expect(on.isOn('PL-2', 'sg-2')).toBe(false);
-    expect(on.set('PL-2', 'sg-2', true).isOn('PL-1', 'sg-2')).toBe(true);
+  it('toggles a step on and back off, keyed per pipeline and step', () => {
+    const on = AutomationState.initial().toggle('PL-1', 'st-1');
+    expect(on.isOn('PL-1', 'st-1')).toBe(true);
+    expect(on.toggle('PL-1', 'st-1').isOn('PL-1', 'st-1')).toBe(false);
+    // Another pipeline's same-named step is independent.
+    expect(on.isOn('PL-2', 'st-1')).toBe(false);
+    expect(on.set('PL-2', 'st-1', true).isOn('PL-1', 'st-1')).toBe(true);
   });
 });

@@ -37,10 +37,10 @@
   <div class="title">{{ card().title }}</div>
   <div class="snippet">{{ card().description }}</div>
 
-  @if (hiddenStageLabel(); as hidden) {
-    <div class="hidden-stage" title="execution is inside a hidden stage">
+  @if (hiddenStepLabel(); as hidden) {
+    <div class="hidden-stage" title="execution is inside a hidden step">
       <lucide-icon [img]="icons.hidden" [size]="11" />
-      {{ hidden }}@if (currentStepLabel(); as stepLabel) { · {{ stepLabel }} }
+      {{ hidden }}
     </div>
   }
 

@@ -408,10 +408,9 @@
   }
 }
 
-// The working box (S25): a turn's tool activity — a full-width strip of
-// its own between the user message and the reply. Live while the turn
-// runs, collapsed to a one-line summary once the reply lands, expandable
-// afterwards.
+// A turn's activity pane: intermediate messages and tools in a full-width
+// strip between the user message and final reply. It stays open live, then
+// collapses to a one-line summary.
 .tool-activity {
   align-self: stretch;
   border: 1px solid var(--border);

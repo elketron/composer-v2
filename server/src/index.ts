@@ -18,7 +18,6 @@ import { PlanningOrchestrator, resumeStrandedTurns } from './planning.js';
 import { AssistantOrchestrator, resumeStrandedThreads } from './assistant.js';
 import { PipelineRunner } from './runner/index.js';
 import { cancelInterruptedRuns, seedDefaultPipelines } from './pipelines.js';
-import { OpenCodeEngine } from './engine/opencode.js';
 import { FakeEngine } from './engine/fake.js';
 import { OpenCodeServeEngine } from './engine/serve.js';
 import type { AgentEngine } from './engine/types.js';
@@ -104,13 +103,15 @@ export async function boot(config: Config): Promise<{
     config.engineFactory?.(processor) ??
     (process.env['COMPOSER_FAKE_ENGINE'] === '1'
       ? new FakeEngine(processor)
-      : new OpenCodeEngine());
+      : new OpenCodeServeEngine());
   let stopPlanning: () => void = () => undefined;
   let stopAssistant: () => void = () => undefined;
   let stopRunner: () => void = () => undefined;
   let closeAssistantEngine: (() => void) | undefined;
+  let closeEngine: (() => void) | undefined;
   {
     const engine = makeEngine();
+    closeEngine = () => engine.close?.();
     if (plannerEnabled) {
       const orchestrator = new PlanningOrchestrator(bus, engine, {
         serverUrl: url,
@@ -166,6 +167,7 @@ export async function boot(config: Config): Promise<{
       stopPlanning();
       stopAssistant();
       closeAssistantEngine?.();
+      closeEngine?.();
       // Open SSE streams count as connections; drop them so close resolves.
       (server as { closeAllConnections?: () => void }).closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));

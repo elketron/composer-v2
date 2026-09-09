@@ -17,9 +17,9 @@ export function appendProject(emit: FrameEmitter, project: Project, projectState
   const board = Board.of(projectState);
 
   const automations = [...projectState.automation.entries()].sort(([a], [b]) => a.localeCompare(b));
-  for (const [pipelineId, stages] of automations) {
-    for (const [stageId, on] of [...stages.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-      emit(project.id, 'automationToggled', { pipelineId, stageId, on });
+  for (const [pipelineId, steps] of automations) {
+    for (const [stepId, on] of [...steps.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      emit(project.id, 'automationToggled', { pipelineId, stepId, on });
     }
   }
 
@@ -140,7 +140,7 @@ export function appendProject(emit: FrameEmitter, project: Project, projectState
       { runId: run.id, cardId: run.cardId, pipelineId: run.pipelineId, revision: run.revision },
       run.startedAt,
     );
-    if (run.stepId !== undefined && run.stepKind !== undefined && run.stageId !== undefined) {
+    if (run.stepId !== undefined && run.stepKind !== undefined) {
       emit(
         project.id,
         'pipelineStepStarted',
@@ -150,7 +150,6 @@ export function appendProject(emit: FrameEmitter, project: Project, projectState
           pipelineId: run.pipelineId,
           stepId: run.stepId,
           kind: run.stepKind,
-          stageId: run.stageId,
         },
       );
     }

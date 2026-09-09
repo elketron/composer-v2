@@ -108,6 +108,9 @@ export async function runAgentStep(
       .catch((error) => console.error('runner: failed to publish an agent event:', error));
   };
   const outcome = await engine.run(spec, onEvent);
+  // The step's runtime session is done — release its serve process (the
+  // assistant's chat reuse keeps theirs; a worker step's is one-shot).
+  void engine.releaseSession?.(sessionId);
 
   await bus.publish(task.projectId, 'agentSessionEnded', {
     cardId: task.cardId,

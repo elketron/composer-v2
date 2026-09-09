@@ -29,8 +29,8 @@ export interface Card {
   tags: readonly string[];
   /** The one pipeline the card is assigned to; it appears on that pipeline's board tab. */
   pipelineId: string;
-  /** The card's current stage of its assigned pipeline (may be a hidden stage). */
-  stageId: string;
+  /** The card's current step of its assigned pipeline (the board projects it to its swimlane). */
+  stepId: string;
   blockedBy: readonly string[];
   assignee?: Assignee;
   sessionId?: string;
@@ -121,6 +121,10 @@ export interface ChatMessage {
   at?: string;
   id?: string;
   parentId?: string;
+  /** Intermediate agent output shown in the originating turn's activity pane. */
+  activity?: boolean;
+  /** Planning chats predate message ids, so their turn lineage uses the user index. */
+  parentIndex?: number;
 }
 
 export type PlanningSessionStatus = 'drafting' | 'done';
@@ -131,7 +135,17 @@ export interface PlanningSession {
   createdAt: string;
   status: PlanningSessionStatus;
   messages: ChatMessage[];
+  toolCalls?: PlanningToolEntry[];
   planDocument: string;
+}
+
+export interface PlanningToolEntry {
+  toolCallId: string;
+  parentIndex?: number;
+  toolName: string;
+  args?: unknown;
+  summary?: string;
+  isError?: boolean;
 }
 
 export type AgentSessionStatus = 'running' | 'ended' | 'failed';
@@ -189,46 +203,39 @@ export interface AgentSession {
   transcript: TranscriptEntry[];
 }
 
-// ---- Pipelines (Phase 10): a pipeline owns an ordered stage path and an
-// ordered step list; every step references one of its own stages. Only
-// Kanban-visible stages become board columns. ----
+// ---- Pipelines (Phase 10): a pipeline owns one ordered list of steps.
+// A step that is board-visible becomes its own board swimlane (column);
+// hidden steps run inside the previous visible step's swimlane. ----
 
 export type PipelineStepKind = 'agent' | 'command' | 'human';
 
 /**
  * One agent-reported named outcome and where it routes. An absent
- * `toStageId` proceeds to the next step; a present one must reference a
- * strictly earlier stage — the run ends `returned` and the task moves there.
+ * `toStepId` proceeds to the next step; a present one must reference a
+ * strictly earlier step — the run ends `returned` and the task moves there.
  */
-export interface StageOutcomeRule {
+export interface StepOutcomeRule {
   outcome: string;
-  toStageId?: string;
-}
-
-export interface PipelineStage {
-  id: string;
-  label: string;
-  /** Whether the stage becomes a Kanban column (the first stage must). */
-  kanbanVisible: boolean;
-  /** The completion stage; exactly one per pipeline, and it must be last. */
-  terminal?: boolean;
-  /** The named outcomes an agent step in this stage may report (S36 enforces). */
-  outcomes?: readonly StageOutcomeRule[];
-  /** Agent steps in this stage must signal their outcome through the tool (S36). */
-  requiresOutcome?: boolean;
-  /** A failed step in this stage returns the task to this earlier stage (S35). */
-  errorReturnToStageId?: string;
+  toStepId?: string;
 }
 
 export interface PipelineStep {
   id: string;
   kind: PipelineStepKind;
-  /** The stage of this pipeline the step works in (required). */
-  stageId: string;
+  /** Whether the step becomes a board swimlane (the first step must). */
+  boardVisible: boolean;
+  /** The completion step; exactly one per pipeline, and it must be last. */
+  terminal?: boolean;
   agentKind?: string;
   instructions?: string;
   command?: string;
   description?: string;
+  /** The named outcomes an agent step may report (S36 enforces). */
+  outcomes?: readonly StepOutcomeRule[];
+  /** The agent step must signal its outcome through the tool (S36). */
+  requiresOutcome?: boolean;
+  /** A failed step returns the task to this earlier step (S35). */
+  errorReturnToStepId?: string;
 }
 
 export interface Pipeline {
@@ -237,9 +244,7 @@ export interface Pipeline {
   name: string;
   /** 1-based; a save that changes the definition allocates the next revision. */
   revision: number;
-  /** The ordered stage path (index = forward order). */
-  stages: readonly PipelineStage[];
-  /** The ordered execution steps (each references one of its stages). */
+  /** The ordered steps (index = forward order; each board-visible step is a swimlane). */
   steps: readonly PipelineStep[];
   updatedAt: string;
 }
@@ -252,7 +257,7 @@ export type PipelineRunStatus =
   | /** A backward transition (agent outcome or error condition) ended the run. */ 'returned'
   | 'cancelled';
 
-/** Stage ids allocate `sg-N`, steps keep `st-N`, runs allocate `R-N`. */
+/** Steps allocate `st-N`, runs allocate `R-N`. */
 
 // ---- Work proposals (Phase 8): the assistant drafts board-ready cards;
 // the user edits and confirms; confirmation creates real cards through the

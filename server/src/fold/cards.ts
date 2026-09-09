@@ -12,15 +12,15 @@ export const cardHandlers: Record<string, FoldHandler> = {
     const cards = projectStateOf(state, projectId).cards;
     cards.set(body.card.id, Card.fromWire(body.card));
   },
-  cardStageMoved: (state, envelope, projectId) => {
-    const body = readBody(envelope, 'cardStageMoved');
+  cardStepMoved: (state, envelope, projectId) => {
+    const body = readBody(envelope, 'cardStepMoved');
     const cards = projectStateOf(state, projectId).cards;
     const card = cards.get(body.cardId);
     if (!card) return;
     cards.set(
       body.cardId,
       card.with({
-        stageId: body.toStageId,
+        stepId: body.toStepId,
         ...(body.comment !== undefined ? { rejectionComment: body.comment } : {}),
         updatedAt: envelope.occurredAt,
       }),
@@ -35,7 +35,7 @@ export const cardHandlers: Record<string, FoldHandler> = {
       body.cardId,
       card.with({
         pipelineId: body.pipelineId,
-        stageId: body.stageId,
+        stepId: body.stepId,
         updatedAt: envelope.occurredAt,
       }),
     );
@@ -83,11 +83,11 @@ export const cardHandlers: Record<string, FoldHandler> = {
   automationToggled: (state, envelope, projectId) => {
     const body = readBody(envelope, 'automationToggled');
     const project = projectStateOf(state, projectId);
-    let stages = project.automation.get(body.pipelineId);
-    if (!stages) {
-      stages = new Map();
-      project.automation.set(body.pipelineId, stages);
+    let steps = project.automation.get(body.pipelineId);
+    if (!steps) {
+      steps = new Map();
+      project.automation.set(body.pipelineId, steps);
     }
-    stages.set(body.stageId, body.on);
+    steps.set(body.stepId, body.on);
   },
 };

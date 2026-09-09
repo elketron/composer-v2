@@ -224,7 +224,7 @@
         @for (entry of stepRows(); track entry.step.id) {
           <div class="check-row {{ entry.status }}">
             <span class="status-dot" [class.pulse]="entry.status === 'running'"></span>
-            <span class="check-label" title="{{ stepStageLabel(entry.step) }} · {{ entry.step.kind }}{{ entry.step.kind === 'agent' && entry.step.agentKind ? ' · ' + entry.step.agentKind : '' }}">
+            <span class="check-label" title="{{ entry.step.label }} · {{ entry.step.kind }}{{ entry.step.kind === 'agent' && entry.step.agentKind ? ' · ' + entry.step.agentKind : '' }}">
               {{ entry.step.description ?? entry.step.instructions ?? entry.step.agentKind ?? entry.step.kind }}
             </span>
             <span class="check-status">{{ entry.status }}</span>

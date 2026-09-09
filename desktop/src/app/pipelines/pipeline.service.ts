@@ -218,7 +218,6 @@ export class PipelineService {
         this.setRun(projectId, payload.cardId, {
           ...current,
           runId: payload.runId ?? current.runId,
-          stageId: payload.stageId ?? current.stageId,
           stepId: payload.stepId,
           stepKind: payload.kind ?? 'agent',
           status: payload.kind === 'human' ? 'waiting' : 'running',

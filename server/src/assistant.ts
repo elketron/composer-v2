@@ -50,6 +50,7 @@ function buildAssistantPrompt(thread: AssistantThread, text: string): string {
   const scope =
     thread.projectIds.length > 0 ? thread.projectIds.join(', ') : '(no projects selected)';
   const recent = thread.messages
+    .filter((message) => message.activity !== true)
     .slice(-10)
     .map((message) => `${message.role === 'user' ? 'user' : 'assistant'}: ${message.text}`)
     .join('\n');

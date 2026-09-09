@@ -3,7 +3,7 @@
 // answers a command with a resolved object or throws a `CommandRejection`.
 
 import type { ProjectState } from '../fold/index.js';
-import type { StageOutcomeRule } from '../wire/models.js';
+import type { StepOutcomeRule } from '../wire/models.js';
 import { CommandRejection } from './rejection.js';
 import type { Card } from './card.js';
 import type { Pipeline } from './pipeline.js';
@@ -29,7 +29,7 @@ export class RunPolicy {
     if (this.board.activeRun(cardId) !== undefined) {
       throw new CommandRejection('runActive', `Card ${cardId} already has a running pipeline`);
     }
-    if (pipeline.isTerminalStage(this.board.requireCard(cardId).stageId)) {
+    if (pipeline.isTerminalStep(this.board.requireCard(cardId).stepId)) {
       throw new CommandRejection('invalidCommand', `Card ${cardId} is completed — reopen it to run again`);
     }
   }
@@ -51,23 +51,23 @@ export class RunPolicy {
   /** The run an agent outcome reports into: live, at an agent step. */
   requireAgentStepRun(cardId: string): Run {
     const run = this.board.requireActiveRun(cardId);
-    if (run.stepKind !== 'agent' || run.stepId === undefined || run.stageId === undefined) {
+    if (run.stepKind !== 'agent' || run.stepId === undefined) {
       throw new CommandRejection('invalidCommand', `Card ${cardId}'s pipeline is not at an agent step`);
     }
     return run;
   }
 
   /**
-   * The named outcome a stage — on the run's pinned revision — defines.
+   * The named outcome a step — on the run's pinned revision — defines.
    * An edited pipeline never changes a live run's rules.
    */
-  outcomeRule(run: Run, outcome: string): { rule: StageOutcomeRule; name: string } {
+  outcomeRule(run: Run, outcome: string): { rule: StepOutcomeRule; name: string } {
     const pipeline = this.board.pipelineOfRun(run);
-    const stage = pipeline?.stageById(run.stageId!);
-    if (pipeline === undefined || stage === undefined) {
-      throw new CommandRejection('unknownPipeline', `Run ${run.id} names an unknown pipeline or stage`);
+    const step = pipeline?.stepById(run.stepId!);
+    if (pipeline === undefined || step === undefined) {
+      throw new CommandRejection('unknownPipeline', `Run ${run.id} names an unknown pipeline or step`);
     }
-    const rules = stage.outcomes ?? [];
+    const rules = step.outcomes ?? [];
     const name = outcome.trim();
     const rule = rules.find((candidate) => candidate.outcome === name);
     if (name === '' || rule === undefined) {
@@ -75,18 +75,18 @@ export class RunPolicy {
       throw new CommandRejection(
         'invalidCommand',
         names === ''
-          ? `Stage ${stage.label} defines no outcomes to report`
-          : `outcome '${name}' is not one of stage ${stage.label}'s outcomes: ${names}`,
+          ? `Step ${step.id} defines no outcomes to report`
+          : `outcome '${name}' is not one of step ${step.id}'s outcomes: ${names}`,
       );
     }
     return { rule, name };
   }
 
   /** The human-readable transition an outcome rule drives (the tool result's teaching line). */
-  outcomeTransitionText(run: Run, rule: StageOutcomeRule): string {
+  outcomeTransitionText(run: Run, rule: StepOutcomeRule): string {
     const pipeline = this.board.pipelineOfRun(run);
-    return rule.toStageId !== undefined
-      ? `the card returns to ${pipeline?.stageById(rule.toStageId)?.label ?? rule.toStageId} when the step finishes`
+    return rule.toStepId !== undefined
+      ? `the card returns to ${pipeline?.stepById(rule.toStepId)?.label ?? rule.toStepId} when the step finishes`
       : 'the pipeline proceeds when the step finishes';
   }
 }

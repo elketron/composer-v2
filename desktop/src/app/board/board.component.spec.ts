@@ -24,7 +24,7 @@ describe('BoardComponent', () => {
     seedPipeline('PL-1', 'Standard coding card');
   });
 
-  /** The staged default pipeline the board tabs project. */
+  /** The step-path default pipeline the board tabs project. */
   function seedPipeline(id: string, name: string, projectId = 'P-1') {
     events.emit(
       {
@@ -38,15 +38,12 @@ describe('BoardComponent', () => {
             name,
             revision: 1,
             updatedAt: new Date().toISOString(),
-            stages: [
-              { id: 'sg-1', label: 'New', kanbanVisible: true },
-              { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
-              { id: 'sg-3', label: 'Validation', kanbanVisible: true },
-              { id: 'sg-4', label: 'Approval', kanbanVisible: true },
-              { id: 'sg-5', label: 'Done', kanbanVisible: true, terminal: true },
-            ],
             steps: [
-              { id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'coder', instructions: 'Implement.' },
+              { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement.' },
+              { id: 'st-2', kind: 'command', boardVisible: true, command: 'npm run build', description: 'Build' },
+              { id: 'st-3', kind: 'command', boardVisible: true, command: 'npm test', description: 'Test' },
+              { id: 'st-4', kind: 'human', boardVisible: true, description: 'Approval' },
+              { id: 'st-5', kind: 'human', boardVisible: true, terminal: true },
             ],
           },
         },
@@ -96,8 +93,8 @@ describe('BoardComponent', () => {
 
   it('the tab selects the cards: only the assigned pipeline\'s cards render', async () => {
     seedPipeline('PL-2', 'Docs pass');
-    seedCard(events, { id: 'T-1', title: 'Diff overlay', stageId: 'sg-2' });
-    seedCard(events, { id: 'T-2', title: 'Docs card', pipelineId: 'PL-2', stageId: 'sg-1' });
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', stepId: 'st-2' });
+    seedCard(events, { id: 'T-2', title: 'Docs card', pipelineId: 'PL-2', stepId: 'st-1' });
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
 
@@ -113,7 +110,7 @@ describe('BoardComponent', () => {
   });
 
   it('the type selector filters the tab\'s cards instead of switching boards', async () => {
-    seedCard(events, { id: 'T-1', title: 'Diff overlay', stageId: 'sg-2' });
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', stepId: 'st-2' });
     seedCard(events, { id: 'T-2', title: 'Spec doc', type: 'docs' });
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
@@ -131,8 +128,8 @@ describe('BoardComponent', () => {
     expect(el.textContent).toContain('T-2');
   });
 
-  it('renders seeded cards in their stage columns (hidden stages project back)', async () => {
-    seedCard(events, { id: 'T-1', title: 'Diff overlay', stageId: 'sg-2' });
+  it('renders seeded cards in their swimlane columns (hidden steps project back)', async () => {
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', stepId: 'st-2' });
     seedCard(events, { id: 'T-2', title: 'Grammar cache' });
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
@@ -142,7 +139,7 @@ describe('BoardComponent', () => {
     expect(columns[1].textContent).toContain('T-1');
     expect(columns[1].textContent).toContain('Diff overlay');
     const labels = [...el.querySelectorAll('.col-head .col-label')].map((h) => h.textContent!.trim());
-    expect(labels).toEqual(['New', 'Implementation', 'Validation', 'Approval', 'Done']);
+    expect(labels).toEqual(['coder', 'Build', 'Test', 'approval', 'done']);
   });
 
   it('opens the card detail panel on card click and returns on back', async () => {
@@ -171,12 +168,12 @@ describe('BoardComponent', () => {
     expect(document.activeElement).toBe(card);
   });
 
-  it('shows the rejection comment bar after a drag out of the terminal stage', async () => {
-    seedCard(events, { id: 'T-1', stageId: 'sg-5' });
+  it('shows the rejection comment bar after a drag out of the terminal step', async () => {
+    seedCard(events, { id: 'T-1', stepId: 'st-5' });
     const service = TestBed.inject(BoardService);
     const fixture = await render();
 
-    await service.requestMove('T-1', 'sg-2');
+    await service.requestMove('T-1', 'st-2');
     await fixture.whenStable();
 
     const el = fixture.nativeElement as HTMLElement;
@@ -222,7 +219,7 @@ describe('BoardComponent', () => {
           description: '',
           tags: [],
           pipelineId: 'PL-1',
-          stageId: 'sg-1',
+          stepId: 'st-1',
           blockedBy: [],
           stepStates: {},
           createdAt: new Date().toISOString(),

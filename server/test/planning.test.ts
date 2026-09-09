@@ -13,7 +13,6 @@ import { snapshotEvents } from '../src/snapshot.js';
 import { PlanningOrchestrator, resumeStrandedTurns } from '../src/planning.js';
 import { FakeEngine } from '../src/engine/fake.js';
 import type { EventFrame } from '../src/wire/envelope.js';
-import type { TicketEmission } from '../src/wire/commands.js';
 
 let dir: string;
 let store: InstanceType<typeof import('../src/store/index.js').EventStore>;
@@ -61,13 +60,18 @@ function session(projectId: string, sessionId: string) {
   return record;
 }
 
-function ticket(
-  key: string | undefined,
-  title: string,
-  cardType: TicketEmission['cardType'],
-  blockedBy: string[],
-): TicketEmission {
-  return { ...(key !== undefined ? { key } : {}), title, cardType, description: '', blockedBy };
+function ticketBlock(t: {
+  title: string;
+  cardType?: string;
+  key?: string;
+  blockedBy?: string[];
+  description?: string;
+}): string {
+  const fields: string[] = [];
+  if (t.cardType !== undefined) fields.push(`cardType: ${t.cardType}`);
+  if (t.key !== undefined) fields.push(`key: ${t.key}`);
+  if (t.blockedBy !== undefined && t.blockedBy.length > 0) fields.push(`blockedBy: [${t.blockedBy.join(', ')}]`);
+  return `#[${t.title}]\n\n---\n${fields.join('\n')}\n---\n${t.description ?? ''}`.trim();
 }
 
 async function waitUntil(condition: () => boolean): Promise<void> {
@@ -206,20 +210,25 @@ describe('planning commands', () => {
     // An existing card so the ids allocate after it (T-2..).
     const existing = await processor.execute(projectId, {
       type: 'requestCardCreate',
-      card: { id: '', projectId, type: 'coding', title: 'existing', description: '', tags: [], pipelineId: '', stageId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
+      card: { id: '', projectId, type: 'coding', title: 'existing', description: '', tags: [], pipelineId: '', stepId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
     });
     expect(existing.ok).toBe(true);
+
+    await processor.execute(projectId, {
+      type: 'requestPlanDocumentUpdate',
+      sessionId,
+      document: [
+        ticketBlock({ title: 'Alpha', cardType: 'coding', key: 'a' }),
+        ticketBlock({ title: 'Beta', cardType: 'design', key: 'b', blockedBy: ['a', 'T-1'] }),
+        ticketBlock({ title: 'Gamma', cardType: 'docs', blockedBy: ['b'] }),
+      ].join('\n\n'),
+    });
 
     const result = await processor.execute(projectId, {
       type: 'requestTicketsCreate',
       sessionId,
-      tickets: [
-        ticket('a', 'Alpha', 'coding', []),
-        ticket('b', 'Beta', 'design', ['a', 'T-1']),
-        ticket(undefined, 'Gamma', 'docs', ['b']),
-      ],
     });
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ ok: true, cards: 3 });
 
     const kinds = recorded.map((frame) => frame.eventType).slice(-4);
     expect(kinds).toEqual([
@@ -231,10 +240,10 @@ describe('planning commands', () => {
 
     const committed = recorded
       .filter((frame) => frame.eventType === 'cardsCommitted')
-      .at(-1)?.body as { cards: { id: string; type: string; pipelineId: string; stageId: string; blockedBy: string[]; sessionId?: string }[] };
+      .at(-1)?.body as { cards: { id: string; type: string; pipelineId: string; stepId: string; blockedBy: string[]; sessionId?: string }[] };
     expect(committed.cards).toHaveLength(3);
     const [alpha, beta, gamma] = committed.cards;
-    expect(alpha).toMatchObject({ id: 'T-2', type: 'coding', pipelineId: 'PL-1', stageId: 'sg-1' });
+    expect(alpha).toMatchObject({ id: 'T-2', type: 'coding', pipelineId: 'PL-1', stepId: 'st-1' });
     expect(beta).toMatchObject({ id: 'T-3', type: 'design', blockedBy: ['T-2', 'T-1'] });
     expect(gamma).toMatchObject({ id: 'T-4', type: 'docs', blockedBy: ['T-3'] });
     expect(beta.sessionId).toBe(sessionId);
@@ -244,29 +253,41 @@ describe('planning commands', () => {
     expect(session(projectId, sessionId).status).toBe('done');
     const card = bus.state.byProject.get(projectId)?.cards.get('T-3');
     expect(card?.pipelineId).toBe('PL-1');
-    expect(card?.stageId).toBe('sg-1');
+    expect(card?.stepId).toBe('st-1');
     expect(card?.stepStates).toEqual({});
   });
 
   it('create_tickets_rejects_invalid_input', async () => {
-    const cases: { tickets: TicketEmission[]; sessionId: string; message: string }[] = [
-      { tickets: [], sessionId, message: 'No tickets provided' },
-      { tickets: [ticket('a', '  ', 'coding', [])], sessionId, message: 'Every ticket needs a title' },
-      { tickets: [ticket('', 'Alpha', 'coding', [])], sessionId, message: "Ticket 'Alpha': key must not be empty" },
+    const cases: { document: string; sessionId: string; message: string }[] = [
+      { document: 'no tickets here — just prose', sessionId, message: 'No tickets provided' },
       {
-        tickets: [ticket('a', 'Alpha', 'coding', []), ticket('a', 'Beta', 'coding', [])],
+        document: [ticketBlock({ title: 'Alpha', key: 'a' }), ticketBlock({ title: 'Beta', key: 'a' })].join('\n\n'),
         sessionId,
         message: 'Ticket keys must be unique',
       },
-      { tickets: [ticket('a', 'Alpha', 'coding', ['a'])], sessionId, message: "Ticket 'Alpha': a ticket cannot block itself" },
-      { tickets: [ticket('a', 'Alpha', 'coding', ['T-99'])], sessionId, message: "Ticket 'Alpha': blockedBy entry T-99 is neither an existing card nor a ticket key" },
-      { tickets: [ticket('a', 'Alpha', 'coding', [])], sessionId: 'S-99', message: 'Unknown session S-99' },
+      {
+        document: ticketBlock({ title: 'Alpha', key: 'a', blockedBy: ['a'] }),
+        sessionId,
+        message: "Ticket 'Alpha': a ticket cannot block itself",
+      },
+      {
+        document: ticketBlock({ title: 'Alpha', key: 'a', blockedBy: ['T-99'] }),
+        sessionId,
+        message: "Ticket 'Alpha': blockedBy entry T-99 is neither an existing card nor a ticket key",
+      },
+      { document: ticketBlock({ title: 'Alpha' }), sessionId: 'S-99', message: 'Unknown session S-99' },
     ];
     for (const case_ of cases) {
+      if (case_.sessionId === sessionId) {
+        await processor.execute(projectId, {
+          type: 'requestPlanDocumentUpdate',
+          sessionId,
+          document: case_.document,
+        });
+      }
       const result = await processor.execute(projectId, {
         type: 'requestTicketsCreate',
         sessionId: case_.sessionId,
-        tickets: case_.tickets,
       });
       expect(result).toEqual({
         ok: false,
@@ -276,12 +297,16 @@ describe('planning commands', () => {
   });
 
   it('done_session_rejects_document_updates_and_ticket_reemission', async () => {
+    await processor.execute(projectId, {
+      type: 'requestPlanDocumentUpdate',
+      sessionId,
+      document: ticketBlock({ title: 'Alpha', key: 'a' }),
+    });
     const done = await processor.execute(projectId, {
       type: 'requestTicketsCreate',
       sessionId,
-      tickets: [ticket('a', 'Alpha', 'coding', [])],
     });
-    expect(done.ok).toBe(true);
+    expect(done).toEqual({ ok: true, cards: 1 });
 
     const doc = await processor.execute(projectId, {
       type: 'requestPlanDocumentUpdate',
@@ -306,7 +331,6 @@ describe('planning commands', () => {
     const again = await processor.execute(projectId, {
       type: 'requestTicketsCreate',
       sessionId,
-      tickets: [ticket(undefined, 'Beta', 'coding', [])],
     });
     expect(again).toEqual({
       ok: false,
@@ -323,16 +347,11 @@ describe('planning commands', () => {
     await processor.execute(projectId, {
       type: 'requestPlanDocumentUpdate',
       sessionId,
-      document: '<plan><goal>board</goal></plan>',
-    });
-    await bus.publish(projectId, 'agentMessageComplete', {
-      sessionId,
-      message: { index: 2, role: 'agent', text: 'drafted', at: '2026-09-05T00:00:00.000000Z' },
+      document: ticketBlock({ title: 'Alpha', key: 'a' }),
     });
     await processor.execute(projectId, {
       type: 'requestTicketsCreate',
       sessionId,
-      tickets: [ticket('a', 'Alpha', 'coding', [])],
     });
 
     const snapshot = snapshotEvents(bus.state);
@@ -441,6 +460,8 @@ describe('the planning turn', () => {
     engine.enqueue(async ({ emit }) => {
       emit({ kind: 'messageDelta', messageId: 'a', delta: 'first ' });
       emit({ kind: 'messageComplete', messageId: 'a', text: 'first reply' });
+      emit({ kind: 'toolCall', toolCallId: 'tool-1', toolName: 'read_file', args: { path: 'README.md' } });
+      emit({ kind: 'toolResult', toolCallId: 'tool-1', content: 'project readme', isError: false });
       emit({ kind: 'messageDelta', messageId: 'b', delta: 'second ' });
       // The turn's return value is its final message (FakeEngine rule).
       return 'second reply';
@@ -461,27 +482,41 @@ describe('the planning turn', () => {
         index: (frame.body as { messageIndex?: number; message?: { index?: number } }).messageIndex
           ?? (frame.body as { message?: { index?: number } }).message!.index!,
       }));
-    // Deltas and their completion share one reserved index; the next
-    // message reserves the following one (the live corruption fix).
+    // Deltas and their completion share one reserved index. The intermediate
+    // completion is durable activity, but is published before the final reply.
     expect(agentEvents).toEqual([
       { type: 'agentMessageDelta', index: 2 },
-      { type: 'agentMessageComplete', index: 2 },
       { type: 'agentMessageDelta', index: 3 },
+      { type: 'agentMessageComplete', index: 2 },
       { type: 'agentMessageComplete', index: 3 },
+    ]);
+    expect(session(projectId, sessionId).messages).toMatchObject([
+      { index: 1, role: 'user' },
+      { index: 2, role: 'agent', text: 'first reply', activity: true, parentIndex: 1 },
+      { index: 3, role: 'agent', text: 'second reply' },
+    ]);
+    expect(session(projectId, sessionId).toolCalls).toMatchObject([
+      {
+        toolCallId: 'tool-1',
+        parentIndex: 1,
+        toolName: 'read_file',
+        summary: 'project readme',
+      },
     ]);
   });
 
   it('an_approval_turn_lands_tickets_and_completes_the_session', async () => {
+    const planDocument = [
+      ticketBlock({ title: 'drag & drop', cardType: 'coding', key: 'k1', description: 'd1' }),
+      ticketBlock({ title: 'docs', cardType: 'docs', blockedBy: ['k1'], description: 'd2' }),
+    ].join('\n\n');
     engine.enqueue(async ({ tools }) => {
-      const result = await tools.editDocument('<plan><goal>board</goal></plan>');
+      const result = await tools.editDocument(planDocument);
       expect(result).toEqual({ ok: true });
       return 'drafted';
     });
     engine.enqueue(async ({ tools }) => {
-      const result = await tools.createTickets([
-        { title: 'drag & drop', type: 'coding', description: 'd1', key: 'k1' },
-        { title: 'docs', type: 'docs', description: 'd2', blockedBy: ['k1'] },
-      ]);
+      const result = await tools.createTickets();
       expect(result).toEqual({ ok: true, cards: 2 });
       return 'committed';
     });

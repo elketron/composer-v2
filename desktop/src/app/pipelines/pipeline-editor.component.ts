@@ -1,25 +1,35 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { LucideAngularModule } from 'lucide-angular';
-import { ArrowDown, ArrowUp, Plus, Save, Trash2, Workflow, X } from 'lucide-angular';
+import { LucideAngularModule, type LucideIconData } from 'lucide-angular';
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  Bot,
+  Check,
+  Plus,
+  Save,
+  SquareCheck,
+  Terminal,
+  Trash2,
+  Workflow,
+} from 'lucide-angular';
 
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
-import { SettingsService } from '../settings/settings.service';
-import { Pipeline, PipelineStepKind } from '../core/models/pipeline.models';
+import { Pipeline, PipelineStepKind, PIPELINE_AGENT_KINDS } from '../core/models/pipeline.models';
 import { PipelineService } from './pipeline.service';
-import { EditorDraft, StageDraft, StepDraft } from './editor-draft';
+import { EditorDraft, StepDraft } from './editor-draft';
 
 /**
  * The pipeline editor (S4, staged in Phase 10; the linear visual editor in
  * S37). Pipelines are user-authored (the ownership rule): the view lists
- * the project's pipelines and authors them from scratch — a name, the
- * compact stage path and a flat ordered step list with explicit stage
- * assignment. Save publishes requestPipelineSave (the server allocates fresh ids
- * and revisions, upserts known ones, and re-validates); deletions
- * tombstone the default. The draft's rules (conversion, validation,
- * reordering, id allocation) live on `EditorDraft`; this component renders
- * it and forwards edits.
+ * the project's pipelines and authors them from scratch. Editing is a full
+ * editor that fills the route: a linear diagram of the pipeline's step
+ * nodes, with a right-hand side panel that opens for the selected node's
+ * settings. A step made board-visible is its own swimlane; an agent step's
+ * agent kind is picked from the backend's shipped agents. The draft's rules
+ * (conversion, validation, reordering, id allocation) live on `EditorDraft`.
  */
 @Component({
   selector: 'app-pipeline-editor',
@@ -31,35 +41,34 @@ import { EditorDraft, StageDraft, StepDraft } from './editor-draft';
 export class PipelineEditorComponent {
   private readonly shell = inject(ShellService);
   private readonly pipelines = inject(PipelineService);
-  private readonly settings = inject(SettingsService);
   private readonly confirm = inject(ConfirmService);
 
   protected readonly projectId = computed(() => this.shell.activeTabId());
   protected readonly list = computed(() => this.pipelines.pipelines());
 
-  /** The agent kinds the picker offers: the shipped ones plus overrides. */
-  protected readonly agentKinds = this.settings.agentKinds;
+  /** The agent kinds the picker offers: the shipped pipeline agents. */
+  protected readonly agentKinds: readonly string[] = PIPELINE_AGENT_KINDS;
 
   protected readonly kinds: readonly PipelineStepKind[] = ['agent', 'command', 'human'];
 
   /** The working copy being authored; null shows the list. */
   protected readonly editing = signal<EditorDraft | null>(null);
 
-  /** The stage whose less-common routing settings are open. */
-  protected readonly selectedStageId = signal<string | null>(null);
+  /** The step node selected in the diagram (opens the node side panel). */
+  protected readonly selectedStepId = signal<string | null>(null);
 
-  protected readonly selectedStageIndex = computed(() => {
-    const current = this.selectedStageId();
+  protected readonly selectedStepIndex = computed(() => {
+    const current = this.selectedStepId();
     const draft = this.editing();
     if (current === null || draft === null) return null;
-    const index = draft.stages.findIndex((stage) => stage.id === current);
+    const index = draft.steps.findIndex((step) => step.id === current);
     return index < 0 ? null : index;
   });
 
-  protected readonly selectedStageDraft = computed<StageDraft | null>(() => {
+  protected readonly selectedStepDraft = computed<StepDraft | null>(() => {
     const current = this.editing();
-    const index = this.selectedStageIndex();
-    return current !== null && index !== null ? (current.stages[index] ?? null) : null;
+    const index = this.selectedStepIndex();
+    return current !== null && index !== null ? (current.steps[index] ?? null) : null;
   });
 
   /** Client-side validation runs live, but only surfaces after a save attempt. */
@@ -69,125 +78,141 @@ export class PipelineEditorComponent {
 
   protected readonly showError = computed(() => this.attemptedSave() && this.validationError() !== null);
 
-  protected readonly icons = { workflow: Workflow, plus: Plus, trash: Trash2, save: Save, close: X, up: ArrowUp, down: ArrowDown };
+  protected readonly icons = {
+    workflow: Workflow,
+    plus: Plus,
+    trash: Trash2,
+    save: Save,
+    back: ArrowLeft,
+    up: ArrowUp,
+    down: ArrowDown,
+    done: Check,
+  };
+
+  constructor() {
+    effect(() => {
+      const draft = this.editing();
+      if (draft !== null && draft.projectId !== this.projectId()) this.cancel();
+    });
+  }
+
+  // ---- List (browse) mode ----
 
   protected stepSummary(pipeline: Pipeline): string {
-    return pipeline.steps.map((step) => this.kindLabel(step.kind)).join(' → ');
-  }
-
-  protected stageSummary(pipeline: Pipeline): string {
-    return pipeline.stages.map((stage) => stage.label + (stage.terminal ? ' ✓' : stage.kanbanVisible ? '' : ' ·')).join(' → ');
-  }
-
-  protected kindLabel(kind: PipelineStepKind): string {
-    switch (kind) {
-      case 'agent':
-        return 'agent';
-      case 'command':
-        return 'command';
-      case 'human':
-        return 'gate';
-    }
+    return pipeline.steps.map((step) => step.label).join(' → ');
   }
 
   protected canEdit(): boolean {
     return this.projectId() !== null;
   }
 
+  // ---- Diagram node representation ----
+
+  protected stepIcon(kind: PipelineStepKind): LucideIconData {
+    switch (kind) {
+      case 'command':
+        return Terminal;
+      case 'human':
+        return SquareCheck;
+      default:
+        return Bot;
+    }
+  }
+
+  protected nodeLabel(step: StepDraft): string {
+    if (step.terminal) return 'done';
+    switch (step.kind) {
+      case 'agent':
+        return step.agentKind.trim() !== '' ? step.agentKind : 'agent';
+      case 'command':
+        return 'command';
+      case 'human':
+        return 'approval';
+    }
+  }
+
+  protected nodeDetail(step: StepDraft): string {
+    if (step.terminal) return 'completion';
+    switch (step.kind) {
+      case 'agent':
+        return step.instructions || 'instructions';
+      case 'command':
+        return step.command || 'shell command';
+      case 'human':
+        return step.description || 'approval prompt';
+    }
+  }
+
+  // ---- Entering / leaving edit mode ----
+
   protected newPipeline(): void {
-    if (!this.canEdit()) return;
-    this.attemptedSave.set(false);
-    const draft = EditorDraft.newDraft();
-    this.editing.set(draft);
-    this.selectedStageId.set(draft.firstStageId());
+    const projectId = this.projectId();
+    if (projectId === null) return;
+    this.openDraft(EditorDraft.newDraft(projectId));
   }
 
   protected edit(pipeline: Pipeline): void {
-    if (!this.canEdit()) return;
+    const projectId = this.projectId();
+    if (projectId === null) return;
+    this.openDraft(EditorDraft.fromPipeline(projectId, pipeline));
+  }
+
+  private openDraft(draft: EditorDraft): void {
     this.attemptedSave.set(false);
-    const draft = EditorDraft.fromPipeline(pipeline);
     this.editing.set(draft);
-    this.selectedStageId.set(draft.firstStageId());
+    this.selectedStepId.set(null);
   }
 
   protected cancel(): void {
     this.attemptedSave.set(false);
     this.editing.set(null);
-    this.selectedStageId.set(null);
+    this.selectedStepId.set(null);
   }
 
   protected updateName(name: string): void {
     this.update((draft) => draft.withName(name));
   }
 
-  protected selectStage(index: number): void {
-    this.selectedStageId.set(this.editing()?.stages[index]?.id ?? null);
+  // ---- Node selection ----
+
+  protected selectStep(index: number): void {
+    this.selectedStepId.set(this.editing()?.steps[index]?.id ?? null);
   }
 
-  // ---- Stage mutations ----
-
-  protected addStage(): void {
-    const current = this.editing();
-    if (current === null) return;
-    const { draft, stageId } = current.addStage();
-    this.editing.set(draft);
-    this.selectedStageId.set(stageId);
+  private selectStepById(id: string): void {
+    this.selectedStepId.set(id);
   }
 
-  protected removeStage(index: number): void {
-    const current = this.editing();
-    if (current === null) return;
-    const before = current.stages.length;
-    const next = current.removeStage(index);
-    this.editing.set(next);
-    if (next.stages.length < before) {
-      this.selectedStageId.set(next.stages[Math.min(index, next.stages.length - 1)]?.id ?? null);
-    }
-  }
-
-  protected moveStage(index: number, delta: -1 | 1): void {
-    this.update((draft) => draft.moveStage(index, delta));
-  }
-
-  protected canMoveStage(index: number, delta: -1 | 1): boolean {
-    return this.editing()?.canMoveStage(index, delta) ?? false;
-  }
-
-  protected updateStage(index: number, patch: Partial<StageDraft>): void {
-    this.update((draft) => draft.updateStage(index, patch));
-  }
-
-  protected updateStageErrorReturn(index: number, value: string): void {
-    this.updateStage(index, { errorReturnToStageId: value });
-  }
-
-  // ---- Stage outcome rules (S36) ----
-
-  protected addOutcome(stageIndex: number): void {
-    this.update((draft) => draft.addOutcome(stageIndex));
-  }
-
-  protected removeOutcome(stageIndex: number, ruleIndex: number): void {
-    this.update((draft) => draft.removeOutcome(stageIndex, ruleIndex));
-  }
-
-  protected updateOutcome(stageIndex: number, ruleIndex: number, patch: Partial<{ outcome: string; toStageId: string }>): void {
-    this.update((draft) => draft.updateOutcome(stageIndex, ruleIndex, patch));
-  }
-
-  /** The stages an error return or outcome rule may target: strictly earlier ones. */
-  protected errorTargets(index: number): StageDraft[] {
-    return this.editing()?.errorTargets(index) ?? [];
-  }
-
-  // ---- Step mutations ----
+  // ---- Step (node) mutations ----
 
   protected addStep(): void {
-    this.update((draft) => draft.addStep());
+    const current = this.editing();
+    if (current === null) return;
+    const before = new Set(current.steps.map((step) => step.id));
+    this.editing.set(current.addStep());
+    this.selectFreshStep(before);
+  }
+
+  protected insertStep(afterIndex: number): void {
+    const current = this.editing();
+    if (current === null) return;
+    const before = new Set(current.steps.map((step) => step.id));
+    this.editing.set(current.insertStep(afterIndex));
+    this.selectFreshStep(before);
+  }
+
+  /** Selects the step the mutation just added (its id is newly allocated). */
+  private selectFreshStep(before: ReadonlySet<string>): void {
+    const fresh = this.editing()?.steps.find((step) => !before.has(step.id));
+    if (fresh !== undefined) this.selectStepById(fresh.id);
   }
 
   protected removeStep(index: number): void {
-    this.update((draft) => draft.removeStep(index));
+    const current = this.editing();
+    if (current === null) return;
+    const removedId = current.steps[index]?.id ?? null;
+    this.editing.set(current.removeStep(index));
+    if (this.selectedStepId() === removedId) this.selectedStepId.set(null);
   }
 
   protected moveStep(index: number, delta: -1 | 1): void {
@@ -198,11 +223,6 @@ export class PipelineEditorComponent {
     return this.editing()?.canMoveStep(index, delta) ?? false;
   }
 
-  /** Changing stage also moves the step into that stage's contiguous run region. */
-  protected assignStepToStage(index: number, stageId: string): void {
-    this.update((draft) => draft.assignStepToStage(index, stageId));
-  }
-
   protected updateStepKind(index: number, kind: PipelineStepKind): void {
     this.update((draft) => draft.updateStepKind(index, kind));
   }
@@ -211,16 +231,36 @@ export class PipelineEditorComponent {
     this.update((draft) => draft.updateStep(index, patch));
   }
 
+  // ---- Step outcome rules (S36) ----
+
+  protected addOutcome(stepIndex: number): void {
+    this.update((draft) => draft.addOutcome(stepIndex));
+  }
+
+  protected removeOutcome(stepIndex: number, ruleIndex: number): void {
+    this.update((draft) => draft.removeOutcome(stepIndex, ruleIndex));
+  }
+
+  protected updateOutcome(stepIndex: number, ruleIndex: number, patch: Partial<{ outcome: string; toStepId: string }>): void {
+    this.update((draft) => draft.updateOutcome(stepIndex, ruleIndex, patch));
+  }
+
+  /** The steps an error return or outcome rule may target: strictly earlier ones. */
+  protected errorTargets(index: number): StepDraft[] {
+    return this.editing()?.errorTargets(index) ?? [];
+  }
+
+  // ---- Save / delete ----
+
   protected async save(): Promise<void> {
     const current = this.editing();
-    const projectId = this.projectId();
-    if (current === null || projectId === null) return;
+    if (current === null) return;
     this.attemptedSave.set(true);
     if (current.validate() !== null) {
       this.editing.set(current.with({ rejection: null }));
       return;
     }
-    const ok = await this.pipelines.save(projectId, current.toPipeline());
+    const ok = await this.pipelines.save(current.projectId, current.toPipeline());
     if (!ok) {
       const latest = this.editing();
       if (latest !== null) {
@@ -230,7 +270,7 @@ export class PipelineEditorComponent {
     }
     this.attemptedSave.set(false);
     this.editing.set(null);
-    this.selectedStageId.set(null);
+    this.selectedStepId.set(null);
   }
 
   protected async remove(pipelineId: string): Promise<void> {

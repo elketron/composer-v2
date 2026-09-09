@@ -12,7 +12,7 @@ export const cardActions: ActionRegistry = {
   'update:card': ({ body, scopeProjectId, str, bool }) => {
     const id = str('id') ?? scopeProjectId;
     if (id === undefined) return null;
-    const fields = ['stageId', 'pipelineId', 'type', 'stepState', 'assignee', 'reopened'];
+    const fields = ['stepId', 'pipelineId', 'type', 'stepState', 'assignee', 'reopened'];
     if (fields.filter((field) => field in body).length !== 1) return null;
 
     if ('reopened' in body) {
@@ -32,11 +32,11 @@ export const cardActions: ActionRegistry = {
     if ('pipelineId' in body) {
       return { type: 'requestCardPipelineAssign', cardId: id, pipelineId: str('pipelineId') ?? '' };
     }
-    if ('stageId' in body) {
+    if ('stepId' in body) {
       return {
-        type: 'requestCardStageMove',
+        type: 'requestCardStepMove',
         cardId: id,
-        toStageId: str('stageId') ?? '',
+        toStepId: str('stepId') ?? '',
         override: bool('override') ?? false,
         ...(str('comment') !== undefined ? { comment: str('comment') } : {}),
       };
@@ -58,7 +58,7 @@ export const cardActions: ActionRegistry = {
   'update:automation': ({ str, bool }) => ({
     type: 'requestAutomationToggle',
     pipelineId: str('pipelineId') ?? '',
-    stageId: str('stageId') ?? '',
+    stepId: str('stepId') ?? '',
     on: bool('on') ?? false,
   }),
 };

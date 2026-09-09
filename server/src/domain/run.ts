@@ -16,7 +16,6 @@ export interface RunInit {
   startedAt: string;
   endedAt?: string;
   error?: string;
-  stageId?: string;
   stepId?: string;
   stepKind?: PipelineStepKind;
 }
@@ -30,7 +29,6 @@ export class Run {
   readonly startedAt: string;
   readonly endedAt?: string;
   readonly error?: string;
-  readonly stageId?: string;
   readonly stepId?: string;
   readonly stepKind?: PipelineStepKind;
 
@@ -43,7 +41,6 @@ export class Run {
     this.startedAt = init.startedAt;
     if (init.endedAt !== undefined) this.endedAt = init.endedAt;
     if (init.error !== undefined) this.error = init.error;
-    if (init.stageId !== undefined) this.stageId = init.stageId;
     if (init.stepId !== undefined) this.stepId = init.stepId;
     if (init.stepKind !== undefined) this.stepKind = init.stepKind;
   }
@@ -76,7 +73,6 @@ export class Run {
       startedAt: this.startedAt,
       ...(this.endedAt !== undefined ? { endedAt: this.endedAt } : {}),
       ...(this.error !== undefined ? { error: this.error } : {}),
-      ...(this.stageId !== undefined ? { stageId: this.stageId } : {}),
       ...(this.stepId !== undefined ? { stepId: this.stepId } : {}),
       ...(this.stepKind !== undefined ? { stepKind: this.stepKind } : {}),
     };

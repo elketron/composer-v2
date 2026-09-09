@@ -39,6 +39,9 @@ export class PlanService {
   private readonly events = inject(EventsClient);
 
   private readonly sessionsSignal = signal<ReadonlyMap<string, PlanningSession>>(new Map());
+  private readonly streamingMessagesSignal = signal<ReadonlyMap<string, ChatMessage>>(new Map());
+  private readonly sendingProjectsSignal = signal<ReadonlySet<string>>(new Set());
+  private readonly committedCardsSignal = signal<ReadonlyMap<string, readonly Card[]>>(new Map());
   private readonly activeProjectSignal = signal<string | null>(null);
   private readonly pendingSessions = new Map<string, Promise<PlanningSession | null>>();
   private readonly seenEventIds = new Map<string, true>();
@@ -52,7 +55,7 @@ export class PlanService {
     return projectId ? (this.sessionsSignal().get(projectId) ?? null) : null;
   });
   readonly messages = computed(() => {
-    const messages = this.session()?.messages ?? [];
+    const messages = (this.session()?.messages ?? []).filter((message) => !message.activity);
     // Re-delivered events can land the same slot twice under different
     // indices; the transcript must render each (role, index) once — the
     // latest write wins.
@@ -66,11 +69,20 @@ export class PlanService {
   readonly planDocument = computed(() => this.session()?.planDocument ?? '');
   readonly status = computed(() => this.session()?.status ?? 'DRAFTING');
   readonly isDone = computed(() => this.session()?.isDone ?? false);
-  readonly streamingMessage = signal<ChatMessage | null>(null);
-  readonly isSending = signal(false);
+  readonly streamingMessage = computed(() => {
+    const projectId = this.activeProjectSignal();
+    return projectId ? (this.streamingMessagesSignal().get(projectId) ?? null) : null;
+  });
+  readonly isSending = computed(() => {
+    const projectId = this.activeProjectSignal();
+    return projectId !== null && this.sendingProjectsSignal().has(projectId);
+  });
   readonly loading = this.isSending;
   readonly error = signal<string | null>(null);
-  readonly committedCards = signal<readonly Card[]>([]);
+  readonly committedCards = computed(() => {
+    const projectId = this.activeProjectSignal();
+    return projectId ? (this.committedCardsSignal().get(projectId) ?? []) : [];
+  });
   readonly commands = signal<readonly PlanCommand[]>([]);
   readonly lastCommand = computed(() => this.commands().at(-1) ?? null);
 
@@ -85,7 +97,6 @@ export class PlanService {
     const normalized = projectId?.trim() || null;
     if (normalized === this.activeProjectSignal()) return;
     this.activeProjectSignal.set(normalized);
-    this.streamingMessage.set(null);
     this.error.set(null);
   }
 
@@ -96,20 +107,21 @@ export class PlanService {
     if (!value || !projectId || this.isSending()) return false;
 
     this.error.set(null);
-    this.isSending.set(true);
+    this.setProjectSending(projectId, true);
     const session = this.session() ?? (await this.createSession(projectId));
     if (!session) {
-      this.isSending.set(false);
+      this.setProjectSending(projectId, false);
       this.error.set('could not start a planning session');
       return false;
     }
     const response = await this.publishCommand({
       type: 'RequestUserMessage',
+      projectId,
       sessionId: session.id,
       text: value,
     });
     if (!response.ok) {
-      this.isSending.set(false);
+      this.setProjectSending(projectId, false);
       this.error.set(response.rejectionMessage ?? 'message rejected');
       return false;
     }
@@ -130,7 +142,8 @@ export class PlanService {
     const projectId = this.activeProjectSignal();
     if (!projectId) return;
     this.pendingCreate.add(projectId);
-    this.streamingMessage.set(null);
+    this.setProjectStreamingMessage(projectId, null);
+    this.setProjectSending(projectId, false);
     this.error.set(null);
     void this.publishCommand({ type: 'RequestPlanningSessionCreate', projectId });
   }
@@ -173,54 +186,86 @@ export class PlanService {
         break;
       }
       case 'UserMessageReceived': {
-        if (!this.isPlanningSession(event.sessionId)) break;
+        if (!this.isPlanningSession(event.projectId, event.sessionId)) break;
         const message = asMessage(event.message);
-        this.updateSessionById(event.sessionId, (session) =>
+        this.updateProjectSession(event.projectId, (session) =>
           session.with({ messages: upsertMessage(session.messages, message) }),
         );
-        if (event.sessionId === this.session()?.id) {
-          this.streamingMessage.set(
-            new ChatMessage({ index: message.index + 1, role: 'agent', text: '' }),
-          );
-        }
+        this.setProjectStreamingMessage(
+          event.projectId,
+          new ChatMessage({ index: message.index + 1, role: 'agent', text: '' }),
+        );
         break;
       }
       case 'AgentMessageDelta': {
         // Agent-step messages (card sessions, A-*) are the pipeline run
         // view's; only known planning sessions fold here — a coder's
         // stream must never replace the plan session.
-        if (!this.isPlanningSession(event.sessionId)) break;
-        const current = this.streamingMessage();
+        if (!this.isPlanningSession(event.projectId, event.sessionId)) break;
+        const current = this.streamingMessagesSignal().get(event.projectId);
         const message =
           current?.index === event.messageIndex
             ? current.with({ text: current.text + event.delta })
             : new ChatMessage({ index: event.messageIndex, role: 'agent', text: event.delta });
-        this.streamingMessage.set(message);
+        this.setProjectStreamingMessage(event.projectId, message);
         break;
       }
       case 'AgentMessageComplete': {
-        if (!this.isPlanningSession(event.sessionId)) break;
+        if (!this.isPlanningSession(event.projectId, event.sessionId)) break;
         const message = asMessage(event.message);
-        this.updateSessionById(event.sessionId, (session) =>
+        this.updateProjectSession(event.projectId, (session) =>
           session.with({ messages: upsertMessage(session.messages, message) }),
         );
         // The completion's index can disagree with the deltas' numbering
         // (observed off-by-one), so key the match on "a live stream for the
-        // active session ended" — the planner is single-writer per session.
-        if (event.sessionId === this.session()?.id) {
-          this.streamingMessage.set(null);
-          this.isSending.set(false);
+        // project session ended" — the planner is single-writer per session.
+        if (!message.activity) {
+          this.setProjectStreamingMessage(event.projectId, null);
+          this.setProjectSending(event.projectId, false);
         }
         break;
       }
+      case 'AgentToolCall': {
+        if (!this.isPlanningSession(event.projectId, event.sessionId)) break;
+        this.updateProjectSession(event.projectId, (session) => {
+          if (session.toolCalls.some((entry) => entry.toolCallId === event.toolCallId)) return session;
+          return session.with({
+            toolCalls: [
+              ...session.toolCalls,
+              {
+                toolCallId: event.toolCallId,
+                parentIndex: event.parentIndex ?? null,
+                toolName: event.toolName,
+                args: event.args,
+              },
+            ],
+          });
+        });
+        break;
+      }
+      case 'AgentToolResult': {
+        if (!this.isPlanningSession(event.projectId, event.sessionId)) break;
+        this.updateProjectSession(event.projectId, (session) =>
+          session.with({
+            toolCalls: session.toolCalls.map((entry) =>
+              entry.toolCallId === event.toolCallId
+                ? { ...entry, summary: event.content, isError: event.isError || undefined }
+                : entry,
+            ),
+          }),
+        );
+        break;
+      }
       case 'PlanDocumentUpdated': {
-        this.updateSessionById(event.sessionId, (session) =>
+        if (!this.isPlanningSession(event.projectId, event.sessionId)) break;
+        this.updateProjectSession(event.projectId, (session) =>
           session.with({ planDocument: event.document }),
         );
         break;
       }
       case 'PlanningSessionCompleted': {
-        this.updateSessionById(event.sessionId, (session) =>
+        if (!this.isPlanningSession(event.projectId, event.sessionId)) break;
+        this.updateProjectSession(event.projectId, (session) =>
           session.with({ status: 'DONE' }),
         );
         break;
@@ -229,7 +274,11 @@ export class PlanService {
         const cards = event.cards
           .map(asCommittedCard)
           .filter((card): card is Card => card !== null);
-        this.committedCards.set(cards);
+        this.committedCardsSignal.update((cardsByProject) => {
+          const next = new Map(cardsByProject);
+          next.set(event.projectId, cards);
+          return next;
+        });
         break;
       }
     }
@@ -270,12 +319,8 @@ export class PlanService {
 
   private publishCommand(command: PlanCommand): Promise<PublishResponseJson> {
     this.commands.update((commands) => [...commands.slice(-99), command]);
-    const projectId =
-      command.type === 'RequestPlanningSessionCreate'
-        ? command.projectId
-        : (this.activeProjectSignal() ?? '');
     const request = {
-      projectId,
+      projectId: command.projectId,
       [lcfirst(command.type)]: commandPayload(command),
     } as unknown as PublishRequestJson;
     return this.events.publish(request);
@@ -286,38 +331,8 @@ export class PlanService {
    * folds. Card-bound agent sessions (the runner's A-*) publish the same
    * message event names — they are the pipeline run view's, not the plan's.
    */
-  private isPlanningSession(sessionId: string | undefined): boolean {
-    if (sessionId === undefined) return false;
-    for (const session of this.sessionsSignal().values()) {
-      if (session.id === sessionId) return true;
-    }
-    // The active project's pending create (the id arrives on the echo).
-    return false;
-  }
-
-  private updateSessionById(
-    sessionId: string,
-    updater: (session: PlanningSession) => PlanningSession,
-    fallbackProjectId = this.activeProjectSignal() ?? '',
-  ): void {
-    const projectId = this.projectForSession(sessionId) ?? fallbackProjectId;
-    const existing = this.sessionsSignal().get(projectId);
-    if (!existing) {
-      this.setProjectSession(
-        projectId,
-        new PlanningSession({ id: sessionId, projectId, createdAt: new Date() }),
-      );
-    } else if (existing.id !== sessionId) {
-      this.setProjectSession(
-        projectId,
-        new PlanningSession({
-          id: sessionId,
-          projectId,
-          createdAt: existing.createdAt,
-        }),
-      );
-    }
-    this.updateProjectSession(projectId, (session) => updater(session));
+  private isPlanningSession(projectId: string, sessionId: string | undefined): boolean {
+    return sessionId !== undefined && this.sessionsSignal().get(projectId)?.id === sessionId;
   }
 
   private updateProjectSession(
@@ -341,11 +356,22 @@ export class PlanService {
     });
   }
 
-  private projectForSession(sessionId: string): string | null {
-    for (const [projectId, session] of this.sessionsSignal()) {
-      if (session.id === sessionId) return projectId;
-    }
-    return null;
+  private setProjectStreamingMessage(projectId: string, message: ChatMessage | null): void {
+    this.streamingMessagesSignal.update((messages) => {
+      const next = new Map(messages);
+      if (message) next.set(projectId, message);
+      else next.delete(projectId);
+      return next;
+    });
+  }
+
+  private setProjectSending(projectId: string, sending: boolean): void {
+    this.sendingProjectsSignal.update((projects) => {
+      const next = new Set(projects);
+      if (sending) next.add(projectId);
+      else next.delete(projectId);
+      return next;
+    });
   }
 }
 
@@ -354,6 +380,7 @@ export class PlanService {
 /** Map a wire event to a PlanEvent; null for events the plan view ignores. */
 function planEventFromWire(event: DomainEventJson): PlanEvent | null {
   const id = event.id;
+  const projectId = event.projectId ?? '';
   switch (domainEventKind(event)) {
     case 'planningSessionCreated': {
       const session = event.planningSessionCreated?.session;
@@ -371,6 +398,16 @@ function planEventFromWire(event: DomainEventJson): PlanEvent | null {
             role: message.role ?? 'user',
             text: message.text ?? '',
             at: message.at,
+            activity: message.activity,
+            parentIndex: message.parentIndex,
+          })),
+          toolCalls: (session.toolCalls ?? []).map((entry) => ({
+            toolCallId: entry.toolCallId ?? '',
+            parentIndex: entry.parentIndex,
+            toolName: entry.toolName ?? '',
+            args: entry.args,
+            summary: entry.summary,
+            isError: entry.isError,
           })),
           planDocument: session.planDocument ?? '',
         },
@@ -382,12 +419,15 @@ function planEventFromWire(event: DomainEventJson): PlanEvent | null {
       return {
         id,
         type: 'UserMessageReceived',
+        projectId,
         sessionId: payload.sessionId ?? '',
         message: {
           index: payload.message.index ?? 0,
           role: payload.message.role ?? 'user',
           text: payload.message.text ?? '',
           at: payload.message.at,
+          activity: payload.message.activity,
+          parentIndex: payload.message.parentIndex,
         },
       };
     }
@@ -397,6 +437,7 @@ function planEventFromWire(event: DomainEventJson): PlanEvent | null {
       return {
         id,
         type: 'AgentMessageDelta',
+        projectId,
         sessionId: payload.sessionId ?? '',
         messageIndex: payload.messageIndex ?? 0,
         delta: payload.delta ?? '',
@@ -408,13 +449,43 @@ function planEventFromWire(event: DomainEventJson): PlanEvent | null {
       return {
         id,
         type: 'AgentMessageComplete',
+        projectId,
         sessionId: payload.sessionId ?? '',
         message: {
           index: payload.message.index ?? 0,
           role: payload.message.role ?? 'agent',
           text: payload.message.text ?? '',
           at: payload.message.at,
+          activity: payload.message.activity,
+          parentIndex: payload.message.parentIndex,
         },
+      };
+    }
+    case 'agentToolCall': {
+      const payload = event.agentToolCall;
+      if (!payload) return null;
+      return {
+        id,
+        type: 'AgentToolCall',
+        projectId,
+        sessionId: payload.sessionId ?? '',
+        toolCallId: payload.toolCallId ?? '',
+        parentIndex: payload.parentIndex,
+        toolName: payload.toolName ?? '',
+        args: payload.args,
+      };
+    }
+    case 'agentToolResult': {
+      const payload = event.agentToolResult;
+      if (!payload) return null;
+      return {
+        id,
+        type: 'AgentToolResult',
+        projectId,
+        sessionId: payload.sessionId ?? '',
+        toolCallId: payload.toolCallId ?? '',
+        content: payload.content ?? '',
+        isError: payload.isError === true,
       };
     }
     case 'planDocumentUpdated': {
@@ -423,6 +494,7 @@ function planEventFromWire(event: DomainEventJson): PlanEvent | null {
       return {
         id,
         type: 'PlanDocumentUpdated',
+        projectId,
         sessionId: payload.sessionId ?? '',
         document: payload.document ?? '',
       };
@@ -433,6 +505,7 @@ function planEventFromWire(event: DomainEventJson): PlanEvent | null {
       return {
         id,
         type: 'PlanningSessionCompleted',
+        projectId,
         sessionId: payload.sessionId ?? '',
       };
     }
@@ -440,6 +513,7 @@ function planEventFromWire(event: DomainEventJson): PlanEvent | null {
       return {
         id,
         type: 'CardsCommitted',
+        projectId,
         cards: (event.cardsCommitted?.cards ?? []).map(cardFromWire),
       };
     default:
@@ -490,7 +564,7 @@ interface CardDto {
   readonly id?: unknown;
   readonly type?: unknown;
   readonly pipelineId?: unknown;
-  readonly stageId?: unknown;
+  readonly stepId?: unknown;
   readonly createdAt?: unknown;
   readonly updatedAt?: unknown;
   readonly tags?: unknown;
@@ -535,7 +609,7 @@ function asCommittedCard(value: unknown): Card | null {
     description: typeof dto.description === 'string' ? dto.description : '',
     tags,
     pipelineId: typeof dto.pipelineId === 'string' ? dto.pipelineId : '',
-    stageId: typeof dto.stageId === 'string' ? dto.stageId : '',
+    stepId: typeof dto.stepId === 'string' ? dto.stepId : '',
     blockedBy,
     assignee: asAssignee(dto.assignee),
     sessionId: typeof dto.sessionId === 'string' ? dto.sessionId : undefined,

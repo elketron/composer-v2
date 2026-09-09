@@ -222,7 +222,7 @@ describe('the outcome tool end to end', () => {
   it('reports_through_the_worker_route_and_returns_the_card', async () => {
     const stream = await openEventStream();
     await stream.next(); // attach proven: the first snapshot frame
-    // A pipeline whose only agent step reviews at an outcome stage — the
+    // A pipeline whose only agent step reviews at an outcome step — the
     // boot's parked turn is the reviewer's, and its verdict routes the card.
     expect(
       await action({
@@ -230,18 +230,19 @@ describe('the outcome tool end to end', () => {
         on: 'pipeline',
         body: {
           name: 'review only',
-          stages: [
-            { id: 'sg-1', label: 'New', kanbanVisible: true },
+          steps: [
+            { id: 'st-1', kind: 'command', boardVisible: true, command: 'true', description: 'New' },
             {
-              id: 'sg-2',
-              label: 'Review',
-              kanbanVisible: true,
-              outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStageId: 'sg-1' }],
+              id: 'st-2',
+              kind: 'agent',
+              boardVisible: true,
+              agentKind: 'reviewer',
+              instructions: 'Review the card.',
+              outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStepId: 'st-1' }],
               requiresOutcome: true,
             },
-            { id: 'sg-3', label: 'Done', kanbanVisible: true, terminal: true },
+            { id: 'st-3', kind: 'human', boardVisible: true, terminal: true },
           ],
-          steps: [{ id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'reviewer', instructions: 'Review the card.' }],
         },
       }),
     ).toEqual({ status: 200, json: { ok: true } });
@@ -271,8 +272,8 @@ describe('the outcome tool end to end', () => {
 
     // The turn finishes; the runner applies the outcome (move, then end).
     releaseTurn?.();
-    const moved = await stream.until((frame) => frame['eventType'] === 'cardStageMoved');
-    expect((moved?.['body'] as { toStageId: string }).toStageId).toBe('sg-1');
+    const moved = await stream.until((frame) => frame['eventType'] === 'cardStepMoved');
+    expect((moved?.['body'] as { toStepId: string }).toStepId).toBe('st-1');
     const ended = await stream.until((frame) => frame['eventType'] === 'pipelineRunEnded');
     expect((ended?.['body'] as { status: string }).status).toBe('returned');
     expect((ended?.['body'] as { error?: string }).error).toBe('changes_requested: tests missing');

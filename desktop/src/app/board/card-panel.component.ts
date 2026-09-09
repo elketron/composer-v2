@@ -59,19 +59,19 @@ export class CardPanelComponent {
     () => this.pipelines.pipelineById(this.card().pipelineId),
   );
 
-  /** Whether the card sits in its pipeline's terminal (Done) stage. */
+  /** Whether the card sits at its pipeline's terminal (Done) step. */
   protected readonly completed = computed(() => {
     const pipeline = this.pipeline();
-    return pipeline !== undefined && pipeline.terminalStageId === this.card().stageId;
+    return pipeline !== undefined && pipeline.terminalStepId === this.card().stepId;
   });
 
-  /** The pipeline's Kanban-visible stages the card may be dragged to. */
+  /** The pipeline's board-visible steps the card may be dragged to. */
   protected readonly moveTargets = computed(() => {
     const pipeline = this.pipeline();
     if (pipeline === undefined) return [];
     return pipeline
       .columns()
-      .filter((stage) => stage.id !== pipeline.visibleStageOf(this.card().stageId));
+      .filter((step) => step.id !== pipeline.visibleStepOf(this.card().stepId));
   });
 
   constructor() {
@@ -137,23 +137,17 @@ export class CardPanelComponent {
     if (projectId) void this.router.navigate(['/projects', projectId, 'coding', 'run', card.id]);
   }
 
-  protected stageLabel(stageId: string): string {
-    return this.pipeline()?.stageById(stageId)?.label ?? stageId;
-  }
-
   /** The steps of the assigned pipeline with the card's per-step state. */
   protected stepRows(): { step: PipelineStep; status: StepStateStatus }[] {
     const pipeline = this.pipeline();
     if (pipeline === undefined) return [];
     const states = this.card().stepStates;
-    return pipeline.steps.map((step) => ({
-      step,
-      status: states[step.id] ?? 'pending',
-    }));
-  }
-
-  protected stepStageLabel(step: PipelineStep): string {
-    return this.stageLabel(step.stageId);
+    return pipeline.steps
+      .filter((step) => !step.terminal)
+      .map((step) => ({
+        step,
+        status: states[step.id] ?? 'pending',
+      }));
   }
 
   protected close(): void {
@@ -178,8 +172,8 @@ export class CardPanelComponent {
     this.board.unassign(this.card().id);
   }
 
-  protected forceMove(stageId: string): void {
-    if (stageId) void this.board.forceMove(this.card().id, stageId);
+  protected forceMove(stepId: string): void {
+    if (stepId) void this.board.forceMove(this.card().id, stepId);
   }
 
   protected reassign(): void {

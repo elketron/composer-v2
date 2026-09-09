@@ -4,7 +4,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { FakeEventsClient, provideFakeEventsClient } from '../core/events/events-client.fake';
 import { DomainEventJson } from '../core/events/wire';
 import { ShellService } from '../shell/shell.service';
-import { Pipeline, PipelineStage, PipelineStep } from '../core/models/pipeline.models';
+import { Pipeline, PipelineStep } from '../core/models/pipeline.models';
 import { PipelineService } from './pipeline.service';
 
 describe('PipelineService', () => {
@@ -32,28 +32,14 @@ describe('PipelineService', () => {
 
   const emit = (event: DomainEventJson): void => events.emit(event);
 
-  const stage = (id: string, label: string, extra: Record<string, unknown> = {}): PipelineStage =>
-    new PipelineStage({ id, label, kanbanVisible: true, ...extra });
-
   const pipeline = (id: string, steps: PipelineStep[]): Pipeline =>
-    new Pipeline({
-      id,
-      name: 'Standard coding card',
-      revision: 1,
-      stages: [
-        stage('sg-1', 'New'),
-        stage('sg-2', 'Implementation'),
-        stage('sg-3', 'Approval', { errorReturnToStageId: 'sg-2' }),
-        stage('sg-4', 'Done', { terminal: true }),
-      ],
-      steps,
-    });
+    new Pipeline({ id, name: 'Standard coding card', revision: 1, steps });
 
-  const coderStep = PipelineStep.empty('st-1', 'agent', 'sg-2').with({
+  const coderStep = PipelineStep.empty('st-1', 'agent').with({
     agentKind: 'coder',
     instructions: 'Implement the card.',
   });
-  const gateStep = PipelineStep.empty('st-2', 'human', 'sg-3').with({ description: 'Approval' });
+  const gateStep = PipelineStep.empty('st-2', 'human').with({ description: 'Approval' });
 
   it('folds saved and deleted pipelines per project', async () => {
     const service = create();
@@ -70,23 +56,18 @@ describe('PipelineService', () => {
           projectId: 'P-1',
           name: 'Standard coding card',
           revision: 1,
-          stages: [
-            { id: 'sg-1', label: 'New', kanbanVisible: true },
-            { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
-            { id: 'sg-3', label: 'Approval', kanbanVisible: true },
-            { id: 'sg-4', label: 'Done', kanbanVisible: true, terminal: true },
-          ],
           steps: [
-            { id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'coder', instructions: 'Implement the card.' },
-            { id: 'st-2', kind: 'human', stageId: 'sg-3', description: 'Approval' },
+            { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement the card.' },
+            { id: 'st-2', kind: 'human', boardVisible: true, description: 'Approval' },
+            { id: 'st-3', kind: 'human', boardVisible: true, terminal: true },
           ],
           updatedAt: '2026-09-05T00:00:00Z',
         },
       },
     });
     expect(service.pipelines().map((p) => p.id)).toEqual(['PL-1']);
-    expect(service.pipelines()[0]?.steps.map((s) => s.kind)).toEqual(['agent', 'human']);
-    expect(service.pipelines()[0]?.terminalStageId).toBe('sg-4');
+    expect(service.pipelines()[0]?.steps.map((s) => s.kind)).toEqual(['agent', 'human', 'human']);
+    expect(service.pipelines()[0]?.terminalStepId).toBe('st-3');
 
     // An upsert replaces; a delete removes.
     emit({
@@ -99,18 +80,17 @@ describe('PipelineService', () => {
           projectId: 'P-1',
           name: 'Renamed',
           revision: 2,
-          stages: [
-            { id: 'sg-1', label: 'New', kanbanVisible: true },
-            { id: 'sg-2', label: 'Done', kanbanVisible: true, terminal: true },
+          steps: [
+            { id: 'st-1', kind: 'command', boardVisible: true, command: 'true' },
+            { id: 'st-2', kind: 'human', boardVisible: true, terminal: true },
           ],
-          steps: [{ id: 'st-1', kind: 'command', stageId: 'sg-1', command: 'true' }],
           updatedAt: '2026-09-05T00:00:01Z',
         },
       },
     });
     expect(service.pipelines()[0]?.name).toBe('Renamed');
     expect(service.pipelines()[0]?.revision).toBe(2);
-    expect(service.pipelines()[0]?.steps).toHaveLength(1);
+    expect(service.pipelines()[0]?.steps).toHaveLength(2);
 
     // An older revision arriving late does not regress the current definition.
     emit({
@@ -123,12 +103,6 @@ describe('PipelineService', () => {
           projectId: 'P-1',
           name: 'Standard coding card',
           revision: 1,
-          stages: [
-            { id: 'sg-1', label: 'New', kanbanVisible: true },
-            { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
-            { id: 'sg-3', label: 'Approval', kanbanVisible: true },
-            { id: 'sg-4', label: 'Done', kanbanVisible: true, terminal: true },
-          ],
           steps: [],
           updatedAt: '2026-09-05T00:00:00Z',
         },
@@ -172,12 +146,10 @@ describe('PipelineService', () => {
         pipelineId: 'PL-1',
         stepId: 'st-1',
         kind: 'agent',
-        stageId: 'sg-2',
       },
     });
     expect(service.runForCard('T-1')).toMatchObject({
       stepId: 'st-1',
-      stageId: 'sg-2',
       stepKind: 'agent',
       status: 'running',
     });
@@ -193,7 +165,6 @@ describe('PipelineService', () => {
         pipelineId: 'PL-1',
         stepId: 'st-2',
         kind: 'human',
-        stageId: 'sg-3',
       },
     });
     expect(service.runForCard('T-1')).toMatchObject({ stepId: 'st-2', stepKind: 'human', status: 'waiting' });
@@ -222,7 +193,6 @@ describe('PipelineService', () => {
         pipelineId: 'PL-1',
         stepId: 'st-1',
         kind: 'agent',
-        stageId: 'sg-2',
       },
     });
     expect(service.runForCard('T-9')).toBeUndefined();
@@ -263,10 +233,9 @@ describe('PipelineService', () => {
     const saved = events.published.at(-1)!;
     expect(saved).toMatchObject({ projectId: 'P-1', requestPipelineSave: { pipeline: { id: 'PL-9', name: 'Standard coding card' } } });
     expect(saved.requestPipelineSave?.pipeline.steps).toEqual([
-      { id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'coder', instructions: 'Implement the card.' },
-      { id: 'st-2', kind: 'human', stageId: 'sg-3', description: 'Approval' },
+      { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement the card.' },
+      { id: 'st-2', kind: 'human', boardVisible: true, description: 'Approval' },
     ]);
-    expect(saved.requestPipelineSave?.pipeline.stages.map((s) => s.id)).toEqual(['sg-1', 'sg-2', 'sg-3', 'sg-4']);
 
     await service.remove('P-1', 'PL-9');
     expect(events.published.at(-1)).toMatchObject({ requestPipelineDelete: { pipelineId: 'PL-9' } });

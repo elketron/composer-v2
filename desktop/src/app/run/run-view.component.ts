@@ -88,10 +88,12 @@ export class RunViewComponent {
     const cardState = this.card();
     const pipeline = this.runPipelineOf();
     if (cardState === undefined || pipeline === undefined) return [];
-    return pipeline.steps.map((step) => ({
-      step,
-      status: cardState.stepStates[step.id] ?? 'pending',
-    }));
+    return pipeline.steps
+      .filter((step) => !step.terminal)
+      .map((step) => ({
+        step,
+        status: cardState.stepStates[step.id] ?? 'pending',
+      }));
   });
 
   protected readonly toolCount = computed(

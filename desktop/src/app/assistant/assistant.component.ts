@@ -16,6 +16,10 @@ import {
 } from '../core/models/assistant.models';
 import { AssistantService } from './assistant.service';
 
+type AssistantTurnActivity =
+  | { readonly kind: 'message'; readonly id: string; readonly text: string }
+  | { readonly kind: 'tool'; readonly id: string; readonly tool: AssistantToolEntry };
+
 /**
  * The global assistant (Phase 6): a thread sidebar, the transcript with its
  * live composer, and the project scope picker beside the conversation.
@@ -216,11 +220,20 @@ export class AssistantComponent {
 
   // ---- The working box (S25): a turn's tool activity ----
 
-  /** The tool entries of the turn this user message opened. */
-  protected activityFor(message: AssistantMessage): AssistantToolEntry[] {
+  /** Durable intermediate messages and tools of the turn this user message opened. */
+  protected activityFor(message: AssistantMessage): AssistantTurnActivity[] {
     const thread = this.thread();
     if (!thread) return [];
-    return thread.toolCallsFor(message.id);
+    const messages = thread.messages
+      .filter((entry) => entry.activity && entry.parentId === message.id)
+      .sort((a, b) => a.index - b.index)
+      .map((entry) => ({ kind: 'message' as const, id: `message-${entry.index}`, text: entry.text }));
+    const tools = thread.toolCallsFor(message.id).map((tool) => ({
+      kind: 'tool' as const,
+      id: `tool-${tool.toolCallId}`,
+      tool,
+    }));
+    return [...messages, ...tools];
   }
 
   /** A running turn whose reply hasn't landed: the box is open live. */
@@ -252,6 +265,12 @@ export class AssistantComponent {
     return assistantToolLabel(entry);
   }
 
+  protected activityLabel(activity: readonly AssistantTurnActivity[]): string {
+    const tools = activity.filter((entry) => entry.kind === 'tool').length;
+    if (tools === activity.length) return `used ${tools} ${tools === 1 ? 'tool' : 'tools'}`;
+    return `${activity.length} ${activity.length === 1 ? 'activity item' : 'activity items'}`;
+  }
+
   /** Branch navigation: the sibling versions of a forked message. */
   protected branchOf(message: AssistantMessage): { position: number; count: number } | null {
     const thread = this.thread();
@@ -272,7 +291,7 @@ export class AssistantComponent {
   private siblingsOf(threadId: string, message: AssistantMessage): AssistantMessage[] {
     const all = this.assistant.threads().get(threadId)?.messages ?? [];
     return all
-      .filter((entry) => entry.parentId === message.parentId)
+      .filter((entry) => !entry.activity && entry.parentId === message.parentId)
       .sort((a, b) => a.index - b.index);
   }
 

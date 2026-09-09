@@ -68,6 +68,7 @@ describe('PlanService', () => {
     emitSession();
     service.applyServerEvent({
       type: 'PlanDocumentUpdated',
+      projectId: 'P-1',
       sessionId: 'S-1',
       document: '<plan><goal>the old plan</goal></plan>',
     } as never);
@@ -99,6 +100,7 @@ describe('PlanService', () => {
     emitSession();
     service.applyServerEvent({
       type: 'PlanDocumentUpdated',
+      projectId: 'P-1',
       sessionId: 'S-1',
       document: '<plan><goal>the old plan</goal></plan>',
     } as never);
@@ -155,6 +157,33 @@ describe('PlanService', () => {
       expect(service.error()).toBe('unknown session');
       expect(service.isSending()).toBe(false);
     });
+
+    it('keeps an awaited send and its sending state bound to the originating project', async () => {
+      const pending = service.sendMessage('plan project one');
+      service.setProject('P-2');
+      events.emit(
+        wireEvent(
+          'planningSessionCreated',
+          { session: { id: 'S-1', projectId: 'P-2', createdAt: '' } },
+          'P-2',
+        ),
+      );
+      expect(service.isSending()).toBe(false);
+
+      emitSession();
+      expect(await pending).toBe(true);
+      expect(events.lastCommand('requestUserMessage')).toMatchObject({ projectId: 'P-1' });
+
+      events.emit(
+        wireEvent(
+          'agentMessageComplete',
+          { sessionId: 'S-1', message: { index: 2, role: 'agent', text: 'done', at: '' } },
+          'P-1',
+        ),
+      );
+      service.setProject('P-1');
+      expect(service.isSending()).toBe(false);
+    });
   });
 
   describe('folds', () => {
@@ -201,6 +230,58 @@ describe('PlanService', () => {
       expect(service.isSending()).toBe(false);
       expect(service.streamingMessage()).toBeNull();
       expect(service.messages().map((m) => `${m.role}:${m.index}`)).toEqual(['user:1', 'agent:2']);
+    });
+
+    it('keeps intermediate messages and tools in turn activity until the final reply', () => {
+      events.emit(
+        wireEvent(
+          'agentMessageComplete',
+          {
+            sessionId: 'S-1',
+            message: {
+              index: 2,
+              role: 'agent',
+              text: 'Checking files.',
+              at: '',
+              activity: true,
+              parentIndex: 1,
+            },
+          },
+          'P-1',
+        ),
+      );
+      events.emit(
+        wireEvent(
+          'agentToolCall',
+          {
+            sessionId: 'S-1',
+            parentIndex: 1,
+            toolCallId: 'tool-1',
+            toolName: 'read_file',
+            args: { path: 'README.md' },
+          },
+          'P-1',
+        ),
+      );
+      events.emit(
+        wireEvent(
+          'agentToolResult',
+          { sessionId: 'S-1', toolCallId: 'tool-1', content: 'readme', isError: false },
+          'P-1',
+        ),
+      );
+
+      expect(service.isSending()).toBe(true);
+      expect(service.messages().map((message) => message.text)).toEqual(['Build a board']);
+      expect(service.session()?.messages.at(-1)).toMatchObject({
+        activity: true,
+        parentIndex: 1,
+      });
+      expect(service.session()?.toolCalls[0]).toMatchObject({
+        parentIndex: 1,
+        toolName: 'read_file',
+        summary: 'readme',
+      });
     });
 
     it('clears the stream when the completion lands under a different index', () => {
@@ -285,6 +366,108 @@ describe('PlanService', () => {
         ),
       );
       expect(service.session()?.id).toBe('S-1');
+    });
+  });
+
+  describe('project-scoped folding', () => {
+    beforeEach(() => {
+      emitSession('S-1');
+      events.emit(
+        wireEvent(
+          'planningSessionCreated',
+          { session: { id: 'S-1', projectId: 'P-2', createdAt: new Date().toISOString() } },
+          'P-2',
+        ),
+      );
+    });
+
+    it('keeps same-id message and document events in their envelope project', () => {
+      events.emit(
+        wireEvent(
+          'userMessageReceived',
+          { sessionId: 'S-1', message: { index: 1, role: 'user', text: 'project two', at: '' } },
+          'P-2',
+        ),
+      );
+      events.emit(
+        wireEvent('planDocumentUpdated', { sessionId: 'S-1', document: 'P2 plan' }, 'P-2'),
+      );
+      events.emit(wireEvent('planningSessionCompleted', { sessionId: 'S-1' }, 'P-2'));
+
+      expect(service.messages()).toEqual([]);
+      expect(service.planDocument()).toBe('');
+      expect(service.status()).toBe('DRAFTING');
+
+      service.setProject('P-2');
+      expect(service.messages().map((message) => message.text)).toEqual(['project two']);
+      expect(service.planDocument()).toBe('P2 plan');
+      expect(service.status()).toBe('DONE');
+    });
+
+    it('does not cross-update or clear streams for same-id sessions', () => {
+      events.emit(
+        wireEvent(
+          'agentMessageDelta',
+          { sessionId: 'S-1', messageIndex: 2, delta: 'P1 partial' },
+          'P-1',
+        ),
+      );
+      events.emit(
+        wireEvent(
+          'agentMessageDelta',
+          { sessionId: 'S-1', messageIndex: 2, delta: 'P2 partial' },
+          'P-2',
+        ),
+      );
+      events.emit(
+        wireEvent(
+          'agentMessageComplete',
+          { sessionId: 'S-1', message: { index: 2, role: 'agent', text: 'P2 complete', at: '' } },
+          'P-2',
+        ),
+      );
+
+      expect(service.streamingMessage()?.text).toBe('P1 partial');
+      expect(service.messages()).toEqual([]);
+
+      service.setProject('P-2');
+      expect(service.streamingMessage()).toBeNull();
+      expect(service.messages().map((message) => message.text)).toEqual(['P2 complete']);
+    });
+
+    it('keeps committed cards scoped to the envelope project', () => {
+      events.emit(wireEvent('cardsCommitted', { cards: [wireCard({ id: 'T-P1' })] }, 'P-1'));
+      events.emit(
+        wireEvent(
+          'cardsCommitted',
+          { cards: [wireCard({ id: 'T-P2', projectId: 'P-2' })] },
+          'P-2',
+        ),
+      );
+
+      expect(service.committedCards().map((card) => card.id)).toEqual(['T-P1']);
+      service.setProject('P-2');
+      expect(service.committedCards().map((card) => card.id)).toEqual(['T-P2']);
+    });
+
+    it('still ignores message events for card agent sessions', () => {
+      events.emit(
+        wireEvent(
+          'agentMessageDelta',
+          { sessionId: 'A-1', messageIndex: 1, delta: 'coder output' },
+          'P-1',
+        ),
+      );
+      events.emit(
+        wireEvent(
+          'agentMessageComplete',
+          { sessionId: 'A-1', message: { index: 1, role: 'agent', text: 'coder output', at: '' } },
+          'P-1',
+        ),
+      );
+
+      expect(service.streamingMessage()).toBeNull();
+      expect(service.messages()).toEqual([]);
     });
   });
 });

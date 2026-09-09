@@ -56,7 +56,7 @@ export function materializeCards(
         description: draft.description,
         tags: [],
         pipelineId: opts.pipeline.id,
-        stageId: opts.pipeline.firstStage().id,
+        stepId: opts.pipeline.firstStep().id,
         blockedBy: draft.blockedBy.map((dep) => cardIdByKey.get(dep) ?? dep),
         stepStates: {},
         ...(opts.sessionId !== undefined ? { sessionId: opts.sessionId } : {}),

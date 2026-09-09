@@ -8,8 +8,8 @@
 // `OpenCodeServeClient` (serve-client.ts), and the reducer below translates
 // serve events into turn events. Continuity: the runtime's session id rides
 // `engineSessionId` like the run engine's. Stop: the abort signal POSTs
-// `/session/:id/abort` and waits for the turn to wind down
-// (`session.error` MessageAbortedError + `session.idle`).
+// `/session/:id/abort`, while local cancellation ends the turn even if the
+// request or terminal stream events never arrive.
 //
 // The wire facts were probed against opencode 1.18.25 (docs/milestones.md
 // S22): `GET /event` yields `message.updated` (role map),
@@ -187,20 +187,31 @@ export class OpenCodeServeEngine implements AgentEngine {
     };
     serve.listeners.add(listener);
 
-    const timeout = setTimeout(() => {
+    let cancelTurn!: () => void;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      cancelTurn = () => reject(TURN_ABORTED);
+    });
+    let cancelledLocally = false;
+    const abortTurn = (): void => {
+      if (cancelledLocally) return;
+      cancelledLocally = true;
+      cancelTurn();
       void this.client.abort(serve, spec).catch(() => undefined);
+    };
+    const timeout = setTimeout(() => {
+      abortTurn();
     }, spec.timeoutMs > 0 ? spec.timeoutMs : this.defaultTimeoutMs);
     timeout.unref?.();
     const onAbort = (): void => {
       clearTimeout(timeout);
-      void this.client.abort(serve, spec).catch(() => undefined);
+      abortTurn();
     };
     if (spec.signal?.aborted) onAbort();
     else spec.signal?.addEventListener('abort', onAbort, { once: true });
 
     try {
-      sessionId = await this.client.ensureSession(serve, spec);
-      const prompt = await this.client.prompt(serve, sessionId, spec);
+      sessionId = await Promise.race([this.client.ensureSession(serve, spec), cancelled]);
+      const prompt = await Promise.race([this.client.prompt(serve, sessionId, spec), cancelled]);
       if (prompt.status === 404) {
         // A stale runtime session (the serve restarted) — recreate once.
         this.client.resetSession(spec.sessionId);
@@ -228,9 +239,16 @@ export class OpenCodeServeEngine implements AgentEngine {
         if (!serve.alive) {
           return { ok: false, error: 'the opencode server exited mid-turn', engineSessionId: sessionId };
         }
-        await new Promise((resolve) => setTimeout(resolve, 25));
+        await Promise.race([new Promise((resolve) => setTimeout(resolve, 25)), cancelled]);
       }
     } catch (error) {
+      if (error === TURN_ABORTED) {
+        reducer.settle(onEvent);
+        // The abort request is best-effort. Discard the runtime so a failed
+        // abort cannot leave a busy session behind for the next turn.
+        this.processes.release(spec.sessionId);
+        return { ok: false, error: 'aborted', ...(sessionId !== undefined ? { engineSessionId: sessionId } : {}) };
+      }
       return {
         ok: false,
         error: `opencode turn failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -245,4 +263,11 @@ export class OpenCodeServeEngine implements AgentEngine {
   close(): void {
     this.processes.close();
   }
+
+  /** Tears down one chat's serve (the runner releases a step's process). */
+  releaseSession(sessionId: string): void {
+    this.processes.release(sessionId);
+  }
 }
+
+const TURN_ABORTED = Symbol('turn aborted');

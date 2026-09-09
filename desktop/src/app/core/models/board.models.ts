@@ -81,8 +81,8 @@ export interface CardData {
   readonly tags: readonly string[];
   /** The one pipeline the card is assigned to (it appears on that pipeline's tab). */
   readonly pipelineId: string;
-  /** The card's current stage of its assigned pipeline (may be a hidden stage). */
-  readonly stageId: string;
+  /** The card's current step of its assigned pipeline (the board projects it to its swimlane). */
+  readonly stepId: string;
   readonly blockedBy: readonly string[];
   readonly assignee?: Assignee;
   readonly sessionId?: string;
@@ -103,7 +103,7 @@ export class Card {
   readonly description: string;
   readonly tags: readonly string[];
   readonly pipelineId: string;
-  readonly stageId: string;
+  readonly stepId: string;
   readonly blockedBy: readonly string[];
   readonly assignee?: Assignee;
   readonly sessionId?: string;
@@ -121,7 +121,7 @@ export class Card {
     this.description = data.description;
     this.tags = data.tags;
     this.pipelineId = data.pipelineId;
-    this.stageId = data.stageId;
+    this.stepId = data.stepId;
     this.blockedBy = data.blockedBy;
     this.assignee = data.assignee;
     this.sessionId = data.sessionId;
@@ -138,12 +138,12 @@ export class Card {
   }
 
   /**
-   * A drag out of the pipeline's terminal stage is a rejection-style move
-   * (design.md §3.4) — it may carry an optional comment. The terminal stage
+   * A drag out of the pipeline's terminal step is a rejection-style move
+   * (design.md §3.4) — it may carry an optional comment. The terminal step
    * id comes from the card's assigned pipeline.
    */
-  isRejectionMove(toStageId: string, terminalStageId: string | undefined): boolean {
-    return terminalStageId !== undefined && this.stageId === terminalStageId && toStageId !== terminalStageId;
+  isRejectionMove(toStepId: string, terminalStepId: string | undefined): boolean {
+    return terminalStepId !== undefined && this.stepId === terminalStepId && toStepId !== terminalStepId;
   }
 
   /** Blockers that exist, in blockedBy order. */
@@ -173,9 +173,9 @@ export class Card {
 }
 
 /**
- * Automation toggles per pipeline stage, keyed `<pipelineId>/<stageId>`.
+ * Automation toggles per pipeline step, keyed `<pipelineId>/<stepId>`.
  * Immutable; the board service swaps instances on toggle. Toggles are
- * persisted per stage; they gate nothing on their own (human drags are
+ * persisted per step; they gate nothing on their own (human drags are
  * never blocked by them).
  */
 export class AutomationState {
@@ -185,21 +185,21 @@ export class AutomationState {
     return new AutomationState(new Map());
   }
 
-  private static key(pipelineId: string, stageId: string): string {
-    return `${pipelineId}/${stageId}`;
+  private static key(pipelineId: string, stepId: string): string {
+    return `${pipelineId}/${stepId}`;
   }
 
-  isOn(pipelineId: string, stageId: string): boolean {
-    return this.states.get(AutomationState.key(pipelineId, stageId)) ?? false;
+  isOn(pipelineId: string, stepId: string): boolean {
+    return this.states.get(AutomationState.key(pipelineId, stepId)) ?? false;
   }
 
-  toggle(pipelineId: string, stageId: string): AutomationState {
-    return this.set(pipelineId, stageId, !this.isOn(pipelineId, stageId));
+  toggle(pipelineId: string, stepId: string): AutomationState {
+    return this.set(pipelineId, stepId, !this.isOn(pipelineId, stepId));
   }
 
-  set(pipelineId: string, stageId: string, on: boolean): AutomationState {
+  set(pipelineId: string, stepId: string, on: boolean): AutomationState {
     const next = new Map(this.states);
-    next.set(AutomationState.key(pipelineId, stageId), on);
+    next.set(AutomationState.key(pipelineId, stepId), on);
     return new AutomationState(next);
   }
 }

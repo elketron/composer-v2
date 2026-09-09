@@ -7,6 +7,7 @@ import {
   wireEvent,
 } from '../core/events/events-client.fake';
 import { ConfirmService } from '../core/confirm/confirm.service';
+import { ShellService } from '../shell/shell.service';
 import { PipelineEditorComponent } from './pipeline-editor.component';
 import { PipelineService } from './pipeline.service';
 
@@ -31,7 +32,7 @@ describe('PipelineEditorComponent', () => {
 
   async function type(
     fixture: ComponentFixture<PipelineEditorComponent>,
-    input: HTMLInputElement,
+    input: HTMLInputElement | HTMLTextAreaElement,
     value: string,
   ): Promise<void> {
     input.value = value;
@@ -57,17 +58,11 @@ describe('PipelineEditorComponent', () => {
           projectId: 'P-1',
           name,
           revision: 2,
-          stages: [
-            { id: 'sg-1', label: 'New', kanbanVisible: true },
-            { id: 'sg-2', label: 'Implementation', kanbanVisible: true },
-            { id: 'sg-3', label: 'Validation', kanbanVisible: false, errorReturnToStageId: 'sg-2' },
-            { id: 'sg-4', label: 'Approval', kanbanVisible: true },
-            { id: 'sg-5', label: 'Done', kanbanVisible: true, terminal: true },
-          ],
           steps: [
-            { id: 'st-1', kind: 'agent', stageId: 'sg-2', agentKind: 'coder', instructions: 'Implement the card.' },
-            { id: 'st-2', kind: 'command', stageId: 'sg-3', command: 'npm test' },
-            { id: 'st-3', kind: 'human', stageId: 'sg-4', description: 'Approval' },
+            { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement the card.' },
+            { id: 'st-2', kind: 'command', boardVisible: false, command: 'npm test', description: 'Run tests' },
+            { id: 'st-3', kind: 'human', boardVisible: true, description: 'Approval' },
+            { id: 'st-4', kind: 'human', boardVisible: true, terminal: true },
           ],
           updatedAt: new Date().toISOString(),
         },
@@ -75,49 +70,69 @@ describe('PipelineEditorComponent', () => {
     );
   }
 
-  it('lists pipelines with stage and step summaries', async () => {
+  async function openEditor(fixture: ComponentFixture<PipelineEditorComponent>): Promise<void> {
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    await fixture.whenStable();
+  }
+
+  it('lists pipelines with a step summary', async () => {
     seedPipeline();
     const fixture = await render();
     const row = (fixture.nativeElement as HTMLElement).querySelector('.row')!;
 
     expect(row.textContent).toContain('Standard coding card');
     expect(row.textContent).toContain('PL-1');
-    expect(row.textContent).toContain('agent → command → gate');
+    expect(row.textContent).toContain('coder → Run tests → approval → done');
   });
 
-  it('shows a compact stage path and a separate flat ordered step list', async () => {
+  it('renders the pipeline as a linear diagram of step nodes', async () => {
     seedPipeline();
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
-    await fixture.whenStable();
+    await openEditor(fixture);
 
-    expect([...el.querySelectorAll('.stage-name')].map((node) => node.textContent?.trim())).toEqual([
-      'New',
-      'Implementation',
-      'Validation',
-      'Approval',
-      'Done',
+    expect(el.querySelectorAll('.diagram .node')).toHaveLength(4);
+    expect([...el.querySelectorAll('.node-label')].map((node) => node.textContent?.trim())).toEqual([
+      'coder',
+      'command',
+      'approval',
+      'done',
     ]);
-    expect(el.querySelectorAll('.steps > .step')).toHaveLength(3);
-    expect(el.querySelector('.stage-card .step')).toBeNull();
-    expect(el.querySelector('.stage-card.hidden-stage')).toBeTruthy();
-    expect(el.querySelector('.stage-card.terminal')).toBeTruthy();
-    expect(el.querySelectorAll('.step .stage-assignment select')).toHaveLength(3);
-    expect(el.querySelector('.step-id')).toBeNull();
+    expect([...el.querySelectorAll('.node-stage')].map((node) => node.textContent?.trim())).toEqual([
+      'swimlane',
+      'hidden',
+      'swimlane',
+      'done',
+    ]);
   });
 
-  it('authors and saves a new pipeline from the flat step row', async () => {
+  it('opens the side panel with the selected node settings', async () => {
+    seedPipeline();
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    await openEditor(fixture);
+
+    el.querySelectorAll<HTMLButtonElement>('.node-select')[0]!.click();
+    await fixture.whenStable();
+
+    expect(el.querySelector('.panel .panel-title')?.textContent).toContain('step 1');
+    expect(el.querySelector<HTMLSelectElement>('.field.agent select')!.value).toBe('coder');
+    expect(el.querySelector<HTMLTextAreaElement>('.field textarea')!.value).toBe('Implement the card.');
+    expect(el.querySelector<HTMLInputElement>('.flag input[type="checkbox"]')!.checked).toBe(true);
+  });
+
+  it('authors and saves a new pipeline from the diagram and side panel', async () => {
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
     el.querySelector<HTMLButtonElement>('.new')!.click();
     await fixture.whenStable();
 
-    await type(fixture, el.querySelector<HTMLInputElement>('.name-row input')!, 'Quick fix');
-    const fields = el.querySelectorAll<HTMLInputElement>('.step-fields input');
-    await type(fixture, fields[0]!, 'coder');
-    await type(fixture, fields[1]!, 'Implement it');
-    el.querySelector<HTMLButtonElement>('.save')!.click();
+    await type(fixture, el.querySelector<HTMLInputElement>('.edit-bar input.name')!, 'Quick fix');
+    el.querySelector<HTMLButtonElement>('.node-select')!.click();
+    await fixture.whenStable();
+    await type(fixture, el.querySelector<HTMLTextAreaElement>('.field textarea')!, 'Implement it');
+    el.querySelector<HTMLButtonElement>('.edit-bar .save')!.click();
     await fixture.whenStable();
 
     expect(events.lastCommand('requestPipelineSave')).toMatchObject({
@@ -129,107 +144,63 @@ describe('PipelineEditorComponent', () => {
             {
               id: 'st-1',
               kind: 'agent',
-              stageId: 'sg-1',
+              boardVisible: true,
               agentKind: 'coder',
               instructions: 'Implement it',
             },
+            { id: 'st-2', kind: 'human', boardVisible: true, terminal: true },
           ],
         },
       },
     });
   });
 
-  it('reassigns a step and moves it into the selected stage run region', async () => {
+  it('edits an agent step kind from the backend agent list', async () => {
     seedPipeline();
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    await openEditor(fixture);
+
+    el.querySelectorAll<HTMLButtonElement>('.node-select')[0]!.click();
+    await fixture.whenStable();
+    await select(fixture, el.querySelector<HTMLSelectElement>('.field.agent select')!, 'reviewer');
+    el.querySelector<HTMLButtonElement>('.edit-bar .save')!.click();
     await fixture.whenStable();
 
-    await select(fixture, el.querySelector<HTMLSelectElement>('.step .stage-assignment select')!, 'sg-3');
-    const rows = [...el.querySelectorAll<HTMLElement>('.step')];
-    expect(rows.map((row) => row.querySelector<HTMLSelectElement>('.stage-assignment select')?.value)).toEqual([
-      'sg-3',
-      'sg-3',
-      'sg-4',
-    ]);
-    expect(rows[0]?.querySelector('input')?.value).toBe('npm test');
-    expect(rows[1]?.querySelectorAll('input')[1]?.value).toBe('Implement the card.');
-
-    el.querySelector<HTMLButtonElement>('.save')!.click();
-    await fixture.whenStable();
-    expect(
-      events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.steps.map((step) => step.id),
-    ).toEqual(['st-2', 'st-1', 'st-3']);
+    expect(events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.steps[0]).toMatchObject({
+      agentKind: 'reviewer',
+    });
   });
 
-  it('moves populated stages and preserves valid step grouping', async () => {
+  it('only reorders nodes away from the terminal', async () => {
     seedPipeline();
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
-    await fixture.whenStable();
+    await openEditor(fixture);
 
-    // Move Implementation before New. Its step group follows it automatically.
-    el.querySelectorAll<HTMLButtonElement>('.stage-actions')[1]!
-      .querySelector<HTMLButtonElement>('.mini')!.click();
-    await fixture.whenStable();
-    expect([...el.querySelectorAll('.stage-name')].map((node) => node.textContent?.trim())).toEqual([
-      'Implementation',
-      'New',
-      'Validation',
-      'Approval',
-      'Done',
-    ]);
-    el.querySelector<HTMLButtonElement>('.save')!.click();
-    await fixture.whenStable();
-    expect(
-      events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.steps.map((step) => step.stageId),
-    ).toEqual(['sg-2', 'sg-3', 'sg-4']);
+    const terminalDown = el
+      .querySelectorAll<HTMLElement>('.node')[3]!
+      .querySelectorAll<HTMLButtonElement>('.node-actions .mini')[1]!;
+    expect(terminalDown.disabled).toBe(true);
   });
 
-  it('only reorders steps within the same stage', async () => {
+  it('authors outcomes in the selected step settings', async () => {
     seedPipeline();
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
-    await fixture.whenStable();
+    await openEditor(fixture);
 
-    const firstDown = el.querySelectorAll<HTMLButtonElement>('.step')[0]!.querySelectorAll<HTMLButtonElement>('.mini')[1]!;
-    expect(firstDown.disabled).toBe(true);
-  });
-
-  it('refuses to remove a stage while steps are assigned to it', async () => {
-    seedPipeline();
-    const fixture = await render();
-    const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    el.querySelectorAll<HTMLButtonElement>('.node-select')[0]!.click();
     await fixture.whenStable();
-
-    el.querySelectorAll<HTMLElement>('.stage-card')[1]!.querySelector<HTMLButtonElement>('.danger')!.click();
-    await fixture.whenStable();
-    expect(el.querySelector('.state-error')?.textContent).toContain('Move the 1 step assigned to Implementation');
-    expect(el.querySelectorAll('.stage-card')).toHaveLength(5);
-  });
-
-  it('authors outcomes in the selected stage settings', async () => {
-    seedPipeline();
-    const fixture = await render();
-    const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
-    await fixture.whenStable();
-
-    el.querySelectorAll<HTMLButtonElement>('.stage-select')[1]!.click();
-    await fixture.whenStable();
-    el.querySelector<HTMLButtonElement>('.stage-settings .mini')!.click();
+    el.querySelector<HTMLButtonElement>('.add-outcome')!.click();
     await fixture.whenStable();
     await type(fixture, el.querySelector<HTMLInputElement>('.outcome-rule input')!, 'rework');
-    await select(fixture, el.querySelector<HTMLSelectElement>('.outcome-rule select')!, 'sg-1');
-    el.querySelector<HTMLButtonElement>('.save')!.click();
+    await select(fixture, el.querySelector<HTMLSelectElement>('.outcome-rule select')!, '');
+    el.querySelector<HTMLButtonElement>('.edit-bar .save')!.click();
     await fixture.whenStable();
 
-    expect(events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.stages[1]).toMatchObject({
-      outcomes: [{ outcome: 'rework', toStageId: 'sg-1' }],
+    expect(events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline.steps[0]).toMatchObject({
+      outcomes: [{ outcome: 'rework' }],
     });
   });
 
@@ -238,16 +209,37 @@ describe('PipelineEditorComponent', () => {
     const el = fixture.nativeElement as HTMLElement;
     el.querySelector<HTMLButtonElement>('.new')!.click();
     await fixture.whenStable();
-    expect(el.querySelector('.state-error')).toBeNull();
+    expect(el.querySelector('.edit-error')).toBeNull();
 
-    el.querySelector<HTMLButtonElement>('.save')!.click();
+    el.querySelector<HTMLButtonElement>('.edit-bar .save')!.click();
     await fixture.whenStable();
-    expect(el.querySelector('.state-error')?.textContent).toContain('Pipeline name is required');
-    el.querySelector<HTMLButtonElement>('.cancel')!.click();
+    expect(el.querySelector('.edit-error')?.textContent).toContain('Pipeline name is required');
+    el.querySelector<HTMLButtonElement>('.edit-bar .back')!.click();
     await fixture.whenStable();
     el.querySelector<HTMLButtonElement>('.new')!.click();
     await fixture.whenStable();
-    expect(el.querySelector('.state-error')).toBeNull();
+    expect(el.querySelector('.edit-error')).toBeNull();
+  });
+
+  it('closes an open draft when the active project changes', async () => {
+    seedProject(events, 'P-2');
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.new')!.click();
+    await fixture.whenStable();
+    const staleSave = el.querySelector<HTMLButtonElement>('.edit-bar .save')!;
+    const component = fixture.componentInstance as unknown as {
+      editing: () => { projectId: string } | null;
+    };
+    expect(component.editing()?.projectId).toBe('P-1');
+
+    TestBed.inject(ShellService).selectProject('P-2');
+    await fixture.whenStable();
+
+    expect(el.querySelector('.edit-bar')).toBeNull();
+    staleSave.click();
+    await fixture.whenStable();
+    expect(events.lastCommand('requestPipelineSave')).toBeUndefined();
   });
 
   it('deletes a pipeline after confirming', async () => {

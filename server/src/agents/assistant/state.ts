@@ -18,10 +18,10 @@ export function composerOverview(state: State, scope: string[], projectId: strin
   const body = projects.map((project) => {
     const board = Board.of(state.byProject.get(project.id) ?? emptyProjectState(project.id));
     const cards = [...board.cards.values()];
-    const byStage: Record<string, number> = {};
+    const byStep: Record<string, number> = {};
     for (const card of cards) {
-      const label = board.pipelineOf(card)?.stageById(card.stageId)?.label ?? card.stageId;
-      byStage[label] = (byStage[label] ?? 0) + 1;
+      const label = board.pipelineOf(card)?.visibleStepOf(card.stepId) ?? card.stepId;
+      byStep[label] = (byStep[label] ?? 0) + 1;
     }
     const latestRuns = [...new Set([...board.runs.values()].map((run) => run.cardId))]
       .map((cardId) => board.latestRunOf(cardId))
@@ -52,7 +52,7 @@ export function composerOverview(state: State, scope: string[], projectId: strin
     }));
     return {
       project: { id: project.id, name: project.name, ...(project.directory ? { directory: project.directory } : {}) },
-      cards: { total: cards.length, byStage },
+      cards: { total: cards.length, byStep },
       activeRuns,
       latestRuns,
       planningSessions: sessions,

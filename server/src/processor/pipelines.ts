@@ -9,7 +9,7 @@ import { RunPolicy } from '../domain/run-policy.js';
 import type { Run } from '../domain/run.js';
 import { nowIso } from '../wire/envelope.js';
 import type { CommandOutcome } from '../wire/commands.js';
-import type { Pipeline as PipelineJson, PipelineStage as PipelineStageJson } from '../wire/models.js';
+import type { Pipeline as PipelineJson, PipelineStep as PipelineStepJson } from '../wire/models.js';
 import { PIPELINE_AGENT_KINDS } from '../agents/names.js';
 import { command, allocateId, ok, rejected, toRejection, type CommandMap } from './helpers.js';
 import type { Processor } from './index.js';
@@ -26,9 +26,9 @@ export async function savePipeline(p: Processor, scope: string | undefined, pipe
     if (scope === undefined || !p.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
-    let stages: PipelineStageJson[];
+    let steps: PipelineStepJson[];
     try {
-      stages = validateDraft(pipeline);
+      steps = validateDraft(pipeline);
     } catch (error) {
       return toRejection(error);
     }
@@ -38,13 +38,22 @@ export async function savePipeline(p: Processor, scope: string | undefined, pipe
     if (current !== undefined && sameDefinition(current, pipeline, name)) {
       return ok();
     }
+    const nextStepIds = new Set(steps.map((step) => step.id));
+    const stranded = [...p.cardsOf(scope).values()].find(
+      (card) => card.pipelineId === id && !nextStepIds.has(card.stepId),
+    );
+    if (stranded !== undefined) {
+      return rejected(
+        'invalidCommand',
+        `Pipeline ${id} cannot remove occupied step ${stranded.stepId}; move or reassign its cards first`,
+      );
+    }
     const saved: PipelineJson = {
       id,
       projectId: scope,
       name,
       revision: (current?.revision ?? 0) + 1,
-      stages,
-      steps: pipeline.steps,
+      steps,
       updatedAt: nowIso(),
     };
     await p.bus.publish(scope, 'pipelineSaved', { pipeline: saved });

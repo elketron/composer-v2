@@ -23,7 +23,7 @@ import { ShellService } from '../shell/shell.service';
 
 export type MoveRejection =
   | 'unknown-card'
-  | 'unknown-stage'
+  | 'unknown-step'
   | 'run-active'
   | 'blocked'
   | 'unavailable';
@@ -40,12 +40,12 @@ export interface RejectionPrompt {
 interface PendingRejection {
   readonly projectId: string;
   readonly cardId: string;
-  readonly toStageId: string;
+  readonly toStepId: string;
   readonly before: Card;
 }
 
 /**
- * Board state: a fold of the event stream (CardCreated, CardStageMoved, …)
+ * Board state: a fold of the event stream (CardCreated, CardStepMoved, …)
  * with optimistic commands. Phase 10: cards carry their assigned pipeline
  * and current stage; moves are stage moves and lock while a run is active;
  * the board's columns come from the assigned pipeline's visible stages
@@ -79,7 +79,7 @@ export class BoardService {
   /** Whether a card has reached its pipeline's terminal stage. */
   private readonly isDoneOf = (card: Card): boolean => {
     const pipeline = this.pipelines.pipelineById(card.pipelineId);
-    return pipeline !== undefined && pipeline.terminalStageId === card.stageId;
+    return pipeline !== undefined && pipeline.terminalStepId === card.stepId;
   };
 
   readonly blockedIds = computed(() => {
@@ -153,49 +153,49 @@ export class BoardService {
   }
 
   /**
-   * RequestCardStageMove. Dragging out of the pipeline's terminal stage is a
+   * RequestCardStepMove. Dragging out of the pipeline's terminal step is a
    * rejection-style move and opens the comment prompt before publishing, so
    * the comment rides on the move (design.md §3.4). A run on the card locks
    * it (the server rejects; the optimistic patch reverts).
    */
-  async requestMove(cardId: string, toStageId: string): Promise<MoveResult> {
+  async requestMove(cardId: string, toStepId: string): Promise<MoveResult> {
     const card = this.cardsById().get(cardId);
     if (!card) return { ok: false, reason: 'unknown-card' };
     const pipeline = this.pipelines.pipelineById(card.pipelineId);
-    if (pipeline === undefined || pipeline.stageById(toStageId) === undefined) {
-      return { ok: false, reason: 'unknown-stage' };
+    if (pipeline === undefined || pipeline.stepById(toStepId) === undefined) {
+      return { ok: false, reason: 'unknown-step' };
     }
     if (this.pipelines.runForCard(cardId) !== undefined) {
       return { ok: false, reason: 'run-active' };
     }
     if (card.isBlockedIn(this.cardsById(), this.isDoneOf)) return { ok: false, reason: 'blocked' };
-    if (card.stageId === toStageId) return { ok: true };
+    if (card.stepId === toStepId) return { ok: true };
 
-    if (card.isRejectionMove(toStageId, pipeline.terminalStageId)) {
+    if (card.isRejectionMove(toStepId, pipeline.terminalStepId)) {
       this.flushPendingRejection();
       const projectId = this.projectId();
       if (!projectId) return { ok: false, reason: 'unavailable' };
-      this.pendingRejection = { projectId, cardId, toStageId, before: card };
-      this.patch(cardId, { stageId: toStageId, updatedAt: now() });
+      this.pendingRejection = { projectId, cardId, toStepId, before: card };
+      this.patch(cardId, { stepId: toStepId, updatedAt: now() });
       this.rejectionPrompt.set({ cardId });
       return { ok: true };
     }
-    return this.move(cardId, toStageId, card, {});
+    return this.move(cardId, toStepId, card, {});
   }
 
-  /** RequestCardStageMove with override: stage validity enforced, blockers bypassed. */
-  async forceMove(cardId: string, toStageId: string): Promise<MoveResult> {
+  /** RequestCardStepMove with override: step validity enforced, blockers bypassed. */
+  async forceMove(cardId: string, toStepId: string): Promise<MoveResult> {
     const card = this.cardsById().get(cardId);
     if (!card) return { ok: false, reason: 'unknown-card' };
     const pipeline = this.pipelines.pipelineById(card.pipelineId);
-    if (pipeline === undefined || pipeline.stageById(toStageId) === undefined) {
-      return { ok: false, reason: 'unknown-stage' };
+    if (pipeline === undefined || pipeline.stepById(toStepId) === undefined) {
+      return { ok: false, reason: 'unknown-step' };
     }
     if (this.pipelines.runForCard(cardId) !== undefined) {
       return { ok: false, reason: 'run-active' };
     }
-    if (card.stageId === toStageId) return { ok: true };
-    return this.move(cardId, toStageId, card, { override: true });
+    if (card.stepId === toStepId) return { ok: true };
+    return this.move(cardId, toStepId, card, { override: true });
   }
 
   /** RequestCardPipelineAssign — the card moves to the pipeline's first stage. */
@@ -204,10 +204,10 @@ export class BoardService {
     const card = this.cardsById().get(cardId);
     if (!card || !projectId) return { ok: false, reason: 'unavailable' };
     const pipeline = this.pipelines.pipelineById(pipelineId);
-    if (pipeline === undefined) return { ok: false, reason: 'unknown-stage' };
+    if (pipeline === undefined) return { ok: false, reason: 'unknown-step' };
     const before = card;
 
-    this.patch(cardId, { pipelineId, stageId: pipeline.stages[0]?.id ?? '', updatedAt: now() });
+    this.patch(cardId, { pipelineId, stepId: pipeline.steps[0]?.id ?? '', updatedAt: now() });
     const response = await this.events.publish({
       projectId,
       requestCardPipelineAssign: { cardId, pipelineId },
@@ -223,13 +223,13 @@ export class BoardService {
     const card = this.cardsById().get(cardId);
     if (!card || !projectId) return { ok: false, reason: 'unavailable' };
     const pipeline = this.pipelines.pipelineById(card.pipelineId);
-    const firstStage = pipeline?.stages[0]?.id;
-    if (pipeline === undefined || firstStage === undefined) {
-      return { ok: false, reason: 'unknown-stage' };
+    const firstStep = pipeline?.steps[0]?.id;
+    if (pipeline === undefined || firstStep === undefined) {
+      return { ok: false, reason: 'unknown-step' };
     }
     const before = card;
 
-    this.patch(cardId, { stageId: firstStage, updatedAt: now() });
+    this.patch(cardId, { stepId: firstStep, updatedAt: now() });
     const response = await this.events.publish({
       projectId,
       requestCardReopen: { cardId },
@@ -240,14 +240,14 @@ export class BoardService {
   }
 
   /** Flip a pipeline stage's automation toggle (RequestAutomationToggle). */
-  async toggleAutomation(pipelineId: string, stageId: string): Promise<void> {
+  async toggleAutomation(pipelineId: string, stepId: string): Promise<void> {
     const projectId = this.projectId();
     if (!projectId) return;
     const before = this.automation();
-    this.setAutomation(projectId, before.toggle(pipelineId, stageId));
+    this.setAutomation(projectId, before.toggle(pipelineId, stepId));
     const response = await this.events.publish({
       projectId,
-      requestAutomationToggle: { pipelineId, stageId, on: !before.isOn(pipelineId, stageId) },
+      requestAutomationToggle: { pipelineId, stepId, on: !before.isOn(pipelineId, stepId) },
     });
     if (!response.ok) this.setAutomation(projectId, before);
   }
@@ -378,11 +378,11 @@ export class BoardService {
         }
         break;
       }
-      case 'cardStageMoved': {
-        const payload = event.cardStageMoved;
+      case 'cardStepMoved': {
+        const payload = event.cardStepMoved;
         if (!payload?.cardId) break;
         this.patchIn(projectId, payload.cardId, (card) => ({
-          stageId: payload.toStageId,
+          stepId: payload.toStepId,
           rejectionComment: payload.comment ? payload.comment : card.rejectionComment,
           updatedAt: event.occurredAt ?? card.updatedAt,
         }));
@@ -393,7 +393,7 @@ export class BoardService {
         if (!payload?.cardId) break;
         this.patchIn(projectId, payload.cardId, (card) => ({
           pipelineId: payload.pipelineId,
-          stageId: payload.stageId,
+          stepId: payload.stepId,
           updatedAt: event.occurredAt ?? card.updatedAt,
         }));
         break;
@@ -437,13 +437,32 @@ export class BoardService {
         }));
         break;
       }
+      case 'pipelineStepStarted': {
+        const payload = event.pipelineStepStarted;
+        if (!payload?.cardId || !payload.stepId) break;
+        this.patchIn(projectId, payload.cardId, (card) => ({
+          stepId: payload.stepId,
+          stepStates: { ...card.stepStates, [payload.stepId]: 'running' },
+          updatedAt: event.occurredAt ?? card.updatedAt,
+        }));
+        break;
+      }
+      case 'pipelineStepFinished': {
+        const payload = event.pipelineStepFinished;
+        if (!payload?.cardId || !payload.stepId) break;
+        this.patchIn(projectId, payload.cardId, (card) => ({
+          stepStates: { ...card.stepStates, [payload.stepId]: payload.ok ? 'ok' : 'failed' },
+          updatedAt: event.occurredAt ?? card.updatedAt,
+        }));
+        break;
+      }
       case 'automationToggled': {
         const payload = event.automationToggled;
-        if (!payload?.pipelineId || !payload.stageId) break;
+        if (!payload?.pipelineId || !payload.stepId) break;
         const current = this.automationByProject().get(projectId) ?? AutomationState.initial();
         this.setAutomation(
           projectId,
-          current.set(payload.pipelineId, payload.stageId, payload.on ?? false),
+          current.set(payload.pipelineId, payload.stepId, payload.on ?? false),
         );
         break;
       }
@@ -455,19 +474,19 @@ export class BoardService {
 
   private async move(
     cardId: string,
-    toStageId: string,
+    toStepId: string,
     before: Card,
     options: { readonly override?: boolean },
   ): Promise<MoveResult> {
     const projectId = this.projectId();
     if (!projectId) return { ok: false, reason: 'unavailable' };
 
-    this.patch(cardId, { stageId: toStageId, updatedAt: now() });
+    this.patch(cardId, { stepId: toStepId, updatedAt: now() });
     const response = await this.events.publish({
       projectId,
-      requestCardStageMove: {
+      requestCardStepMove: {
         cardId,
-        toStageId,
+        toStepId,
         override: options.override ?? false,
         comment: '',
       },
@@ -480,9 +499,9 @@ export class BoardService {
   private async publishRejection(pending: PendingRejection, comment: string): Promise<void> {
     const response = await this.events.publish({
       projectId: pending.projectId,
-      requestCardStageMove: {
+      requestCardStepMove: {
         cardId: pending.cardId,
-        toStageId: pending.toStageId,
+        toStepId: pending.toStepId,
         override: false,
         comment,
       },
@@ -576,8 +595,8 @@ function rejectionReason(code: string | undefined): MoveRejection {
   switch (code) {
     case WireRejectionCode.REJECTION_CODE_UNKNOWN_CARD:
       return 'unknown-card';
-    case WireRejectionCode.REJECTION_CODE_UNKNOWN_STAGE:
-      return 'unknown-stage';
+    case WireRejectionCode.REJECTION_CODE_UNKNOWN_STEP:
+      return 'unknown-step';
     case WireRejectionCode.REJECTION_CODE_RUN_ACTIVE:
       return 'run-active';
     case WireRejectionCode.REJECTION_CODE_BLOCKED:

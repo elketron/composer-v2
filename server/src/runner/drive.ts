@@ -3,10 +3,10 @@
 
 import type { Bus } from '../bus.js';
 import type { AgentEngine } from '../engine/types.js';
-import type { Pipeline, PipelineStage } from '../wire/models.js';
+import type { Pipeline, PipelineStep } from '../wire/models.js';
 import { runAgentStep } from './agent-step.js';
 import { runCommandStep } from './command-step.js';
-import { outcomeBriefOf, stageOrderOf } from './prompts.js';
+import { outcomeBriefOf, stepOrderOf } from './prompts.js';
 import type { GateDecision, OutcomeReport, RunTask, RunnerOptions } from './types.js';
 
 export async function drivePipeline(
@@ -20,15 +20,14 @@ export async function drivePipeline(
   let gate: GateDecision | null = null;
   const card = bus.state.byProject.get(projectId)?.cards.get(cardId);
   if (card === undefined) return;
-  // A returned card reruns from its current stage; earlier steps are skipped.
-  const fromOrder = stageOrderOf(pipeline, card.stageId);
+  // A returned card reruns from its current step; earlier steps are skipped.
+  const fromOrder = stepOrderOf(pipeline, card.stepId);
   const steps = pipeline.steps.filter(
-    (step) => stageOrderOf(pipeline, step.stageId) >= fromOrder,
+    (step, index) => index >= fromOrder && step.terminal !== true,
   );
 
   for (const step of steps) {
     if (task.stopped) return;
-    const stage = pipeline.stages.find((candidate) => candidate.id === step.stageId)!;
 
     // Arm the gate before publishing the waiting transition so an immediate
     // response always finds its resolver.
@@ -39,7 +38,6 @@ export async function drivePipeline(
       pipelineId: pipeline.id,
       stepId: step.id,
       kind: step.kind,
-      stageId: step.stageId,
     });
 
     const result:
@@ -48,7 +46,7 @@ export async function drivePipeline(
       step.kind === 'command'
         ? await runCommandStep(bus, task, step, options.commandTimeoutMs)
         : step.kind === 'agent'
-          ? await runAgentStep(bus, engine, options, task, step, outcomeBriefOf(pipeline, stage))
+          ? await runAgentStep(bus, engine, options, task, step, outcomeBriefOf(pipeline, step))
           : await gatePromise!;
 
     if (task.stopped) return;
@@ -57,13 +55,13 @@ export async function drivePipeline(
     if (result.ok && step.kind === 'agent') {
       const reported = result.outcome;
       const rule = reported !== undefined
-        ? (stage.outcomes ?? []).find((candidate) => candidate.outcome === reported.outcome)
+        ? (step.outcomes ?? []).find((candidate) => candidate.outcome === reported.outcome)
         : undefined;
-      if (reported !== undefined && rule?.toStageId !== undefined) {
-        returnTo = { target: rule.toStageId, report: reported };
-      } else if (reported === undefined && (stage.outcomes?.length ?? 0) > 0 && stage.requiresOutcome === true) {
-        const names = (stage.outcomes ?? []).map((candidate) => candidate.outcome).join(', ');
-        failure = `the stage requires an explicit outcome — call composer_report_outcome with one of: ${names}`;
+      if (reported !== undefined && rule?.toStepId !== undefined) {
+        returnTo = { target: rule.toStepId, report: reported };
+      } else if (reported === undefined && (step.outcomes?.length ?? 0) > 0 && step.requiresOutcome === true) {
+        const names = (step.outcomes ?? []).map((candidate) => candidate.outcome).join(', ');
+        failure = `the step requires an explicit outcome — call composer_report_outcome with one of: ${names}`;
       }
     }
 
@@ -76,7 +74,7 @@ export async function drivePipeline(
       ...(failure !== undefined ? { error: failure } : {}),
     });
     if (failure !== undefined) {
-      await endRun(bus, task, pipeline, stage, 'failed', failure);
+      await endRun(bus, task, pipeline, step, 'failed', failure);
       return;
     }
     if (returnTo !== undefined) {
@@ -85,7 +83,7 @@ export async function drivePipeline(
         bus,
         task,
         pipeline,
-        stage,
+        step,
         'returned',
         note ? `${returnTo.report.outcome}: ${note}` : `outcome '${returnTo.report.outcome}' returned the card`,
         note || undefined,
@@ -100,7 +98,7 @@ export async function drivePipeline(
           bus,
           task,
           pipeline,
-          stage,
+          step,
           'returned',
           gate.comment !== undefined && gate.comment.trim() !== ''
             ? `changes requested: ${gate.comment.trim()}`
@@ -119,12 +117,12 @@ export async function drivePipeline(
     revision: pipeline.revision,
     status: 'completed',
   });
-  const terminal = pipeline.stages.at(-1);
+  const terminal = pipeline.steps.at(-1);
   if (terminal !== undefined) {
-    await bus.publish(projectId, 'cardStageMoved', {
+    await bus.publish(projectId, 'cardStepMoved', {
       cardId,
       pipelineId: pipeline.id,
-      toStageId: terminal.id,
+      toStepId: terminal.id,
     });
   }
 }
@@ -133,18 +131,18 @@ async function endRun(
   bus: Bus,
   task: RunTask,
   pipeline: Pipeline,
-  stage: PipelineStage,
+  step: PipelineStep,
   status: 'failed' | 'returned',
   error: string,
   comment?: string,
-  returnTo: string | undefined = stage.errorReturnToStageId,
+  returnTo: string | undefined = step.errorReturnToStepId,
 ): Promise<void> {
   if (returnTo !== undefined) {
-    await bus.publish(task.projectId, 'cardStageMoved', {
+    await bus.publish(task.projectId, 'cardStepMoved', {
       cardId: task.cardId,
       pipelineId: pipeline.id,
-      fromStageId: stage.id,
-      toStageId: returnTo,
+      fromStepId: step.id,
+      toStepId: returnTo,
       ...(comment !== undefined ? { comment } : {}),
     });
   }

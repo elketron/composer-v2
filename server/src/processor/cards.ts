@@ -55,7 +55,7 @@ export async function createCards(p: Processor, scope: string | undefined, cards
       id: card.id !== '' ? card.id : allocateCardId(p, scope),
       projectId: scope,
       pipelineId: pipeline.id,
-      stageId: pipeline.firstStage().id,
+      stepId: pipeline.firstStep().id,
       stepStates: card.stepStates ?? {},
       createdAt: isSet(card.createdAt) ? card.createdAt : now,
       updatedAt: now,
@@ -94,23 +94,23 @@ export function cardTransitions(
 }
 
 /**
- * Moves a card to a stage of its assigned pipeline: the move needs no
+ * Moves a card to a step of its assigned pipeline: the move needs no
  * active run (the pipeline owns transitions while one runs), the target
- * must be a stage of the card's pipeline, the same stage is a no-op, and
+ * must be a step of the card's pipeline, the same step is a no-op, and
  * unsatisfied blockers reject unless overridden. Dependents whose
  * blocked-ness flips get a dependencyStateChanged.
  */
-export async function moveCardStage(
+export async function moveCardStep(
   p: Processor,
   scope: string | undefined,
   cardId: string,
-  toStageId: string,
+  toStepId: string,
   override: boolean,
   comment: string | undefined,
 ): Promise<CommandOutcome> {
   const transitions = cardTransitions(p, scope, cardId);
   if (isOutcome(transitions)) return transitions;
-  return transition(p.bus, scope!, () => transitions.moveCard(cardId, toStageId, override, comment));
+  return transition(p.bus, scope!, () => transitions.moveCard(cardId, toStepId, override, comment));
 }
 
 /**
@@ -180,12 +180,12 @@ export async function updateStepState(
   return transition(p.bus, scope!, () => transitions.updateStepState(cardId, stepId, status));
 }
 
-/** Toggles a stage's automation (v1 `toggle_automation`), per pipeline stage. */
+/** Toggles a step's automation (v1 `toggle_automation`), per pipeline step. */
 export async function toggleAutomation(
   p: Processor,
   scope: string | undefined,
   pipelineId: string,
-  stageId: string,
+  stepId: string,
   on: boolean,
 ): Promise<CommandOutcome> {
   if (scope === undefined || !p.bus.state.projects.has(scope)) {
@@ -195,18 +195,18 @@ export async function toggleAutomation(
   if (state === undefined) {
     return rejected('unknownProject', `Unknown project ${scope}`);
   }
-  return transition(p.bus, scope, () => CardTransitions.of(state).toggleAutomation(pipelineId, stageId, on));
+  return transition(p.bus, scope, () => CardTransitions.of(state).toggleAutomation(pipelineId, stepId, on));
 }
 
 export const cardCommands: CommandMap = [
   command('requestCardCreate', (p, scope, cmd) => createCards(p, scope, [cmd.card])),
   command('requestCardsCreate', (p, scope, cmd) => createCards(p, scope, cmd.cards)),
-  command('requestCardStageMove', (p, scope, cmd) => moveCardStage(p, scope, cmd.cardId, cmd.toStageId, cmd.override, cmd.comment)),
+  command('requestCardStepMove', (p, scope, cmd) => moveCardStep(p, scope, cmd.cardId, cmd.toStepId, cmd.override, cmd.comment)),
   command('requestCardPipelineAssign', (p, scope, cmd) => assignCardPipeline(p, scope, cmd.cardId, cmd.pipelineId)),
   command('requestCardReopen', (p, scope, cmd) => reopenCard(p, scope, cmd.cardId)),
   command('requestCardTypeChange', (p, scope, cmd) => changeCardType(p, scope, cmd.cardId, cmd.toType)),
   command('requestCardAssign', (p, scope, cmd) => assignCard(p, scope, cmd.cardId, cmd.assignee)),
   command('requestCardArchive', (p, scope, cmd) => archiveCard(p, scope, cmd.cardId)),
   command('requestStepStateUpdate', (p, scope, cmd) => updateStepState(p, scope, cmd.cardId, cmd.stepId, cmd.status)),
-  command('requestAutomationToggle', (p, scope, cmd) => toggleAutomation(p, scope, cmd.pipelineId, cmd.stageId, cmd.on)),
+  command('requestAutomationToggle', (p, scope, cmd) => toggleAutomation(p, scope, cmd.pipelineId, cmd.stepId, cmd.on)),
 ];

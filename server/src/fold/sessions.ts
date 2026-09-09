@@ -27,24 +27,48 @@ export const sessionHandlers: Record<string, FoldHandler> = {
   },
   agentToolCall: (state, envelope, projectId) => {
     const body = readBody(envelope, 'agentToolCall');
-    const session = projectStateOf(state, projectId).agentSessions.get(body.sessionId);
-    if (!session) return;
-    session.transcript.push({
-      kind: 'toolCall',
-      toolCallId: body.toolCallId,
-      toolName: body.toolName,
-      args: body.args,
-    });
+    const project = projectStateOf(state, projectId);
+    const session = project.agentSessions.get(body.sessionId);
+    if (session) {
+      session.transcript.push({
+        kind: 'toolCall',
+        toolCallId: body.toolCallId,
+        toolName: body.toolName,
+        args: body.args,
+      });
+      return;
+    }
+    const planning = project.planningSessions.get(body.sessionId);
+    if (!planning) return;
+    planning.toolCalls ??= [];
+    if (!planning.toolCalls.some((entry) => entry.toolCallId === body.toolCallId)) {
+      planning.toolCalls.push({
+        toolCallId: body.toolCallId,
+        ...(body.parentIndex !== undefined ? { parentIndex: body.parentIndex } : {}),
+        toolName: body.toolName,
+        args: structuredClone(body.args),
+      });
+    }
   },
   agentToolResult: (state, envelope, projectId) => {
     const body = readBody(envelope, 'agentToolResult');
-    const session = projectStateOf(state, projectId).agentSessions.get(body.sessionId);
-    if (!session) return;
-    session.transcript.push({
-      kind: 'toolResult',
-      toolCallId: body.toolCallId,
-      content: body.content,
-      isError: body.isError,
-    });
+    const project = projectStateOf(state, projectId);
+    const session = project.agentSessions.get(body.sessionId);
+    if (session) {
+      session.transcript.push({
+        kind: 'toolResult',
+        toolCallId: body.toolCallId,
+        content: body.content,
+        isError: body.isError,
+      });
+      return;
+    }
+    const entry = project.planningSessions
+      .get(body.sessionId)
+      ?.toolCalls?.find((tool) => tool.toolCallId === body.toolCallId);
+    if (entry) {
+      entry.summary = body.content;
+      entry.isError = body.isError;
+    }
   },
 };

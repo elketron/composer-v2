@@ -1,6 +1,6 @@
 // The pipeline runner: staged authoring, the sequential walk (command/
-// agent/human), stage transitions, gates, stop, boot cancel, and the
-// stage outcomes (S36: the report command, the backward return, the
+// agent/human), step transitions, gates, stop, boot cancel, and the
+// step outcomes (S36: the report command, the backward return, the
 // required-outcome rule) — the runner behavioral suite re-expressed on
 // the FakeEngine for Phase 10's run records. Command steps run real child
 // processes (`true` / `false` / `sleep`).
@@ -17,7 +17,7 @@ import { PipelineRunner } from '../src/runner/index.js';
 import { cancelInterruptedRuns, seedDefaultPipeline } from '../src/pipelines.js';
 import { FakeEngine } from '../src/engine/fake.js';
 import type { EventFrame } from '../src/wire/envelope.js';
-import type { Pipeline, PipelineStage, PipelineStep } from '../src/wire/models.js';
+import type { Pipeline, PipelineStep } from '../src/wire/models.js';
 
 let dir: string;
 let store: InstanceType<typeof import('../src/store/index.js').EventStore>;
@@ -63,7 +63,7 @@ async function createCard(projectId: string, title = 'wired'): Promise<string> {
       description: '',
       tags: [],
       pipelineId: '',
-      stageId: '',
+      stepId: '',
       blockedBy: [],
       stepStates: {},
       createdAt: '',
@@ -75,50 +75,40 @@ async function createCard(projectId: string, title = 'wired'): Promise<string> {
   return (events.at(-1)!.body as { card: { id: string } }).card.id;
 }
 
-/** A small staged pipeline: implement → check → approve → done. */
-const STAGE_IMPLEMENT = 'p-1';
-const STAGE_CHECK = 'p-2';
-const STAGE_APPROVE = 'p-3';
-const STAGE_DONE = 'p-4';
+/** A small step path: coder → check → approve → done. */
+const STEP_CODER = 'st-1';
+const STEP_CHECK = 'st-2';
+const STEP_APPROVE = 'st-3';
+const STEP_DONE = 'st-4';
 
-function defaultStages(): PipelineStage[] {
-  return [
-    { id: STAGE_IMPLEMENT, label: 'Implementation', kanbanVisible: true },
-    { id: STAGE_CHECK, label: 'Validation', kanbanVisible: true },
-    { id: STAGE_APPROVE, label: 'Approval', kanbanVisible: true, errorReturnToStageId: STAGE_IMPLEMENT },
-    { id: STAGE_DONE, label: 'Done', kanbanVisible: true, terminal: true },
-  ];
-}
-
-function pipelineFixture(
-  id: string,
-  steps: PipelineStep[],
-  stages: PipelineStage[] = defaultStages(),
-  name = 'Standard coding card',
-): Pipeline {
-  return { id, projectId: '', name, revision: 0, stages, steps, updatedAt: '' };
-}
-
-const coderStep = (id: string, stageId = STAGE_IMPLEMENT): PipelineStep => ({
+const coderStep = (id = STEP_CODER, patch: Partial<PipelineStep> = {}): PipelineStep => ({
   id,
   kind: 'agent',
-  stageId,
+  boardVisible: true,
   agentKind: 'coder',
   instructions: 'Implement the card.',
+  ...patch,
 });
-const commandStep = (id: string, command: string, stageId = STAGE_CHECK): PipelineStep => ({
+const commandStep = (id = STEP_CHECK, command = 'true', patch: Partial<PipelineStep> = {}): PipelineStep => ({
   id,
   kind: 'command',
-  stageId,
+  boardVisible: false,
   command,
   description: 'Run checks',
+  ...patch,
 });
-const humanStep = (id: string, stageId = STAGE_APPROVE): PipelineStep => ({
+const humanStep = (id = STEP_APPROVE, patch: Partial<PipelineStep> = {}): PipelineStep => ({
   id,
   kind: 'human',
-  stageId,
+  boardVisible: true,
   description: 'Approval',
+  ...patch,
 });
+const doneStep = (id = STEP_DONE): PipelineStep => ({ id, kind: 'human', boardVisible: true, terminal: true });
+
+function pipelineFixture(id: string, steps: PipelineStep[], name = 'Standard coding card'): Pipeline {
+  return { id, projectId: '', name, revision: 0, steps, updatedAt: '' };
+}
 
 async function savePipeline(projectId: string, pipeline: Pipeline): Promise<string> {
   const result = await processor.execute(projectId, { type: 'requestPipelineSave', pipeline });
@@ -181,7 +171,7 @@ describe('pipeline authoring', () => {
     // The project's creation seeded PL-1 (revision 1), so user saves allocate from PL-2.
     const result = await processor.execute(projectId, {
       type: 'requestPipelineSave',
-      pipeline: pipelineFixture('', [coderStep('st-1'), humanStep('st-2')]),
+      pipeline: pipelineFixture('', [coderStep('st-1'), humanStep('st-2'), doneStep('st-3')]),
     });
     expect(result.ok).toBe(true);
     const saved = recorded.filter((frame) => frame.eventType === 'pipelineSaved').at(-1)!
@@ -193,7 +183,7 @@ describe('pipeline authoring', () => {
     // An unchanged save is a no-op; a changed save allocates revision 2.
     const unchanged = await processor.execute(projectId, {
       type: 'requestPipelineSave',
-      pipeline: pipelineFixture('PL-2', [coderStep('st-1'), humanStep('st-2')]),
+      pipeline: pipelineFixture('PL-2', [coderStep('st-1'), humanStep('st-2'), doneStep('st-3')]),
     });
     expect(unchanged).toEqual({ ok: true });
     expect(recorded.filter((frame) => frame.eventType === 'pipelineSaved')).toHaveLength(
@@ -203,34 +193,30 @@ describe('pipeline authoring', () => {
 
     const changed = await processor.execute(projectId, {
       type: 'requestPipelineSave',
-      pipeline: pipelineFixture('PL-2', [coderStep('st-1'), commandStep('st-2', 'true'), humanStep('st-3')]),
+      pipeline: pipelineFixture('PL-2', [coderStep('st-1'), commandStep('st-2', 'true'), humanStep('st-3'), doneStep('st-4')]),
     });
     expect(changed.ok).toBe(true);
     const upsert = recorded.filter((frame) => frame.eventType === 'pipelineSaved').at(-1)!
       .body as { pipeline: { id: string; revision: number; steps: unknown[] } };
     expect(upsert.pipeline.id).toBe('PL-2');
     expect(upsert.pipeline.revision).toBe(2);
-    expect(upsert.pipeline.steps).toHaveLength(3);
+    expect(upsert.pipeline.steps).toHaveLength(4);
   });
 
   it('pipeline_save_keeps_every_revision_for_run_pinners', async () => {
-    await savePipeline(projectId, pipelineFixture('PL-7', [coderStep('st-1')]));
-    await savePipeline(projectId, pipelineFixture('PL-7', [coderStep('st-1'), commandStep('st-2', 'true')]));
+    await savePipeline(projectId, pipelineFixture('PL-7', [coderStep('st-1'), doneStep('st-2')]));
+    await savePipeline(projectId, pipelineFixture('PL-7', [coderStep('st-1'), commandStep('st-2', 'true'), doneStep('st-3')]));
     const project = bus.state.byProject.get(projectId)!;
-    expect(project.pipelines.get('PL-7')?.steps).toHaveLength(2);
+    expect(project.pipelines.get('PL-7')?.steps).toHaveLength(3);
     expect(project.pipelines.get('PL-7')?.revision).toBe(2);
-    expect(project.pipelineRevisions.get('PL-7')?.get(1)?.steps).toHaveLength(1);
-    expect(project.pipelineRevisions.get('PL-7')?.get(2)?.steps).toHaveLength(2);
+    expect(project.pipelineRevisions.get('PL-7')?.get(1)?.steps).toHaveLength(2);
+    expect(project.pipelineRevisions.get('PL-7')?.get(2)?.steps).toHaveLength(3);
   });
 
-  it('pipeline_save_validates_stages_and_the_forward_path', async () => {
+  it('pipeline_save_validates_steps_and_the_terminal_rule', async () => {
     const cases: { pipeline: Pipeline; message: string }[] = [
       {
-        pipeline: pipelineFixture('', [], [], 'no stages'),
-        message: 'A pipeline needs at least one stage',
-      },
-      {
-        pipeline: pipelineFixture('', []),
+        pipeline: pipelineFixture('', [], 'no steps'),
         message: 'A pipeline needs at least one step',
       },
       {
@@ -238,42 +224,36 @@ describe('pipeline authoring', () => {
         message: "Step id 'st-1' appears twice",
       },
       {
-        pipeline: pipelineFixture('', [{ id: 'st-1', kind: 'agent', stageId: 'p-x', agentKind: 'coder', instructions: 'x' }]),
-        message: "Step 1: stage 'p-x' is not a stage of this pipeline",
+        pipeline: pipelineFixture('', [coderStep('st-1', { agentKind: 'designer' }), doneStep('st-2')]),
+        message: "Step 1: agent kind 'designer' has no implementation yet",
       },
       {
-        pipeline: pipelineFixture('', [commandStep('st-1', 'true'), coderStep('st-2')]),
-        message: 'Step 2: the normal path must not move to an earlier stage',
+        pipeline: pipelineFixture('', [coderStep('st-1', { boardVisible: false }), doneStep('st-2')]),
+        message: 'The first step must be board-visible',
       },
       {
-        pipeline: pipelineFixture('', [coderStep('st-1')], defaultStages().map((stage) => ({ ...stage, kanbanVisible: false }))),
-        message: 'The first stage must be Kanban-visible',
+        pipeline: pipelineFixture('', [coderStep('st-1')]),
+        message: 'A pipeline needs exactly one terminal (Done) step',
       },
       {
-        pipeline: pipelineFixture('', [coderStep('st-1')], defaultStages().slice(0, 3)),
-        message: 'A pipeline needs exactly one terminal (Done) stage',
+        pipeline: pipelineFixture('', [doneStep('st-1')]),
+        message: 'A pipeline needs at least one non-terminal executable step',
       },
       {
-        pipeline: pipelineFixture('', [coderStep('st-1')], [
-          ...defaultStages().slice(0, 3),
-          { id: STAGE_DONE, label: 'Done', kanbanVisible: true, terminal: true },
-          { id: 'p-5', label: 'After', kanbanVisible: true },
-        ]),
-        message: 'The terminal stage must be the last stage',
+        pipeline: pipelineFixture('', [coderStep('st-1'), doneStep('st-2'), commandStep('st-3', 'true')]),
+        message: 'The terminal step must be the last step',
       },
       {
-        pipeline: pipelineFixture('', [coderStep('st-1')], [
-          { id: STAGE_IMPLEMENT, label: 'Implementation', kanbanVisible: true, errorReturnToStageId: STAGE_CHECK },
-          ...defaultStages().slice(1),
-        ]),
-        message: 'Stage 1: the error condition may only return to an earlier stage',
+        pipeline: pipelineFixture('', [coderStep('st-1', { errorReturnToStepId: 'st-2' }), commandStep('st-2', 'true'), doneStep('st-3')]),
+        message: 'Step 1: the error condition may only return to an earlier step',
       },
       {
-        pipeline: pipelineFixture('', [coderStep('st-1')], [
-          { id: STAGE_IMPLEMENT, label: 'Implementation', kanbanVisible: true, outcomes: [{ outcome: 'rework', toStageId: STAGE_CHECK }] },
-          ...defaultStages().slice(1),
-        ]),
-        message: "Stage 1: outcome 'rework' may only return to an earlier stage",
+        pipeline: pipelineFixture('', [coderStep('st-1', { outcomes: [{ outcome: 'rework', toStepId: 'st-2' }] }), commandStep('st-2', 'true'), doneStep('st-3')]),
+        message: "Step 1: outcome 'rework' may only return to an earlier step",
+      },
+      {
+        pipeline: pipelineFixture('', [coderStep('st-1', { outcomes: [{ outcome: '   ' }] }), doneStep('st-2')]),
+        message: 'Step 1: an outcome needs a name',
       },
     ];
     for (const case_ of cases) {
@@ -286,11 +266,30 @@ describe('pipeline authoring', () => {
 
     const blankName = await processor.execute(projectId, {
       type: 'requestPipelineSave',
-      pipeline: { ...pipelineFixture('', [coderStep('st-1')]), name: '  ' },
+      pipeline: { ...pipelineFixture('', [coderStep('st-1'), doneStep('st-2')]), name: '  ' },
     });
     expect(blankName).toEqual({
       ok: false,
       rejection: { code: 'invalidCommand', message: 'Pipeline name is required' },
+    });
+  });
+
+  it('pipeline_save_rejects_removing_a_step_occupied_by_a_card', async () => {
+    await savePipeline(projectId, pipelineFixture('PL-2', [coderStep('st-1'), doneStep('st-2')]));
+    const cardId = await createCard(projectId);
+    await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId: 'PL-2' });
+
+    const result = await processor.execute(projectId, {
+      type: 'requestPipelineSave',
+      pipeline: pipelineFixture('PL-2', [coderStep('st-3'), doneStep('st-2')]),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      rejection: {
+        code: 'invalidCommand',
+        message: 'Pipeline PL-2 cannot remove occupied step st-1; move or reassign its cards first',
+      },
     });
   });
 
@@ -305,7 +304,7 @@ describe('pipeline authoring', () => {
     expect(project.pipelines.has('PL-1')).toBe(false, 'the tombstone keeps the seed dead');
 
     // An id is reusable after deletion; the re-save clears the tombstone.
-    await savePipeline(projectId, pipelineFixture('PL-1', [coderStep('st-1')]));
+    await savePipeline(projectId, pipelineFixture('PL-1', [coderStep('st-1'), doneStep('st-2')]));
     expect(project.deletedPipelines.has('PL-1')).toBe(false);
 
     // A pipeline with assigned cards rejects deletion.
@@ -361,7 +360,7 @@ describe('the pipeline runner', () => {
     await processor.execute(undefined, { type: 'requestProjectCreate', name: 'bare' });
     await processor.execute('P-2', {
       type: 'requestCardCreate',
-      card: { id: '', projectId: 'P-2', type: 'coding', title: 'x', description: '', tags: [], pipelineId: '', stageId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
+      card: { id: '', projectId: 'P-2', type: 'coding', title: 'x', description: '', tags: [], pipelineId: '', stepId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
     });
     const noDirectory = await processor.execute('P-2', { type: 'requestPipelineRun', cardId: 'T-1' });
     expect(noDirectory).toEqual({
@@ -369,9 +368,22 @@ describe('the pipeline runner', () => {
       rejection: { code: 'invalidCommand', message: 'Project P-2 has no directory set' },
     });
 
-    // A pipeline whose agent step names an unknown kind rejects the run.
-    const pipelineId = await savePipeline(projectId, pipelineFixture('PL-9', [{ ...coderStep('st-1'), agentKind: 'designer' }]));
-    await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    // A pipeline whose agent step names an unknown kind rejects the run
+    // (the save validates it too; this is the runner's second line).
+    await bus.publish(projectId, 'pipelineSaved', {
+      pipeline: {
+        id: 'PL-9',
+        projectId,
+        name: 'x',
+        revision: 1,
+        updatedAt: '',
+        steps: [
+          { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'designer', instructions: 'x' },
+          { id: 'st-2', kind: 'human', boardVisible: true, terminal: true },
+        ],
+      },
+    });
+    await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId: 'PL-9' });
     const unknownKind = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
     expect(unknownKind).toEqual({
       ok: false,
@@ -391,6 +403,7 @@ describe('the pipeline runner', () => {
       coderStep('st-1'),
       commandStep('st-2', 'true'),
       humanStep('st-3'),
+      doneStep('st-4'),
     ]));
 
     const started = await runOn(projectId, pipelineId, cardId);
@@ -398,12 +411,12 @@ describe('the pipeline runner', () => {
     if (!started.ok) return;
     expect(started.runId).toBe('R-1');
 
-    // The gate parks the run waiting at the approval stage; the card sits there.
+    // The gate parks the run waiting at the approval step; the card sits there.
     await waitUntil(() => activeRunOf(projectId, cardId)?.status === 'waiting');
     const active = activeRunOf(projectId, cardId)!;
     expect(active.pipelineId).toBe('PL-1');
     expect(active.revision).toBe(2);
-    expect(cardOf(projectId, cardId).stageId).toBe(STAGE_APPROVE);
+    expect(cardOf(projectId, cardId).stepId).toBe(STEP_APPROVE);
     expect(cardOf(projectId, cardId).stepStates).toMatchObject({
       'st-1': 'ok',
       'st-2': 'ok',
@@ -425,20 +438,24 @@ describe('the pipeline runner', () => {
     });
     expect(approved.ok).toBe(true);
 
-    await waitUntil(() => cardOf(projectId, cardId).stageId === STAGE_DONE);
+    await waitUntil(() => cardOf(projectId, cardId).stepId === STEP_DONE);
     expect(bus.state.byProject.get(projectId)?.activeRuns.has(cardId)).toBe(false);
 
     const ended = runEndedBody(projectId);
     expect(ended).toMatchObject({ runId: 'R-1', cardId, status: 'completed', revision: 2 });
     // Stream order: the terminal move rides after the run's end.
     const endIndex = recorded.findLastIndex((frame) => frame.eventType === 'pipelineRunEnded');
-    expect(recorded[endIndex + 1]?.eventType).toBe('cardStageMoved');
-    expect(recorded[endIndex + 1]?.body).toMatchObject({ cardId, toStageId: STAGE_DONE });
+    expect(recorded[endIndex + 1]?.eventType).toBe('cardStepMoved');
+    expect(recorded[endIndex + 1]?.body).toMatchObject({ cardId, toStepId: STEP_DONE });
   });
 
-  it('a_gate_rejection_returns_the_card_to_the_error_stage_and_ends_returned', async () => {
+  it('a_gate_rejection_returns_the_card_to_the_error_step_and_ends_returned', async () => {
     engine.enqueue(async () => 'implemented');
-    const pipelineId = await savePipeline(projectId, pipelineFixture('', [coderStep('st-1'), humanStep('st-2')]));
+    const pipelineId = await savePipeline(projectId, pipelineFixture('', [
+      coderStep('st-1'),
+      humanStep('st-2', { errorReturnToStepId: STEP_CODER }),
+      doneStep('st-3'),
+    ]));
     await runOn(projectId, pipelineId, cardId);
     await waitUntil(() => activeRunOf(projectId, cardId)?.status === 'waiting');
 
@@ -450,26 +467,27 @@ describe('the pipeline runner', () => {
     });
     expect(rejected.ok).toBe(true);
 
-    await waitUntil(() => cardOf(projectId, cardId).stageId === STAGE_IMPLEMENT);
+    await waitUntil(() => cardOf(projectId, cardId).stepId === STEP_CODER);
     expect(cardOf(projectId, cardId).rejectionComment).toBe('needs tests');
     const ended = runEndedBody(projectId);
     expect(ended.status).toBe('returned');
     expect(ended.error).toBe('changes requested: needs tests');
   });
 
-  it('the_run_executes_from_the_cards_current_stage_onward', async () => {
+  it('the_run_executes_from_the_cards_current_step_onward', async () => {
     const pipelineId = await savePipeline(projectId, pipelineFixture('', [
       coderStep('st-1'),
       commandStep('st-2', 'exit 0'),
       humanStep('st-3'),
+      doneStep('st-4'),
     ]));
-    // Assign the card to the pipeline, then move it to Validation: the
+    // Assign the card to the pipeline, then move it to the check step: the
     // implementation step is skipped by the run.
     await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
     const moved = await processor.execute(projectId, {
-      type: 'requestCardStageMove',
+      type: 'requestCardStepMove',
       cardId,
-      toStageId: STAGE_CHECK,
+      toStepId: STEP_CHECK,
       override: false,
     });
     expect(moved.ok).toBe(true);
@@ -478,14 +496,14 @@ describe('the pipeline runner', () => {
 
     await waitUntil(() => activeRunOf(projectId, cardId)?.status === 'waiting');
     await processor.execute(projectId, { type: 'requestPipelineGateRespond', cardId, approved: true });
-    await waitUntil(() => cardOf(projectId, cardId).stageId === STAGE_DONE);
+    await waitUntil(() => cardOf(projectId, cardId).stepId === STEP_DONE);
     const startedSteps = recorded
       .filter((frame) => frame.eventType === 'pipelineStepStarted')
       .map((frame) => (frame.body as { stepId: string }).stepId);
     expect(startedSteps).toEqual(['st-2', 'st-3'], 'the implementation step was skipped');
   });
 
-  it('the_workers_walk_their_stages_and_the_sessions_name_their_kinds', async () => {
+  it('the_workers_walk_their_steps_and_the_sessions_name_their_kinds', async () => {
     engine.enqueue(async ({ spec }) => {
       expect(spec.agentName).toBe('composer-coder');
       expect(spec.mcpTools).toBe('worker');
@@ -507,33 +525,26 @@ describe('the pipeline runner', () => {
       expect(spec.prompt).toContain(`Security-review card ${cardId}`);
       return 'no findings';
     });
-    const workerStep = (id: string, agentKind: string, stageId: string): PipelineStep => ({
+    const workerStep = (id: string, agentKind: string): PipelineStep => ({
       id,
       kind: 'agent',
-      stageId,
+      boardVisible: true,
       agentKind,
       instructions: 'Do your part.',
     });
-    const stages: PipelineStage[] = [
-      { id: 'w-1', label: 'Implementation', kanbanVisible: true },
-      { id: 'w-2', label: 'Validation', kanbanVisible: true },
-      { id: 'w-3', label: 'Review', kanbanVisible: true },
-      { id: 'w-4', label: 'Security', kanbanVisible: true },
-      { id: 'w-5', label: 'Approval', kanbanVisible: true, errorReturnToStageId: 'w-1' },
-      { id: 'w-6', label: 'Done', kanbanVisible: true, terminal: true },
-    ];
     const pipelineId = await savePipeline(projectId, pipelineFixture('', [
-      coderStep('st-1', 'w-1'),
-      workerStep('st-2', 'tester', 'w-2'),
-      workerStep('st-3', 'reviewer', 'w-3'),
-      workerStep('st-4', 'security', 'w-4'),
-      humanStep('st-5', 'w-5'),
-    ], stages));
+      coderStep('st-1'),
+      workerStep('st-2', 'tester'),
+      workerStep('st-3', 'reviewer'),
+      workerStep('st-4', 'security'),
+      humanStep('st-5'),
+      doneStep('st-6'),
+    ]));
     const started = await runOn(projectId, pipelineId, cardId);
     expect(started.ok).toBe(true);
 
     await waitUntil(() => activeRunOf(projectId, cardId)?.status === 'waiting');
-    expect(cardOf(projectId, cardId).stageId).toBe('w-5');
+    expect(cardOf(projectId, cardId).stepId).toBe('st-5');
     expect(cardOf(projectId, cardId).stepStates).toMatchObject({
       'st-1': 'ok',
       'st-2': 'ok',
@@ -550,25 +561,28 @@ describe('the pipeline runner', () => {
     expect(startedKinds).toEqual(['coder', 'tester', 'reviewer', 'security']);
 
     await processor.execute(projectId, { type: 'requestPipelineGateRespond', cardId, approved: true });
-    await waitUntil(() => cardOf(projectId, cardId).stageId === 'w-6');
+    await waitUntil(() => cardOf(projectId, cardId).stepId === 'st-6');
   });
 
-  it('a_failed_command_step_returns_the_card_when_the_stage_configures_it', async () => {
-    // The Validation stage carries the error return: the failed command
-    // moves the card back to Implementation and ends the run `returned`.
-    const stages = defaultStages().map((stage) =>
-      stage.id === STAGE_CHECK ? { ...stage, errorReturnToStageId: STAGE_IMPLEMENT } : stage,
-    );
+  it('a_failed_command_step_returns_the_card_when_the_step_configures_it', async () => {
+    // The check step carries the error return: the failed command moves the
+    // card back to the coder and ends the run `returned`.
     const pipelineId = await savePipeline(
       projectId,
-      pipelineFixture('', [commandStep('st-1', 'echo boom >&2; false')], stages),
+      pipelineFixture('', [
+        coderStep('st-1'),
+        commandStep('st-2', 'echo boom >&2; false', { errorReturnToStepId: STEP_CODER }),
+        doneStep('st-3'),
+      ]),
     );
-    const started = await runOn(projectId, pipelineId, cardId);
+    await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    await processor.execute(projectId, { type: 'requestCardStepMove', cardId, toStepId: STEP_CHECK, override: false });
+    const started = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
     expect(started.ok).toBe(true);
 
     await waitUntil(() => !bus.state.byProject.get(projectId)?.activeRuns.has(cardId));
-    expect(cardOf(projectId, cardId).stageId).toBe(STAGE_IMPLEMENT, 'the stage error return moved the card back');
-    expect(cardOf(projectId, cardId).stepStates['st-1']).toBe('failed');
+    expect(cardOf(projectId, cardId).stepId).toBe(STEP_CODER, 'the step error return moved the card back');
+    expect(cardOf(projectId, cardId).stepStates['st-2']).toBe('failed');
     const ended = runEndedBody(projectId);
     expect(ended.status).toBe('returned');
     expect(ended.error).toContain('exit code 1');
@@ -580,36 +594,38 @@ describe('the pipeline runner', () => {
   });
 
   it('a_failed_step_without_an_error_condition_fails_in_place', async () => {
-    const stages = defaultStages().map((stage) =>
-      stage.id === STAGE_CHECK ? { ...stage, errorReturnToStageId: undefined } : stage,
-    );
     const pipelineId = await savePipeline(
       projectId,
-      pipelineFixture('', [commandStep('st-1', 'echo boom >&2; false')], stages),
+      pipelineFixture('', [
+        coderStep('st-1'),
+        commandStep('st-2', 'echo boom >&2; false'),
+        doneStep('st-3'),
+      ]),
     );
-    await runOn(projectId, pipelineId, cardId);
+    await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    await processor.execute(projectId, { type: 'requestCardStepMove', cardId, toStepId: STEP_CHECK, override: false });
+    await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
     await waitUntil(() => !bus.state.byProject.get(projectId)?.activeRuns.has(cardId));
-    expect(cardOf(projectId, cardId).stageId).toBe(STAGE_CHECK, 'the card stays where it failed');
+    expect(cardOf(projectId, cardId).stepId).toBe(STEP_CHECK, 'the card stays where it failed');
     const ended = runEndedBody(projectId);
     expect(ended.status).toBe('failed');
   });
 
   it('an_outcome_report_returns_the_card_and_ends_the_run_returned', async () => {
-    const stages = defaultStages().map((stage) =>
-      stage.id === STAGE_APPROVE
-        ? {
-            ...stage,
-            outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStageId: STAGE_IMPLEMENT }],
-            requiresOutcome: true,
-          }
-        : stage,
-    );
-    const pipelineId = await savePipeline(projectId, pipelineFixture('', [coderStep('st-1', STAGE_APPROVE)], stages));
+    const pipelineId = await savePipeline(projectId, pipelineFixture('', [
+      coderStep('st-1'),
+      coderStep('st-2', {
+        agentKind: 'reviewer',
+        outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStepId: STEP_CODER }],
+        requiresOutcome: true,
+      }),
+      doneStep('st-3'),
+    ]));
     engine.enqueue(async ({ spec }) => {
       // The brief teaches the outcome vocabulary and the required call.
       expect(spec.prompt).toContain('composer_report_outcome');
       expect(spec.prompt).toContain('changes_requested');
-      expect(spec.prompt).toContain('returns to Implementation');
+      expect(spec.prompt).toContain('returns to coder');
       expect(spec.prompt).toContain('requires the call');
       const reported = await processor.execute(projectId, {
         type: 'requestPipelineOutcomeReport',
@@ -619,19 +635,21 @@ describe('the pipeline runner', () => {
       });
       expect(reported).toMatchObject({
         ok: true,
-        transition: 'the card returns to Implementation when the step finishes',
+        transition: 'the card returns to coder when the step finishes',
       });
       return 'asked for changes';
     });
-    const started = await runOn(projectId, pipelineId, cardId);
+    await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    await processor.execute(projectId, { type: 'requestCardStepMove', cardId, toStepId: 'st-2', override: false });
+    const started = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
     expect(started.ok).toBe(true);
 
     await waitUntil(() => !bus.state.byProject.get(projectId)?.activeRuns.has(cardId));
-    expect(cardOf(projectId, cardId).stageId).toBe(STAGE_IMPLEMENT, 'the outcome rule moved the card back');
+    expect(cardOf(projectId, cardId).stepId).toBe(STEP_CODER, 'the outcome rule moved the card back');
     expect(cardOf(projectId, cardId).rejectionComment).toBe('the error path is untested');
-    expect(cardOf(projectId, cardId).stepStates['st-1']).toBe('ok', 'the agent turn itself succeeded');
+    expect(cardOf(projectId, cardId).stepStates['st-2']).toBe('ok', 'the agent turn itself succeeded');
     expect(recorded.findLast((frame) => frame.eventType === 'pipelineOutcomeReported')?.body).toMatchObject({
-      stepId: 'st-1',
+      stepId: 'st-2',
       outcome: 'changes_requested',
       note: 'the error path is untested',
     });
@@ -639,18 +657,20 @@ describe('the pipeline runner', () => {
     expect(ended.status).toBe('returned');
     expect(ended.error).toBe('changes_requested: the error path is untested');
 
-    // The returned card re-runs from where it sits (the stage skip).
+    // The returned card re-runs from where it sits (the step skip).
     const again = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
     expect(again.ok).toBe(true);
   });
 
   it('a_forward_outcome_proceeds_and_the_walk_completes', async () => {
-    const stages = defaultStages().map((stage) =>
-      stage.id === STAGE_CHECK ? { ...stage, outcomes: [{ outcome: 'pass' }], requiresOutcome: true } : stage,
-    );
     const pipelineId = await savePipeline(
       projectId,
-      pipelineFixture('', [coderStep('st-1', STAGE_CHECK), commandStep('st-2', 'true', STAGE_APPROVE)], stages),
+      pipelineFixture('', [
+        commandStep('st-1', 'true', { boardVisible: true }),
+        coderStep('st-2', { outcomes: [{ outcome: 'pass' }], requiresOutcome: true }),
+        commandStep('st-3', 'true', { boardVisible: true }),
+        doneStep('st-4'),
+      ]),
     );
     engine.enqueue(async ({ spec }) => {
       const reported = await processor.execute(projectId, {
@@ -661,34 +681,42 @@ describe('the pipeline runner', () => {
       expect(reported).toMatchObject({ ok: true, transition: 'the pipeline proceeds when the step finishes' });
       return 'verified';
     });
-    await runOn(projectId, pipelineId, cardId);
-    await waitUntil(() => cardOf(projectId, cardId).stageId === STAGE_DONE);
+    await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    await processor.execute(projectId, { type: 'requestCardStepMove', cardId, toStepId: 'st-2', override: false });
+    await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
+    await waitUntil(() => cardOf(projectId, cardId).stepId === STEP_DONE);
     expect(runEndedBody(projectId)).toMatchObject({ status: 'completed' });
-    expect(cardOf(projectId, cardId).stepStates).toMatchObject({ 'st-1': 'ok', 'st-2': 'ok' });
+    expect(cardOf(projectId, cardId).stepStates).toMatchObject({ 'st-2': 'ok', 'st-3': 'ok' });
   });
 
   it('requiresOutcome_fails_a_turn_that_reported_nothing', async () => {
-    const stages = defaultStages().map((stage) =>
-      stage.id === STAGE_CHECK
-        ? { ...stage, outcomes: [{ outcome: 'pass' }], requiresOutcome: true, errorReturnToStageId: STAGE_IMPLEMENT }
-        : stage,
-    );
-    const pipelineId = await savePipeline(projectId, pipelineFixture('', [coderStep('st-1', STAGE_CHECK)], stages));
+    const pipelineId = await savePipeline(projectId, pipelineFixture('', [
+      commandStep('st-1', 'true', { boardVisible: true }),
+      coderStep('st-2', { outcomes: [{ outcome: 'pass' }], requiresOutcome: true, errorReturnToStepId: STEP_CODER }),
+      doneStep('st-3'),
+    ]));
     engine.enqueue(async () => 'done, trust me');
-    await runOn(projectId, pipelineId, cardId);
+    await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    await processor.execute(projectId, { type: 'requestCardStepMove', cardId, toStepId: 'st-2', override: false });
+    await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
     await waitUntil(() => !bus.state.byProject.get(projectId)?.activeRuns.has(cardId));
-    expect(cardOf(projectId, cardId).stepStates['st-1']).toBe('failed');
-    expect(cardOf(projectId, cardId).stageId).toBe(STAGE_IMPLEMENT, 'the failure flows through the stage error return');
+    expect(cardOf(projectId, cardId).stepStates['st-2']).toBe('failed');
+    expect(cardOf(projectId, cardId).stepId).toBe(STEP_CODER, 'the failure flows through the step error return');
     const ended = runEndedBody(projectId);
     expect(ended.status).toBe('returned');
     expect(ended.error).toContain('requires an explicit outcome');
     expect(ended.error).toContain('pass');
   });
 
-  it('a_report_on_a_stage_without_outcomes_rejects_and_the_turn_still_proceeds', async () => {
+  it('a_report_on_a_step_without_outcomes_rejects_and_the_turn_still_proceeds', async () => {
     const pipelineId = await savePipeline(
       projectId,
-      pipelineFixture('', [coderStep('st-1', STAGE_CHECK), commandStep('st-2', 'true', STAGE_APPROVE)]),
+      pipelineFixture('', [
+        commandStep('st-1', 'true', { boardVisible: true }),
+        coderStep('st-2'),
+        commandStep('st-3', 'true', { boardVisible: true }),
+        doneStep('st-4'),
+      ]),
     );
     engine.enqueue(async ({ spec }) => {
       const reported = await processor.execute(projectId, {
@@ -698,17 +726,22 @@ describe('the pipeline runner', () => {
       });
       expect(reported).toEqual({
         ok: false,
-        rejection: { code: 'invalidCommand', message: 'Stage Validation defines no outcomes to report' },
+        rejection: { code: 'invalidCommand', message: 'Step st-2 defines no outcomes to report' },
       });
       return 'done';
     });
-    await runOn(projectId, pipelineId, cardId);
-    await waitUntil(() => cardOf(projectId, cardId).stageId === STAGE_DONE);
+    await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    await processor.execute(projectId, { type: 'requestCardStepMove', cardId, toStepId: 'st-2', override: false });
+    await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
+    await waitUntil(() => cardOf(projectId, cardId).stepId === STEP_DONE);
     expect(runEndedBody(projectId)).toMatchObject({ status: 'completed' });
   });
 
   it('stop_ends_the_run_cancelled_and_kills_the_child', async () => {
-    const pipelineId = await savePipeline(projectId, pipelineFixture('', [commandStep('st-1', 'sleep 30')]));
+    const pipelineId = await savePipeline(projectId, pipelineFixture('', [
+      commandStep('st-1', 'sleep 30', { boardVisible: true }),
+      doneStep('st-2'),
+    ]));
     await runOn(projectId, pipelineId, cardId);
     await waitUntil(() => cardOf(projectId, cardId).stepStates['st-1'] === 'running');
 
@@ -717,7 +750,7 @@ describe('the pipeline runner', () => {
 
     await waitUntil(() => !bus.state.byProject.get(projectId)?.activeRuns.has(cardId));
     // The card keeps its last position; nothing publishes after the cancel.
-    expect(cardOf(projectId, cardId).stageId).toBe(STAGE_CHECK);
+    expect(cardOf(projectId, cardId).stepId).toBe('st-1');
     const endCount = recorded.filter((frame) => frame.eventType === 'pipelineRunEnded').length;
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(recorded.filter((frame) => frame.eventType === 'pipelineRunEnded')).toHaveLength(endCount);
@@ -739,7 +772,6 @@ describe('the pipeline runner', () => {
       pipelineId: 'PL-1',
       stepId: 'st-1',
       kind: 'agent',
-      stageId: 'sg-2',
     });
     expect(bus.state.byProject.get(projectId)?.runs.get('R-1')?.status).toBe('running');
 
@@ -777,10 +809,10 @@ describe('the pipeline runner', () => {
 
   it('the_pipeline_snapshot_replays_into_equal_state', async () => {
     engine.enqueue(async () => 'implemented');
-    const pipelineId = await savePipeline(projectId, pipelineFixture('', [coderStep('st-1'), humanStep('st-2')]));
+    const pipelineId = await savePipeline(projectId, pipelineFixture('', [coderStep('st-1'), humanStep('st-2'), doneStep('st-3')]));
     await runOn(projectId, pipelineId, cardId);
     await waitUntil(() => activeRunOf(projectId, cardId)?.status === 'waiting');
-    await savePipeline(projectId, pipelineFixture('PL-5', [commandStep('st-1', 'true')]));
+    await savePipeline(projectId, pipelineFixture('PL-5', [commandStep('st-1', 'true', { boardVisible: true }), doneStep('st-2')]));
 
     const snapshot = snapshotEvents(bus.state);
     const replayed: State = newState();
@@ -861,7 +893,6 @@ describe('the outcome report command', () => {
       pipelineId: 'PL-1',
       stepId: 'st-2',
       kind: 'command',
-      stageId: 'sg-3',
     });
     const notAgent = await processor.execute(projectId, {
       type: 'requestPipelineOutcomeReport',
@@ -880,7 +911,6 @@ describe('the outcome report command', () => {
       pipelineId: 'PL-1',
       stepId: 'st-4',
       kind: 'agent',
-      stageId: 'sg-4',
     });
     await bus.publish(projectId, 'agentSessionEnded', { cardId, sessionId: 'A-1', status: 'ended', endedAt: startedAt() });
     const endedSession = await processor.execute(projectId, {
@@ -894,13 +924,10 @@ describe('the outcome report command', () => {
     });
   });
 
-  it('validates_the_name_against_the_stage_rules_and_the_pinned_revision', async () => {
+  it('validates_the_name_against_the_step_rules_and_the_pinned_revision', async () => {
     // Revision 1 of PL-4 carries the outcome rule; revision 2 drops it.
-    const v1 = defaultStages().map((stage) =>
-      stage.id === STAGE_CHECK ? { ...stage, outcomes: [{ outcome: 'pass' }] } : stage,
-    );
-    await savePipeline(projectId, pipelineFixture('PL-4', [coderStep('st-1', STAGE_CHECK)], v1));
-    await savePipeline(projectId, pipelineFixture('PL-4', [coderStep('st-1', STAGE_CHECK)]));
+    await savePipeline(projectId, pipelineFixture('PL-4', [coderStep('st-1', { outcomes: [{ outcome: 'pass' }] }), doneStep('st-2')]));
+    await savePipeline(projectId, pipelineFixture('PL-4', [coderStep('st-1'), doneStep('st-2')]));
 
     await bus.publish(projectId, 'pipelineRunStarted', { runId: 'R-1', cardId, pipelineId: 'PL-4', revision: 1 });
     await bus.publish(projectId, 'agentSessionStarted', { cardId, sessionId: 'A-1', agentKind: 'coder', startedAt: startedAt() });
@@ -910,7 +937,6 @@ describe('the outcome report command', () => {
       pipelineId: 'PL-4',
       stepId: 'st-1',
       kind: 'agent',
-      stageId: STAGE_CHECK,
     });
 
     // The report reads the run's pinned revision, where the rule exists.
@@ -931,7 +957,7 @@ describe('the outcome report command', () => {
       ok: false,
       rejection: {
         code: 'invalidCommand',
-        message: "outcome 'rework' is not one of stage Validation's outcomes: 'pass'",
+        message: "outcome 'rework' is not one of step st-1's outcomes: 'pass'",
       },
     });
 
@@ -944,7 +970,6 @@ describe('the outcome report command', () => {
       pipelineId: 'PL-4',
       stepId: 'st-1',
       kind: 'agent',
-      stageId: STAGE_CHECK,
     });
     const gone = await processor.execute(projectId, {
       type: 'requestPipelineOutcomeReport',
@@ -953,7 +978,7 @@ describe('the outcome report command', () => {
     });
     expect(gone).toEqual({
       ok: false,
-      rejection: { code: 'invalidCommand', message: 'Stage Validation defines no outcomes to report' },
+      rejection: { code: 'invalidCommand', message: 'Step st-1 defines no outcomes to report' },
     });
   });
 });

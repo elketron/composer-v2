@@ -340,11 +340,15 @@ export class AssistantService {
         // The reply closes the turn — but never un-marks a stopped or
         // failed thread (the stop's partial completion lands here too).
         const current = this.threadsSignal().get(payload.threadId)?.status;
-        const status = current === 'STOPPED' || current === 'FAILED' ? current : 'IDLE';
+        const status = message.activity
+          ? 'RUNNING'
+          : current === 'STOPPED' || current === 'FAILED'
+            ? current
+            : 'IDLE';
         this.upsertMessage(payload.threadId, message, status);
         // The completion clears the live stream for the active thread (the
         // assistant is single-writer per thread).
-        if (payload.threadId === this.activeThreadIdSignal()) {
+        if (!message.activity && payload.threadId === this.activeThreadIdSignal()) {
           this.streamingMessage.set(null);
           this.isSending.set(false);
         }
@@ -621,6 +625,7 @@ function asMessage(value: unknown): AssistantMessage {
     at: typeof record['at'] === 'string' ? record['at'] : undefined,
     id: typeof record['id'] === 'string' ? record['id'] : undefined,
     parentId: typeof record['parentId'] === 'string' ? record['parentId'] : undefined,
+    activity: record['activity'] === true,
   });
 }
 
@@ -632,7 +637,7 @@ function visibleSiblings(
   parentId: string | null,
 ): AssistantMessage[] {
   return messages
-    .filter((message) => message.parentId === parentId)
+    .filter((message) => !message.activity && message.parentId === parentId)
     .sort((a, b) => a.index - b.index);
 }
 
@@ -645,10 +650,11 @@ function visibleTranscript(
   messages: readonly AssistantMessage[],
   choices: ReadonlyMap<string, string> | undefined,
 ): AssistantMessage[] {
-  if (messages.length === 0) return [];
-  if (messages.some((message) => message.id === '')) {
+  const transcript = messages.filter((message) => !message.activity);
+  if (transcript.length === 0) return [];
+  if (transcript.some((message) => message.id === '')) {
     const seen = new Map<string, AssistantMessage>();
-    for (const message of [...messages].sort((a, b) => a.index - b.index)) {
+    for (const message of [...transcript].sort((a, b) => a.index - b.index)) {
       seen.set(`${message.role}-${message.index}`, message);
     }
     return [...seen.values()];
@@ -656,7 +662,7 @@ function visibleTranscript(
   const path: AssistantMessage[] = [];
   let parentId: string | null = null;
   for (;;) {
-    const siblings: AssistantMessage[] = visibleSiblings(messages, parentId);
+    const siblings: AssistantMessage[] = visibleSiblings(transcript, parentId);
     if (siblings.length === 0) break;
     const chosen: string | undefined = choices?.get(parentId ?? '');
     const node: AssistantMessage =
