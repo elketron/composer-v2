@@ -32,6 +32,7 @@
     "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.4",
     "@codemirror/view": "^6.43.11",
+    "@foblex/flow": "^19.1.7",
     "dagre": "^0.8.5",
     "diff2html": "^3.4.56",
     "lucide-angular": "^1.0.0",

@@ -1,10 +1,23 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { vi } from 'vitest';
+import { ComponentFixture, TestBed } from "@angular/core/testing";
+import {
+  FCreateConnectionEvent,
+  FMoveNodesEvent,
+  FSelectionChangeEvent,
+} from "@foblex/flow";
 
-import { FlowEditorComponent } from './flow-editor.component';
-import { parseFlow } from './flow-graph';
+import { FlowEditorComponent } from "./flow-editor.component";
+import { parseFlow } from "./flow-graph";
 
-describe('FlowEditorComponent', () => {
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+(globalThis as Record<string, unknown>)["ResizeObserver"] ??=
+  ResizeObserverStub;
+
+describe("FlowEditorComponent", () => {
   let emitted: string[];
 
   beforeEach(async () => {
@@ -16,10 +29,10 @@ describe('FlowEditorComponent', () => {
 
   function make(code: string): ComponentFixture<FlowEditorComponent> {
     const fixture = TestBed.createComponent(FlowEditorComponent);
-    fixture.componentRef.setInput('code', code);
+    fixture.componentRef.setInput("code", code);
     fixture.componentInstance.codeChange.subscribe((value) => {
       emitted.push(value);
-      fixture.componentRef.setInput('code', value);
+      fixture.componentRef.setInput("code", value);
     });
     fixture.autoDetectChanges();
     return fixture;
@@ -29,120 +42,129 @@ describe('FlowEditorComponent', () => {
     return fixture.nativeElement as HTMLElement;
   }
 
-  async function settled(fixture: ComponentFixture<FlowEditorComponent>): Promise<void> {
+  async function settled(
+    fixture: ComponentFixture<FlowEditorComponent>,
+  ): Promise<void> {
     await fixture.whenStable();
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
-  function pointer(type: string, x: number, y: number): Event {
-    return new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+  function selectNodes(
+    fixture: ComponentFixture<FlowEditorComponent>,
+    ...nodeIds: string[]
+  ): void {
+    const component = fixture.componentInstance as unknown as {
+      selectionChanged(event: FSelectionChangeEvent): void;
+    };
+    component.selectionChanged(new FSelectionChangeEvent(nodeIds, [], []));
   }
 
-  it('renders nodes from the code and lays out unpositioned ones', async () => {
-    const fixture = make('flowchart TD\nA[Draft] --> B{Review}');
+  it("renders parsed nodes through Foblex", async () => {
+    const fixture = make("flowchart TD\nA[Draft] --> B{Review}");
     await settled(fixture);
 
-    const nodes = [...el(fixture).querySelectorAll('.flow-node')];
-    expect(nodes.length).toBe(2);
-    // Dagre put them somewhere sensible: distinct, on-canvas positions.
-    const lefts = nodes.map((node) => Number((node as HTMLElement).style.left.replace('px', '')));
-    expect(lefts[0]).not.toBe(lefts[1]);
-    expect(el(fixture).querySelector('.flow-error')).toBeNull();
+    expect(el(fixture).querySelectorAll(".flow-node").length).toBe(2);
+    expect(el(fixture).querySelectorAll("f-connection").length).toBe(1);
+    expect(el(fixture).querySelector(".flow-error")).toBeNull();
   });
 
-  it('add node emits the new node and its position pin', async () => {
-    const fixture = make('flowchart TD\nA[Start]');
+  it("adds a node and persists its position", async () => {
+    const fixture = make("flowchart TD\nA[Start]");
     await settled(fixture);
 
-    el(fixture).querySelector<HTMLButtonElement>('.flow-toolbar .action')!.click();
+    el(fixture).querySelector<HTMLButtonElement>(".add-node")!.click();
     await settled(fixture);
 
-    expect(emitted.length).toBe(1);
-    expect(emitted[0]).toContain('B[New]');
-    expect(emitted[0]).toContain('%% composer: B');
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toContain("B[New]");
+    expect(emitted[0]).toContain("%% composer: node B");
   });
 
-  it('dragging a node moves it and emits the position on drop', async () => {
-    const fixture = make('flowchart TD\nA[Start] --> B[End]');
+  it("persists final positions emitted by Foblex", async () => {
+    const fixture = make("flowchart TD\nA[Start] --> B[End]");
+    await settled(fixture);
+    const component = fixture.componentInstance as unknown as {
+      moveItems(event: FMoveNodesEvent): void;
+    };
+
+    component.moveItems(
+      new FMoveNodesEvent([{ id: "A", position: { x: 315, y: 145 } }]),
+    );
     await settled(fixture);
 
-    const node = el(fixture).querySelector<HTMLElement>('.flow-node')!;
-    const before = Number(node.style.left.replace('px', ''));
-    const canvas = el(fixture).querySelector<HTMLElement>('.canvas')!;
-    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
-
-    node.dispatchEvent(pointer('pointerdown', before + 10, 10));
-    canvas.dispatchEvent(pointer('pointermove', before + 10 + 55, 10 + 40));
-    canvas.dispatchEvent(pointer('pointerup', before + 10 + 55, 10 + 40));
-    await settled(fixture);
-
-    const after = Number(node.style.left.replace('px', ''));
-    expect(after).toBe(before + 55);
-    expect(emitted.at(-1)).toContain(`%% composer: A ${before + 55},`);
+    expect(emitted.at(-1)).toContain("%% composer: node A 315,145");
   });
 
-  it('connecting two nodes emits the edge; dropping elsewhere does not', async () => {
-    const fixture = make('flowchart TD\nA[Start]\nB[End]');
+  it("creates connections from Foblex connector events", async () => {
+    const fixture = make("flowchart TD\nA[Start]\nB[End]");
+    await settled(fixture);
+    const component = fixture.componentInstance as unknown as {
+      createConnection(event: FCreateConnectionEvent): void;
+    };
+
+    component.createConnection(
+      new FCreateConnectionEvent("A:source", "B:target", { x: 200, y: 200 }),
+    );
     await settled(fixture);
 
-    const nodes = [...el(fixture).querySelectorAll<HTMLElement>('.flow-node')];
-    const canvas = el(fixture).querySelector<HTMLElement>('.canvas')!;
-    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
-    // jsdom has no elementFromPoint; the drop hit-test needs it.
-    Object.defineProperty(document, 'elementFromPoint', {
-      configurable: true,
-      writable: true,
-      value: () => null,
+    expect(parseFlow(emitted.at(-1)!).edges).toContainEqual({
+      from: "A",
+      to: "B",
+      label: "",
     });
-    const hit = vi.spyOn(document, 'elementFromPoint').mockReturnValue(nodes[1]!);
+  });
 
-    const source = nodes[0]!;
-    source.dispatchEvent(pointer('pointerdown', 40, 40)); // select + no-op drag start? handle below
-    // The handle starts the connection.
-    const handle = source.querySelector<HTMLElement>('.handle')!;
-    handle.dispatchEvent(pointer('pointerdown', 40, 40));
-    canvas.dispatchEvent(pointer('pointermove', 200, 200));
-    canvas.dispatchEvent(pointer('pointerup', 200, 200));
+  it("edits a node label, type, and description", async () => {
+    const fixture = make("flowchart TD\nA[Start]");
+    await settled(fixture);
+    selectNodes(fixture, "A");
     await settled(fixture);
 
-    // The edge exists in the emitted code (shapes ride undeclared nodes).
+    const host = el(fixture);
+    const values: Array<[string, string]> = [
+      [".label-field", "Gateway"],
+      [".type-field", "service"],
+      [".description-field", "Routes requests"],
+    ];
+    for (const [selector, value] of values) {
+      const input = host.querySelector<HTMLInputElement>(selector)!;
+      input.value = value;
+      input.dispatchEvent(new Event("input"));
+    }
+    await settled(fixture);
+
+    const node = parseFlow(emitted.at(-1)!).nodes[0]!;
+    expect(node).toMatchObject({
+      label: "Gateway",
+      type: "service",
+      description: "Routes requests",
+    });
+  });
+
+  it("groups the selected nodes and emits a Mermaid subgraph", async () => {
+    const fixture = make("flowchart TD\nA[Start] --> B[End]");
+    await settled(fixture);
+    selectNodes(fixture, "A", "B");
+
+    el(fixture).querySelector<HTMLButtonElement>(".add-group")!.click();
+    await settled(fixture);
+
     const graph = parseFlow(emitted.at(-1)!);
-    expect(graph.edges).toContainEqual({ from: 'A', to: 'B', label: '' });
-    expect(hit).toHaveBeenCalled();
-
-    // Dropping on nothing cancels quietly.
-    hit.mockReturnValue(null);
-    const handle2 = source.querySelector<HTMLElement>('.handle')!;
-    handle2.dispatchEvent(pointer('pointerdown', 40, 40));
-    canvas.dispatchEvent(pointer('pointerup', 5, 5));
-    await settled(fixture);
-    expect(emitted.length).toBe(1);
+    expect(graph.groups).toHaveLength(1);
+    expect(
+      graph.nodes.every((node) => node.groupId === graph.groups[0]!.id),
+    ).toBe(true);
+    expect(emitted.at(-1)).toContain('subgraph Group1["Group"]');
   });
 
-  it('relabeling a selected node rewrites its token', async () => {
-    const fixture = make('flowchart TD\nA[Start] --> B[End]');
+  it("shows unsupported syntax without changing the document", async () => {
+    const fixture = make("flowchart TD\nA -.-> B");
     await settled(fixture);
 
-    const node = el(fixture).querySelector<HTMLElement>('.flow-node')!;
-    node.dispatchEvent(pointer('pointerdown', 10, 10)); // select
-    await settled(fixture);
-
-    const input = el(fixture).querySelector<HTMLInputElement>('.field')!;
-    input.value = 'Kickoff';
-    input.dispatchEvent(new Event('input'));
-    await settled(fixture);
-
-    expect(emitted.at(-1)).toContain('A[Kickoff]');
-  });
-
-  it('a parse failure shows the error and keeps the canvas inert', async () => {
-    const fixture = make('flowchart TD\nA -.-> B');
-    await settled(fixture);
-
-    const error = el(fixture).querySelector('.flow-error');
-    expect(error).toBeTruthy();
-    expect(el(fixture).querySelector('.canvas')?.classList.contains('error')).toBe(true);
-    // No emission: the code is untouched by the refusal.
-    expect(emitted.length).toBe(0);
+    expect(el(fixture).querySelector(".flow-error")).toBeTruthy();
+    expect(
+      el(fixture).querySelector(".canvas")?.classList.contains("error"),
+    ).toBe(true);
+    expect(emitted).toHaveLength(0);
   });
 });

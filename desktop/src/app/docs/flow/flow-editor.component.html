@@ -1,18 +1,45 @@
 <div class="flow-shell">
   <div class="flow-toolbar">
-    <button type="button" class="action" (click)="addNode()">+ node</button>
-    <span class="toolbar-hint">drag nodes · drag a node's ➤ onto another to connect</span>
+    <button type="button" class="action add-node" (click)="addNode()">
+      + node
+    </button>
+    <button type="button" class="action add-group" (click)="addGroup()">
+      + group
+    </button>
+    <span class="toolbar-hint"
+      >drag nodes · drag a port to connect · shift-drag to select</span
+    >
+
     @if (selected(); as node) {
-      <span class="props">
+      <span class="props node-props">
         <input
           type="text"
-          class="field"
+          class="field label-field"
           autocomplete="off"
-          spellcheck="false"
           aria-label="node label"
+          placeholder="node name"
           [value]="node.label"
           (input)="relabel(labelInput.value)"
           #labelInput
+        />
+        <input
+          type="text"
+          class="field type-field"
+          autocomplete="off"
+          aria-label="node type"
+          placeholder="type, e.g. service"
+          [value]="node.type"
+          (input)="setType(typeInput.value)"
+          #typeInput
+        />
+        <input
+          type="text"
+          class="field description-field"
+          aria-label="node description"
+          placeholder="what does it do?"
+          [value]="node.description"
+          (input)="setDescription(descriptionInput.value)"
+          #descriptionInput
         />
         <button
           type="button"
@@ -20,22 +47,59 @@
           [class.active]="node.shape === 'rect'"
           title="box"
           (click)="reshape('rect')"
-        >▭</button>
+        >
+          ▭
+        </button>
         <button
           type="button"
           class="action shape"
           [class.active]="node.shape === 'round'"
           title="rounded"
           (click)="reshape('round')"
-        >◯</button>
+        >
+          ◯
+        </button>
         <button
           type="button"
           class="action shape"
           [class.active]="node.shape === 'diamond'"
           title="decision"
           (click)="reshape('diamond')"
-        >◇</button>
-        <button type="button" class="action danger" (click)="deleteSelectedNode()">delete node</button>
+        >
+          ◇
+        </button>
+        @if (node.groupId !== null) {
+          <button type="button" class="action" (click)="ungroupSelectedNodes()">
+            ungroup
+          </button>
+        }
+        <button
+          type="button"
+          class="action danger"
+          (click)="deleteSelectedNode()"
+        >
+          delete
+        </button>
+      </span>
+    } @else if (selectedGroup(); as group) {
+      <span class="props">
+        <input
+          type="text"
+          class="field"
+          autocomplete="off"
+          aria-label="group label"
+          placeholder="group name"
+          [value]="group.label"
+          (input)="relabelGroup(groupInput.value)"
+          #groupInput
+        />
+        <button
+          type="button"
+          class="action danger"
+          (click)="deleteSelectedGroup()"
+        >
+          delete group
+        </button>
       </span>
     } @else if (selectedEdge(); as edge) {
       <span class="props">
@@ -43,82 +107,126 @@
           type="text"
           class="field"
           autocomplete="off"
-          spellcheck="false"
-          placeholder="edge label"
           aria-label="edge label"
+          placeholder="connection label"
           [value]="edge.label"
-          (input)="relabelEdge(labelInput.value)"
-          #labelInput
+          (input)="relabelEdge(edgeInput.value)"
+          #edgeInput
         />
-        <button type="button" class="action danger" (click)="deleteSelectedEdge()">delete edge</button>
+        <button
+          type="button"
+          class="action danger"
+          (click)="deleteSelectedEdge()"
+        >
+          delete edge
+        </button>
       </span>
     }
   </div>
 
   @if (parseError(); as error) {
     <div class="state-error flow-error">
-      this diagram uses syntax the flow editor does not cover — edit it as code.
+      this diagram uses syntax the flow editor does not cover; edit it as code.
       <span class="detail">{{ error }}</span>
     </div>
   }
 
-  <div
+  <f-flow
     class="canvas"
     [class.error]="parseError() !== null"
-    (pointermove)="onPointerMove($event)"
-    (pointerup)="onPointerUp($event)"
-    (click)="clearSelection()"
+    fDraggable
+    [fDropToGroup]="true"
+    (fSelectionChange)="selectionChanged($event)"
+    (fMoveNodes)="moveItems($event)"
+    (fCreateConnection)="createConnection($event)"
+    (fDropToGroup)="droppedToGroup($event)"
   >
-    <svg class="wires">
-      <defs>
-        <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" class="arrow" />
-        </marker>
-      </defs>
-      @for (edge of edges(); track $index) {
-        @if (geometry(edge); as points) {
-          <path class="wire-hit" [attr.d]="line(points)" (click)="selectEdge($event, edge)" />
-          <path
-            class="wire"
-            [class.active]="selectedEdge() === edge"
-            [attr.d]="line(points)"
-            marker-end="url(#flow-arrow)"
-          />
-          @if (edge.label !== '') {
-            <text class="wire-label" [class.active]="selectedEdge() === edge" [attr.x]="(points.x1 + points.x2) / 2" [attr.y]="(points.y1 + points.y2) / 2 - 6">
-              {{ edge.label }}
-            </text>
-          }
-        }
-      }
-      @if (pendingGeometry(); as pending) {
-        <path class="wire pending" [attr.d]="line(pending)" />
-      }
-    </svg>
+    <f-selection-area />
+    <f-canvas fZoom>
+      <f-background>
+        <f-circle-pattern [radius]="22" color="rgba(194, 192, 182, 0.09)" />
+      </f-background>
 
-    @for (node of nodes(); track node.id) {
-      <div
-        class="flow-node"
-        [class.selected]="selectedNode() === node.id"
-        [class.rect]="node.shape === 'rect'"
-        [class.round]="node.shape === 'round'"
-        [class.diamond]="node.shape === 'diamond'"
-        [style.left.px]="node.x"
-        [style.top.px]="node.y"
-        [style.width.px]="node.w"
-        [style.height.px]="node.h"
-        [attr.data-node-id]="node.id"
-        (pointerdown)="startDrag(node, $event)"
-      >
-        <span class="node-label">{{ node.label }}</span>
-        <span
-          class="handle"
-          title="drag to connect"
-          (pointerdown)="startConnect(node, $event)"
-        >➤</span>
-      </div>
-    } @empty {
-      <p class="state-empty inline canvas-empty">add a node to start the flow</p>
+      @for (edge of edges(); track $index) {
+        <f-connection
+          [fConnectionId]="edgeId($index)"
+          [fSourceId]="sourceId(edge.from)"
+          [fTargetId]="targetId(edge.to)"
+          fType="bezier"
+          [fReassignDisabled]="true"
+        >
+          <f-connection-marker-arrow [type]="markerEnd" />
+          @if (edge.label !== "") {
+            <span fConnectionContent class="edge-label">{{ edge.label }}</span>
+          }
+        </f-connection>
+      }
+
+      @for (group of groups(); track group.id) {
+        <section
+          fGroup
+          fDragHandle
+          class="flow-group"
+          [fGroupId]="group.id"
+          [fGroupPosition]="{ x: group.x, y: group.y }"
+          [fGroupSize]="{ width: group.w, height: group.h }"
+          [fConnectOnNode]="false"
+          (fGroupSizeChange)="groupResized(group.id, $event)"
+        >
+          <span class="group-label">{{ group.label }}</span>
+        </section>
+      }
+
+      @for (node of nodes(); track node.id) {
+        <article
+          fNode
+          fDragHandle
+          class="flow-node"
+          [fNodeId]="node.id"
+          [fNodeParentId]="node.groupId"
+          [fNodePosition]="{ x: node.x, y: node.y }"
+          [fNodeSize]="{ width: node.w, height: node.h }"
+        >
+          <div
+            class="node-shape"
+            [class.rect]="node.shape === 'rect'"
+            [class.round]="node.shape === 'round'"
+            [class.diamond]="node.shape === 'diamond'"
+          ></div>
+          <div
+            fConnector
+            class="port target-port"
+            fConnectorType="target"
+            fConnectorConnectableSide="left"
+            [fConnectorId]="targetId(node.id)"
+          ></div>
+          <div class="node-copy">
+            @if (node.type !== "") {
+              <span class="node-type">{{ node.type }}</span>
+            }
+            <strong class="node-label">{{ node.label }}</strong>
+            @if (node.description !== "") {
+              <span class="node-description">{{ node.description }}</span>
+            }
+          </div>
+          <div
+            fConnector
+            class="port source-port"
+            fConnectorType="source"
+            fConnectorConnectableSide="right"
+            [fConnectorId]="sourceId(node.id)"
+          ></div>
+        </article>
+      }
+
+      <f-connection-for-create fType="bezier" />
+      <f-snap-connection fType="bezier" />
+    </f-canvas>
+
+    @if (nodes().length === 0 && groups().length === 0) {
+      <p class="state-empty inline canvas-empty">
+        add a node to start the diagram
+      </p>
     }
-  </div>
+  </f-flow>
 </div>

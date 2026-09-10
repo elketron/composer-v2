@@ -1,74 +1,73 @@
 import {
   ChangeDetectionStrategy,
   Component,
-  ElementRef,
   computed,
   effect,
-  inject,
   input,
   output,
   signal,
-} from '@angular/core';
+} from "@angular/core";
+import {
+  EFMarkerType,
+  FCreateConnectionEvent,
+  FDropToGroupEvent,
+  FFlowModule,
+  FMoveNodesEvent,
+  FSelectionChangeEvent,
+} from "@foblex/flow";
 
 import {
-  FlowDirection,
   FlowEdge,
+  FlowDirection,
+  FlowGroup,
   FlowNode,
   FlowParseError,
   FlowShape,
-  edgeGeometry,
   nextNodeId,
   nodeSize,
   parseFlow,
   serializeFlow,
-} from './flow-graph';
+} from "./flow-graph";
 
-/**
- * The flow editor (Phase 9 S31): a drag-and-drop canvas over the mermaid
- * flowchart subset. The `code` input is the fence's text; every canvas
- * change re-serializes and emits it — two-way with hand edits, positions
- * round-tripping through `%% composer:` comments. A parse failure shows
- * a visible error and leaves the code untouched: the editor refuses what
- * it cannot represent instead of mangling it.
- */
 @Component({
-  selector: 'app-flow-editor',
+  selector: "app-flow-editor",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  templateUrl: './flow-editor.component.html',
-  styleUrl: './flow-editor.component.scss',
+  imports: [FFlowModule],
+  templateUrl: "./flow-editor.component.html",
+  styleUrl: "./flow-editor.component.scss",
 })
 export class FlowEditorComponent {
-  /** The fence content this canvas edits. */
   readonly code = input.required<string>();
-
-  /** The re-serialized fence content after any canvas change. */
   readonly codeChange = output<string>();
-
-  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   protected readonly nodes = signal<FlowNode[]>([]);
   protected readonly edges = signal<FlowEdge[]>([]);
-  protected readonly direction = signal<FlowDirection>('TD');
+  protected readonly groups = signal<FlowGroup[]>([]);
   protected readonly parseError = signal<string | null>(null);
 
-  protected readonly selectedNode = signal<string | null>(null);
-  protected readonly selectedEdge = signal<FlowEdge | null>(null);
+  protected readonly selectedNodeIds = signal<string[]>([]);
+  protected readonly selectedGroupId = signal<string | null>(null);
   protected readonly selectedEdgeIndex = signal<number>(-1);
-
-  /** An in-flight connection: its source and the cursor's canvas point. */
-  protected readonly connecting = signal<{ from: string; x: number; y: number } | null>(null);
-
   protected readonly selected = computed(
-    () => this.nodes().find((node) => node.id === this.selectedNode()) ?? null,
+    () =>
+      this.nodes().find((node) => node.id === this.selectedNodeIds()[0]) ??
+      null,
   );
+  protected readonly selectedGroup = computed(
+    () =>
+      this.groups().find((group) => group.id === this.selectedGroupId()) ??
+      null,
+  );
+  protected readonly selectedEdge = computed(
+    () => this.edges()[this.selectedEdgeIndex()] ?? null,
+  );
+  protected readonly markerEnd = EFMarkerType.END;
 
+  private direction: FlowDirection = "TD";
   private lastEmitted: string | null = null;
-  private drag: { id: string; offsetX: number; offsetY: number; rect: DOMRect } | null = null;
   private emitQueued = false;
 
   constructor() {
-    // Re-parse when the parent feeds different code than what we emitted
-    // (hand edits, or the doc's other text changed the fence extraction).
     effect(() => {
       const code = this.code();
       if (code === this.lastEmitted) return;
@@ -81,238 +80,308 @@ export class FlowEditorComponent {
       const graph = parseFlow(code);
       this.nodes.set(graph.nodes);
       this.edges.set(graph.edges);
-      this.direction.set(graph.direction);
+      this.groups.set(graph.groups);
+      this.direction = graph.direction;
       this.parseError.set(null);
-      this.pruneSelection();
+      this.clearSelection();
     } catch (error) {
       const message =
-        error instanceof FlowParseError ? error.message : `diagram parse failed: ${String(error)}`;
+        error instanceof FlowParseError
+          ? error.message
+          : `diagram parse failed: ${String(error)}`;
       this.parseError.set(message);
     }
   }
 
-  private pruneSelection(): void {
-    if (this.selectedNode() !== null && !this.nodes().some((node) => node.id === this.selectedNode())) {
-      this.selectedNode.set(null);
-    }
-    if (this.selectedEdge() !== null && !this.edges().includes(this.selectedEdge()!)) {
-      this.selectedEdge.set(null);
-      this.selectedEdgeIndex.set(-1);
-    }
-  }
-
-  // ---- Mutations (each ends in emit) ----
-
   protected addNode(): void {
-    const id = nextNodeId(this.nodes().map((node) => node.id));
-    const size = nodeSize('New', 'rect');
-    const node: FlowNode = {
-      id,
-      label: 'New',
-      shape: 'rect',
-      x: 60 + ((this.nodes().length * 48) % 240),
-      y: 60 + ((this.nodes().length * 48) % 160),
-      ...size,
-    };
-    this.nodes.update((current) => [...current, node]);
-    this.selectedNode.set(id);
-    this.selectedEdge.set(null);
+    const id = nextNodeId([
+      ...this.nodes().map((node) => node.id),
+      ...this.groups().map((group) => group.id),
+    ]);
+    const label = "New";
+    this.nodes.update((current) => [
+      ...current,
+      {
+        id,
+        label,
+        type: "",
+        description: "",
+        groupId: null,
+        shape: "rect",
+        x: 60 + ((current.length * 48) % 240),
+        y: 60 + ((current.length * 48) % 160),
+        ...nodeSize(label, "rect"),
+      },
+    ]);
+    this.selectedNodeIds.set([id]);
+    this.selectedGroupId.set(null);
+    this.selectedEdgeIndex.set(-1);
     this.emit();
   }
 
-  protected selectNode(node: FlowNode): void {
-    this.selectedNode.set(node.id);
-    this.selectedEdge.set(null);
+  protected addGroup(): void {
+    const id = this.nextGroupId();
+    const children = this.nodes().filter((node) =>
+      this.selectedNodeIds().includes(node.id),
+    );
+    const fallback = 40 + ((this.groups().length * 36) % 180);
+    const left =
+      children.length > 0
+        ? Math.min(...children.map((node) => node.x)) - 28
+        : fallback;
+    const top =
+      children.length > 0
+        ? Math.min(...children.map((node) => node.y)) - 48
+        : fallback;
+    const right =
+      children.length > 0
+        ? Math.max(...children.map((node) => node.x + node.w)) + 28
+        : left + 320;
+    const bottom =
+      children.length > 0
+        ? Math.max(...children.map((node) => node.y + node.h)) + 28
+        : top + 200;
+    this.groups.update((current) => [
+      ...current,
+      { id, label: "Group", x: left, y: top, w: right - left, h: bottom - top },
+    ]);
+    if (children.length > 0) {
+      const childIds = new Set(children.map((node) => node.id));
+      this.nodes.update((current) =>
+        current.map((node) =>
+          childIds.has(node.id) ? { ...node, groupId: id } : node,
+        ),
+      );
+    }
+    this.selectedNodeIds.set([]);
+    this.selectedGroupId.set(id);
     this.selectedEdgeIndex.set(-1);
+    this.emit();
   }
 
-  protected selectEdge(event: Event, edge: FlowEdge): void {
-    event.stopPropagation();
-    this.selectedEdge.set(edge);
-    this.selectedEdgeIndex.set(this.edges().indexOf(edge));
-    this.selectedNode.set(null);
+  protected selectionChanged(event: FSelectionChangeEvent): void {
+    this.selectedNodeIds.set(event.nodeIds);
+    this.selectedGroupId.set(event.groupIds[0] ?? null);
+    const connectionId = event.connectionIds[0];
+    this.selectedEdgeIndex.set(
+      connectionId === undefined ? -1 : this.edgeIndex(connectionId),
+    );
   }
 
-  protected relabel(value: string): void {
-    const id = this.selectedNode();
-    if (id === null) return;
+  protected moveItems(event: FMoveNodesEvent): void {
+    const positions = new Map(
+      event.nodes.map((item) => [item.id, item.position]),
+    );
     this.nodes.update((current) =>
       current.map((node) => {
-        if (node.id !== id) return node;
-        const resized = { ...node, label: value, ...nodeSize(value, node.shape) };
-        return resized;
+        const position = positions.get(node.id);
+        return position === undefined
+          ? node
+          : { ...node, x: position.x, y: position.y };
+      }),
+    );
+    this.groups.update((current) =>
+      current.map((group) => {
+        const position = positions.get(group.id);
+        return position === undefined
+          ? group
+          : { ...group, x: position.x, y: position.y };
       }),
     );
     this.emit();
   }
 
-  protected reshape(shape: FlowShape): void {
-    const id = this.selectedNode();
-    if (id === null) return;
-    this.nodes.update((current) =>
-      current.map((node) =>
-        node.id === id ? { ...node, shape, ...nodeSize(node.label, shape) } : node,
+  protected groupResized(
+    id: string,
+    rect: { x: number; y: number; width: number; height: number },
+  ): void {
+    this.groups.update((current) =>
+      current.map((group) =>
+        group.id === id
+          ? { ...group, x: rect.x, y: rect.y, w: rect.width, h: rect.height }
+          : group,
       ),
     );
     this.emit();
   }
 
+  protected droppedToGroup(event: FDropToGroupEvent): void {
+    const ids = new Set(event.nodeIds);
+    this.nodes.update((current) =>
+      current.map((node) =>
+        ids.has(node.id) ? { ...node, groupId: event.targetGroupId } : node,
+      ),
+    );
+    this.emit();
+  }
+
+  protected createConnection(event: FCreateConnectionEvent): void {
+    if (event.targetId === undefined) return;
+    const from = this.nodeIdFromConnector(event.sourceId);
+    const to = this.nodeIdFromConnector(event.targetId);
+    if (
+      from === to ||
+      !this.nodes().some((node) => node.id === from) ||
+      !this.nodes().some((node) => node.id === to)
+    )
+      return;
+    if (this.edges().some((edge) => edge.from === from && edge.to === to))
+      return;
+    this.edges.update((current) => [...current, { from, to, label: "" }]);
+    this.selectedNodeIds.set([]);
+    this.selectedGroupId.set(null);
+    this.selectedEdgeIndex.set(this.edges().length - 1);
+    this.emit();
+  }
+
+  protected relabel(value: string): void {
+    this.updateSelectedNode((node) => ({
+      ...node,
+      label: value,
+      ...nodeSize(value, node.shape),
+    }));
+  }
+
+  protected setType(value: string): void {
+    this.updateSelectedNode((node) => ({ ...node, type: value }));
+  }
+
+  protected setDescription(value: string): void {
+    this.updateSelectedNode((node) => ({ ...node, description: value }));
+  }
+
+  protected reshape(shape: FlowShape): void {
+    this.updateSelectedNode((node) => ({
+      ...node,
+      shape,
+      ...nodeSize(node.label, shape),
+    }));
+  }
+
   protected relabelEdge(value: string): void {
-    const edge = this.selectedEdge();
-    if (edge === null) return;
+    const index = this.selectedEdgeIndex();
+    if (index < 0) return;
     this.edges.update((current) =>
-      current.map((candidate) =>
-        candidate === edge ? { ...candidate, label: value } : candidate,
+      current.map((edge, edgeIndex) =>
+        edgeIndex === index ? { ...edge, label: value } : edge,
+      ),
+    );
+    this.emit();
+  }
+
+  protected relabelGroup(value: string): void {
+    const id = this.selectedGroupId();
+    if (id === null) return;
+    this.groups.update((current) =>
+      current.map((group) =>
+        group.id === id ? { ...group, label: value } : group,
       ),
     );
     this.emit();
   }
 
   protected deleteSelectedNode(): void {
-    const id = this.selectedNode();
-    if (id === null) return;
-    this.nodes.update((current) => current.filter((node) => node.id !== id));
-    this.edges.update((current) => current.filter((edge) => edge.from !== id && edge.to !== id));
-    this.selectedNode.set(null);
+    const ids = new Set(this.selectedNodeIds());
+    if (ids.size === 0) return;
+    this.nodes.update((current) => current.filter((node) => !ids.has(node.id)));
+    this.edges.update((current) =>
+      current.filter((edge) => !ids.has(edge.from) && !ids.has(edge.to)),
+    );
+    this.clearSelection();
     this.emit();
   }
 
   protected deleteSelectedEdge(): void {
-    const edge = this.selectedEdge();
-    if (edge === null) return;
-    this.edges.update((current) => current.filter((candidate) => candidate !== edge));
-    this.selectedEdge.set(null);
-    this.selectedEdgeIndex.set(-1);
-    this.emit();
-  }
-
-  protected clearSelection(): void {
-    this.selectedNode.set(null);
-    this.selectedEdge.set(null);
-    this.selectedEdgeIndex.set(-1);
-  }
-
-  // ---- Geometry for the template ----
-
-  protected line(points: { x1: number; y1: number; x2: number; y2: number }): string {
-    return `M ${points.x1} ${points.y1} L ${points.x2} ${points.y2}`;
-  }
-
-  protected geometry(edge: FlowEdge): { x1: number; y1: number; x2: number; y2: number } | null {
-    const from = this.nodes().find((node) => node.id === edge.from);
-    const to = this.nodes().find((node) => node.id === edge.to);
-    if (from === undefined || to === undefined) return null;
-    return edgeGeometry(from, to);
-  }
-
-  protected pendingGeometry(): { x1: number; y1: number; x2: number; y2: number } | null {
-    const pending = this.connecting();
-    if (pending === null) return null;
-    const from = this.nodes().find((node) => node.id === pending.from);
-    if (from === undefined) return null;
-    return edgeGeometry(from, {
-      ...from,
-      x: pending.x - from.w / 2,
-      y: pending.y - from.h / 2,
-    });
-  }
-
-  // ---- Pointer gestures ----
-
-  protected startDrag(node: FlowNode, event: PointerEvent): void {
-    if (this.connecting() !== null) return;
-    event.stopPropagation();
-    this.selectNode(node);
-    const rect = this.canvasRect();
-    this.drag = {
-      id: node.id,
-      offsetX: event.clientX - rect.left - node.x,
-      offsetY: event.clientY - rect.top - node.y,
-      rect,
-    };
-    this.capture(event);
-  }
-
-  protected startConnect(node: FlowNode, event: PointerEvent): void {
-    event.stopPropagation();
-    const rect = this.canvasRect();
-    this.connecting.set({
-      from: node.id,
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    });
-    this.capture(event);
-  }
-
-  protected onPointerMove(event: PointerEvent): void {
-    const pending = this.connecting();
-    if (pending !== null) {
-      const rect = this.canvasRect();
-      this.connecting.set({ ...pending, x: event.clientX - rect.left, y: event.clientY - rect.top });
-      return;
-    }
-    const drag = this.drag;
-    if (drag === null) return;
-    const x = Math.max(0, event.clientX - drag.rect.left - drag.offsetX);
-    const y = Math.max(0, event.clientY - drag.rect.top - drag.offsetY);
-    this.nodes.update((current) =>
-      current.map((node) => (node.id === drag.id ? { ...node, x, y } : node)),
+    const index = this.selectedEdgeIndex();
+    if (index < 0) return;
+    this.edges.update((current) =>
+      current.filter((_, edgeIndex) => edgeIndex !== index),
     );
-  }
-
-  protected onPointerUp(event: PointerEvent): void {
-    const pending = this.connecting();
-    if (pending !== null) {
-      this.connecting.set(null);
-      const target = document
-        .elementFromPoint(event.clientX, event.clientY)
-        ?.closest<HTMLElement>('.flow-node');
-      const id = target?.dataset['nodeId'];
-      if (id !== undefined && id !== pending.from && this.nodes().some((node) => node.id === id)) {
-        this.addEdge(pending.from, id);
-      }
-      return;
-    }
-    if (this.drag !== null) {
-      this.drag = null;
-      this.emit(); // Positions live in the fence comments.
-    }
-  }
-
-  private addEdge(from: string, to: string): void {
-    const exists = this.edges().some((edge) => edge.from === from && edge.to === to);
-    if (exists) return;
-    this.edges.update((current) => [...current, { from, to, label: '' }]);
-    this.selectedEdge.set(this.edges().at(-1)!);
-    this.selectedEdgeIndex.set(this.edges().length - 1);
-    this.selectedNode.set(null);
+    this.clearSelection();
     this.emit();
   }
 
-  private capture(event: PointerEvent): void {
-    const canvas = this.host.nativeElement.querySelector('.canvas') as HTMLElement | null;
-    if (canvas !== null && typeof canvas.setPointerCapture === 'function') {
-      canvas.setPointerCapture(event.pointerId);
+  protected deleteSelectedGroup(): void {
+    const id = this.selectedGroupId();
+    if (id === null) return;
+    this.groups.update((current) => current.filter((group) => group.id !== id));
+    this.nodes.update((current) =>
+      current.map((node) =>
+        node.groupId === id ? { ...node, groupId: null } : node,
+      ),
+    );
+    this.clearSelection();
+    this.emit();
+  }
+
+  protected ungroupSelectedNodes(): void {
+    const ids = new Set(this.selectedNodeIds());
+    this.nodes.update((current) =>
+      current.map((node) =>
+        ids.has(node.id) ? { ...node, groupId: null } : node,
+      ),
+    );
+    this.emit();
+  }
+
+  protected edgeId(index: number): string {
+    return `edge-${index}`;
+  }
+
+  protected sourceId(nodeId: string): string {
+    return `${nodeId}:source`;
+  }
+
+  protected targetId(nodeId: string): string {
+    return `${nodeId}:target`;
+  }
+
+  private updateSelectedNode(update: (node: FlowNode) => FlowNode): void {
+    const id = this.selectedNodeIds()[0];
+    if (id === undefined) return;
+    this.nodes.update((current) =>
+      current.map((node) => (node.id === id ? update(node) : node)),
+    );
+    this.emit();
+  }
+
+  private clearSelection(): void {
+    this.selectedNodeIds.set([]);
+    this.selectedGroupId.set(null);
+    this.selectedEdgeIndex.set(-1);
+  }
+
+  private edgeIndex(id: string): number {
+    const index = Number(id.replace(/^edge-/, ""));
+    return Number.isInteger(index) ? index : -1;
+  }
+
+  private nodeIdFromConnector(id: string): string {
+    return id.replace(/:(?:source|target)$/, "");
+  }
+
+  private nextGroupId(): string {
+    const ids = new Set([
+      ...this.nodes().map((node) => node.id),
+      ...this.groups().map((group) => group.id),
+    ]);
+    for (let index = 1; index < 10_000; index += 1) {
+      const candidate = `Group${index}`;
+      if (!ids.has(candidate)) return candidate;
     }
+    return `Group${Date.now()}`;
   }
-
-  private canvasRect(): DOMRect {
-    const canvas = this.host.nativeElement.querySelector('.canvas');
-    return (canvas as HTMLElement | null)?.getBoundingClientRect() ?? new DOMRect(0, 0, 0, 0);
-  }
-
-  // ---- Emission ----
 
   private emit(): void {
     if (this.emitQueued) return;
     this.emitQueued = true;
-    // Coalesce the update signals of one gesture into one emission.
     queueMicrotask(() => {
       this.emitQueued = false;
       const serialized = serializeFlow({
-        direction: this.direction(),
+        direction: this.direction,
         nodes: this.nodes(),
         edges: this.edges(),
+        groups: this.groups(),
       });
       this.lastEmitted = serialized;
       this.codeChange.emit(serialized);
