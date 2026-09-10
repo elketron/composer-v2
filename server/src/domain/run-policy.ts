@@ -29,7 +29,7 @@ export class RunPolicy {
     if (this.board.activeRun(cardId) !== undefined) {
       throw new CommandRejection('runActive', `Card ${cardId} already has a running pipeline`);
     }
-    if (pipeline.isTerminalStep(this.board.requireCard(cardId).stepId)) {
+    if (pipeline.isTerminalLane(this.board.requireCard(cardId).laneId)) {
       throw new CommandRejection('invalidCommand', `Card ${cardId} is completed — reopen it to run again`);
     }
   }
@@ -85,8 +85,8 @@ export class RunPolicy {
   /** The human-readable transition an outcome rule drives (the tool result's teaching line). */
   outcomeTransitionText(run: Run, rule: StepOutcomeRule): string {
     const pipeline = this.board.pipelineOfRun(run);
-    return rule.toStepId !== undefined
-      ? `the card returns to ${pipeline?.stepById(rule.toStepId)?.label ?? rule.toStepId} when the step finishes`
+    return rule.toLaneId !== undefined
+      ? `the card returns to ${pipeline?.laneLabel(rule.toLaneId) ?? rule.toLaneId} when the step finishes`
       : 'the pipeline proceeds when the step finishes';
   }
 }

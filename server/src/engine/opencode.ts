@@ -22,6 +22,7 @@ import type {
   AgentTurnEvent,
   AgentTurnOutcome,
   AgentTurnSpec,
+  FileObservation,
 } from './types.js';
 
 export interface OpenCodeEngineOptions {
@@ -99,6 +100,9 @@ export class OpenCodeEngine implements AgentEngine {
       let stdoutTail = '';
       const parts = new Map<string, TextReducer>();
       const tools = new Map<string, ToolReducer>();
+      // The turn's edited files (cumulative; edit/write tool calls announce
+      // their path on completion — the run view's diff list reads these).
+      const edited = new Map<string, FileObservation>();
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
       }, spec.timeoutMs > 0 ? spec.timeoutMs : this.defaultTimeoutMs);
@@ -123,7 +127,7 @@ export class OpenCodeEngine implements AgentEngine {
           if (event.sessionID !== undefined && engineSessionId === undefined) {
             engineSessionId = event.sessionID;
           }
-          handleEvent(event, parts, tools, onEvent);
+          handleEvent(event, parts, tools, onEvent, edited);
         }
       });
       child.stderr.setEncoding('utf8');
@@ -164,9 +168,10 @@ function handleEvent(
   parts: Map<string, TextReducer>,
   tools: Map<string, ToolReducer>,
   onEvent: (event: AgentTurnEvent) => void,
+  edited: Map<string, FileObservation>,
 ): void {
   if (event.type === 'tool_use') {
-    handleToolUse(event, tools, onEvent);
+    handleToolUse(event, tools, onEvent, edited);
     return;
   }
   if (event.type !== 'text') return;
@@ -192,12 +197,15 @@ function handleEvent(
 /**
  * tool_use parts arrive repeatedly as the tool runs (pending → running →
  * completed with input/output post-hoc). The call is announced once; the
- * result once, when the state settles.
+ * result once, when the state settles. A completed edit/write call adds
+ * its file to the turn's cumulative observation (the stats stay empty —
+ * the runner fills them from git).
  */
 function handleToolUse(
   event: WireEvent,
   tools: Map<string, ToolReducer>,
   onEvent: (event: AgentTurnEvent) => void,
+  edited: Map<string, FileObservation>,
 ): void {
   const part = event.part;
   const callId = part?.callID ?? part?.id;
@@ -221,6 +229,18 @@ function handleToolUse(
   )) {
     onEvent(turn);
   }
+  if (status !== 'completed' || (part.tool !== 'edit' && part.tool !== 'write')) return;
+  const path = editedPath(part.state?.input);
+  if (path === undefined || edited.has(path)) return;
+  edited.set(path, { path, additions: 0, deletions: 0 });
+  onEvent({ kind: 'files', files: [...edited.values()] });
+}
+
+/** The file path an edit/write tool call targets (defensive on the input shape). */
+function editedPath(input: unknown): string | undefined {
+  if (typeof input !== 'object' || input === null) return undefined;
+  const candidate = (input as Record<string, unknown>)['filePath'] ?? (input as Record<string, unknown>)['path'];
+  return typeof candidate === 'string' && candidate.trim() !== '' ? candidate.trim() : undefined;
 }
 
 /** One JSON line, or null (banner output and blank lines are skipped). */

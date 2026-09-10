@@ -21,6 +21,15 @@ export interface RuntimeStepCatalogEntry {
   description: string;
 }
 
+/** A sidebar group the pipeline editor organizes pipelines under. */
+export interface PipelineCategoryCatalogEntry {
+  /** The category a pipeline references (`category` on the wire). */
+  id: string;
+  label: string;
+  /** A short, read-only description shown in the editor. */
+  description: string;
+}
+
 export const PIPELINE_AGENTS: readonly PipelineAgentCatalogEntry[] = [
   {
     id: 'coder',
@@ -44,7 +53,53 @@ export const PIPELINE_AGENTS: readonly PipelineAgentCatalogEntry[] = [
   },
 ];
 
+export const PIPELINE_CATEGORIES: readonly PipelineCategoryCatalogEntry[] = [
+  {
+    id: 'coding',
+    label: 'Coding',
+    description: 'Implementation, review, and delivery of code changes.',
+  },
+  {
+    id: 'documentation',
+    label: 'Documentation',
+    description: 'Writing and maintaining project docs.',
+  },
+  {
+    id: 'research',
+    label: 'Research',
+    description: 'Investigation and comparison work.',
+  },
+  {
+    id: 'release',
+    label: 'Release',
+    description: 'Versioning, changelogs, and shipping.',
+  },
+  {
+    id: 'infrastructure',
+    label: 'Infrastructure',
+    description: 'Environments, tooling, and operations.',
+  },
+];
+
 export const RUNTIME_STEPS: readonly RuntimeStepCatalogEntry[] = [
+  {
+    id: 'create-branch',
+    label: 'Create branch',
+    command: 'git switch -c composer-change',
+    description: 'Checkout to a new branch.',
+  },
+  {
+    id: 'create-worktree',
+    label: 'Create worktree',
+    command: 'git worktree add ../composer-worktree -b composer-change',
+    description: 'Create a linked working tree on a new branch.',
+  },
+  {
+    id: 'open-pr',
+    label: 'Open pull request',
+    command: 'gh pr create --fill',
+    description: 'Open a pull request for the current branch (gh).',
+  },
   {
     id: 'run-tests',
     label: 'Run tests',
@@ -68,17 +123,5 @@ export const RUNTIME_STEPS: readonly RuntimeStepCatalogEntry[] = [
     label: 'Type-check',
     command: 'pnpm typecheck',
     description: 'Run the type checker.',
-  },
-  {
-    id: 'create-branch',
-    label: 'Create branch',
-    command: 'git switch -c composer-change',
-    description: 'Create and switch to a new branch.',
-  },
-  {
-    id: 'create-worktree',
-    label: 'Create worktree',
-    command: 'git worktree add ../composer-worktree -b composer-change',
-    description: 'Create a linked working tree on a new branch.',
   },
 ];

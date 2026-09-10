@@ -334,7 +334,7 @@ function pipelineInventory(bus: Bus, projectId: string): string {
   return [...pipelines.values()]
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((pipeline) => {
-      const lanes = pipeline.steps.filter((step) => step.boardVisible).map((step) => `${step.id}: ${step.label}`);
+      const lanes = pipeline.lanes.filter((lane) => lane.kanbanVisible).map((lane) => `${lane.id}: ${lane.label}`);
       return `- ${pipeline.id}: ${pipeline.name} [${lanes.join(', ')}]`;
     })
     .join('\n');

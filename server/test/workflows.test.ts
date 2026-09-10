@@ -87,7 +87,7 @@ async function worker(
 async function startRun(): Promise<void> {
   expect(
     await action({ type: 'start', on: 'pipeline', body: { cardId: 'T-1' } }),
-  ).toEqual({ status: 200, json: { ok: true } });
+  ).toEqual({ status: 200, json: { ok: true, runId: 'R-1' } });
   for (let i = 0; i < 400; i++) {
     const started = await worker('workflow_start_recording', {
       title: 'probe',
@@ -230,28 +230,32 @@ describe('the outcome tool end to end', () => {
         on: 'pipeline',
         body: {
           name: 'review only',
+          lanes: [
+            { id: 'ln-1', label: 'New', kanbanVisible: true },
+            { id: 'ln-2', label: 'Review', kanbanVisible: true },
+            { id: 'ln-3', label: 'Done', kanbanVisible: true, terminal: true },
+          ],
           steps: [
-            { id: 'st-1', kind: 'command', boardVisible: true, command: 'true', description: 'New' },
+            { id: 'st-1', kind: 'command', laneId: 'ln-1', command: 'true', description: 'New' },
             {
               id: 'st-2',
               kind: 'agent',
-              boardVisible: true,
+              laneId: 'ln-2',
               agentKind: 'reviewer',
               instructions: 'Review the card.',
-              outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStepId: 'st-1' }],
+              outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toLaneId: 'ln-1' }],
               requiresOutcome: true,
             },
-            { id: 'st-3', kind: 'human', boardVisible: true, terminal: true },
           ],
         },
       }),
-    ).toEqual({ status: 200, json: { ok: true } });
+    ).toEqual({ status: 200, json: { ok: true, pipelineId: 'PL-2' } });
     expect(
       await action({ type: 'update', on: 'card', body: { id: 'T-1', pipelineId: 'PL-2' } }),
     ).toEqual({ status: 200, json: { ok: true } });
     expect(await action({ type: 'start', on: 'pipeline', body: { cardId: 'T-1' } })).toEqual({
       status: 200,
-      json: { ok: true },
+      json: { ok: true, runId: 'R-1' },
     });
 
     // The reviewer reports through the real route (poll until its session
@@ -272,8 +276,8 @@ describe('the outcome tool end to end', () => {
 
     // The turn finishes; the runner applies the outcome (move, then end).
     releaseTurn?.();
-    const moved = await stream.until((frame) => frame['eventType'] === 'cardStepMoved');
-    expect((moved?.['body'] as { toStepId: string }).toStepId).toBe('st-1');
+    const moved = await stream.until((frame) => frame['eventType'] === 'cardLaneMoved');
+    expect((moved?.['body'] as { toLaneId: string }).toLaneId).toBe('ln-1');
     const ended = await stream.until((frame) => frame['eventType'] === 'pipelineRunEnded');
     const body = ended?.['body'] as { status: string; outcome?: string; feedback?: string; error?: string };
     expect(body.status).toBe('returned');

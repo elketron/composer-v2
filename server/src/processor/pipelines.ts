@@ -9,7 +9,7 @@ import { RunPolicy } from '../domain/run-policy.js';
 import type { Run } from '../domain/run.js';
 import { nowIso } from '../wire/envelope.js';
 import type { CommandOutcome } from '../wire/commands.js';
-import type { Pipeline as PipelineJson, PipelineStep as PipelineStepJson } from '../wire/models.js';
+import type { Pipeline as PipelineJson, PipelineLane as PipelineLaneJson, PipelineStep as PipelineStepJson } from '../wire/models.js';
 import { PIPELINE_AGENT_KINDS } from '../agents/names.js';
 import { command, allocateId, ok, rejected, toRejection, type CommandMap } from './helpers.js';
 import type { Processor } from './index.js';
@@ -26,9 +26,11 @@ export async function savePipeline(p: Processor, scope: string | undefined, pipe
     if (scope === undefined || !p.bus.state.projects.has(scope)) {
       return rejected('unknownProject', `Unknown project ${scope ?? ''}`);
     }
+    let lanes: PipelineLaneJson[];
     let steps: PipelineStepJson[];
+    let category: string | undefined;
     try {
-      steps = validateDraft(pipeline);
+      ({ category, lanes, steps } = validateDraft(pipeline));
     } catch (error) {
       return toRejection(error);
     }
@@ -38,26 +40,28 @@ export async function savePipeline(p: Processor, scope: string | undefined, pipe
     if (current !== undefined && sameDefinition(current, pipeline, name)) {
       return ok();
     }
-    const nextStepIds = new Set(steps.map((step) => step.id));
+    const nextLaneIds = new Set(lanes.map((lane) => lane.id));
     const stranded = [...p.cardsOf(scope).values()].find(
-      (card) => card.pipelineId === id && !nextStepIds.has(card.stepId),
+      (card) => card.pipelineId === id && !nextLaneIds.has(card.laneId),
     );
     if (stranded !== undefined) {
       return rejected(
         'invalidCommand',
-        `Pipeline ${id} cannot remove occupied step ${stranded.stepId}; move or reassign its cards first`,
+        `Pipeline ${id} cannot remove occupied lane ${stranded.laneId}; move or reassign its cards first`,
       );
     }
     const saved: PipelineJson = {
       id,
       projectId: scope,
       name,
+      ...(category !== undefined ? { category } : {}),
       revision: (current?.revision ?? 0) + 1,
+      lanes,
       steps,
       updatedAt: nowIso(),
     };
     await p.bus.publish(scope, 'pipelineSaved', { pipeline: saved });
-    return ok();
+    return { ok: true, pipelineId: id };
   }
 
   /**

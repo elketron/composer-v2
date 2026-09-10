@@ -3,17 +3,18 @@
 // (the coder's are v1's), the step's outcome brief (S36), and the step
 // ordering the drive loop uses to skip ahead.
 
-import type { Card, Pipeline, PipelineStep } from '../wire/models.js';
+import type { Pipeline, PipelineStep } from '../domain/pipeline.js';
+import type { Card } from '../wire/models.js';
 
-/** A step's forward order in its pipeline (absent = last, so unknown steps never skip ahead). */
-export function stepOrderOf(pipeline: Pipeline, stepId: string): number {
-  const index = pipeline.steps.findIndex((step) => step.id === stepId);
-  return index >= 0 ? index : pipeline.steps.length;
+/** A lane's forward order in its pipeline (absent = last, so unknown lanes never skip ahead). */
+export function laneOrderOf(pipeline: Pipeline, laneId: string): number {
+  const index = pipeline.lanes.findIndex((lane) => lane.id === laneId);
+  return index >= 0 ? index : pipeline.lanes.length;
 }
 
 /** The worker's brief: the card is the work order; the runtime's own tools are the surface. */
 export function promptFor(agentKind: string, card: Card, step: PipelineStep, outcomeBrief?: string): string {
-  const instructions = step.instructions?.trim() !== '' ? step.instructions!.trim() : defaultInstructionOf(agentKind);
+  const instructions = step.instructions?.trim() ? step.instructions.trim() : defaultInstructionOf(agentKind);
   const blockers =
     card.blockedBy.length > 0 ? `\n\nBlockers (already satisfied): ${card.blockedBy.join(', ')}` : '';
   const feedback =
@@ -46,8 +47,8 @@ export function outcomeBriefOf(pipeline: Pipeline, step: PipelineStep | undefine
   if (rules.length === 0) return undefined;
   const lines = rules.map((rule) => {
     const target =
-      rule.toStepId !== undefined
-        ? `the card returns to ${stepLabel(pipeline.steps.find((candidate) => candidate.id === rule.toStepId)) ?? rule.toStepId}`
+      rule.toLaneId !== undefined
+        ? `the card returns to ${pipeline.laneLabel(rule.toLaneId)}`
         : 'the pipeline proceeds to the next step';
     return `- ${rule.outcome} — ${target}`;
   });
@@ -58,20 +59,6 @@ export function outcomeBriefOf(pipeline: Pipeline, step: PipelineStep | undefine
       ? 'This step requires the call: a finished turn without it fails the step.'
       : 'The call is optional: a finished turn without it proceeds.',
   ].join('\n');
-}
-
-/** The swimlane/lane name a step shows (terminal done, agent kind, …). */
-function stepLabel(step: PipelineStep | undefined): string | undefined {
-  if (step === undefined) return undefined;
-  if (step.terminal === true) return 'done';
-  switch (step.kind) {
-    case 'agent':
-      return step.agentKind?.trim() || 'agent';
-    case 'command':
-      return step.description?.trim() || 'command';
-    case 'human':
-      return 'approval';
-  }
 }
 
 function defaultInstructionOf(agentKind: string): string {

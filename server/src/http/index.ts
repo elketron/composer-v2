@@ -21,9 +21,11 @@ import { registerDocsRoutes } from './docs.js';
 import { type HttpDeps } from './deps.js';
 import { registerEventsRoute } from './events.js';
 import { registerHealth } from './health.js';
+import { registerJustfileRoutes } from './justfile.js';
 import { registerKnowledgeRoutes } from './knowledge.js';
 import { registerMcpRoutes } from './mcp.js';
 import { registerSettingsRoutes } from './settings.js';
+import { registerSessionRoutes } from './sessions.js';
 import { registerWorkflowRoutes } from './workflows.js';
 
 export function router(
@@ -43,7 +45,9 @@ export function router(
   registerDocsRoutes(app, deps);
   registerWorkflowRoutes(app, deps);
   registerKnowledgeRoutes(app, deps);
+  registerJustfileRoutes(app, deps);
   registerSettingsRoutes(app, deps);
+  registerSessionRoutes(app, deps);
   registerActionRoute(app, deps);
   registerEventsRoute(app, deps);
   registerMcpRoutes(app, deps);

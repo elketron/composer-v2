@@ -38,7 +38,7 @@
   <div class="snippet">{{ card().description }}</div>
 
   @if (hiddenStepLabel(); as hidden) {
-    <div class="hidden-stage" title="execution is inside a hidden step">
+    <div class="hidden-stage" title="the run's current step">
       <lucide-icon [img]="icons.hidden" [size]="11" />
       {{ hidden }}
     </div>

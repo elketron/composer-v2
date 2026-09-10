@@ -51,16 +51,14 @@ export class BoardCardComponent {
   protected readonly pipeline = computed(() => this.pipelines.pipelineById(this.card().pipelineId));
 
   /**
-   * Execution inside a hidden step: the card stays in its previous visible
-   * swimlane and this line shows where the run actually is. While a run
-   * works the card, the running step is the one that may be hidden; idle
-   * cards fall back to their own position.
+   * The step the run is executing (a multi-step lane may hold several): a
+   * small "working on …" line while a run works the card.
    */
   protected readonly hiddenStepLabel = computed(() => {
+    const run = this.run();
     const pipeline = this.pipeline();
-    if (pipeline === undefined) return null;
-    const stepId = this.run()?.stepId ?? this.card().stepId;
-    return pipeline.hiddenStepLabel(stepId);
+    if (run === undefined || pipeline === undefined || run.stepId === undefined) return null;
+    return pipeline.stepById(run.stepId)?.label ?? null;
   });
 
   protected readonly runLabel = computed(() => runLabel(this.run()));

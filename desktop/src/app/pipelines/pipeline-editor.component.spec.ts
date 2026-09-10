@@ -7,18 +7,34 @@ import {
   wireEvent,
 } from '../core/events/events-client.fake';
 import { ConfirmService } from '../core/confirm/confirm.service';
+import { RestClient } from '../core/rest';
 import { ShellService } from '../shell/shell.service';
 import { PipelineEditorComponent } from './pipeline-editor.component';
 import { PipelineService } from './pipeline.service';
 
 describe('PipelineEditorComponent', () => {
   let events: FakeEventsClient;
+  let restCalls: string[];
+  let restResponse: { ok: boolean; body: unknown } | null;
 
   beforeEach(async () => {
     events = new FakeEventsClient();
+    restCalls = [];
+    restResponse = null;
     await TestBed.configureTestingModule({
       imports: [PipelineEditorComponent],
-      providers: [provideFakeEventsClient(events)],
+      providers: [
+        provideFakeEventsClient(events),
+        {
+          provide: RestClient,
+          useValue: {
+            get: (path: string) => {
+              restCalls.push(path);
+              return Promise.resolve(restResponse);
+            },
+          },
+        },
+      ],
     }).compileComponents();
     TestBed.inject(PipelineService);
     seedProject(events, 'P-1');
@@ -58,11 +74,15 @@ describe('PipelineEditorComponent', () => {
           projectId: 'P-1',
           name,
           revision: 2,
+          lanes: [
+            { id: 'ln-1', label: 'coder', kanbanVisible: true },
+            { id: 'ln-2', label: 'Approval', kanbanVisible: true },
+            { id: 'ln-3', label: 'done', kanbanVisible: true, terminal: true },
+          ],
           steps: [
-            { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement the card.' },
-            { id: 'st-2', kind: 'command', boardVisible: false, command: 'npm test', description: 'Run tests' },
-            { id: 'st-3', kind: 'human', boardVisible: true, description: 'Approval' },
-            { id: 'st-4', kind: 'human', boardVisible: true, terminal: true },
+            { id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder', instructions: 'Implement the card.' },
+            { id: 'st-2', kind: 'command', laneId: 'ln-1', command: 'npm test', description: 'Run tests' },
+            { id: 'st-3', kind: 'human', laneId: 'ln-2', description: 'Approval' },
           ],
           updatedAt: new Date().toISOString(),
         },
@@ -72,18 +92,43 @@ describe('PipelineEditorComponent', () => {
 
   async function openEditor(fixture: ComponentFixture<PipelineEditorComponent>): Promise<void> {
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .mini')!.click();
+    el.querySelector<HTMLButtonElement>('.side-item')!.click();
     await fixture.whenStable();
   }
 
-  it('lists pipelines with a step summary', async () => {
-    seedPipeline();
-    const fixture = await render();
-    const row = (fixture.nativeElement as HTMLElement).querySelector('.row')!;
+  async function newPipeline(fixture: ComponentFixture<PipelineEditorComponent>): Promise<void> {
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelector<HTMLButtonElement>('.side-head .icon')!.click();
+    await fixture.whenStable();
+  }
 
-    expect(row.textContent).toContain('Standard coding card');
-    expect(row.textContent).toContain('PL-1');
-    expect(row.textContent).toContain('coder → Run tests → approval → done');
+  it('groups pipelines by category in the sidebar', async () => {
+    seedPipeline();
+    events.emit(
+      wireEvent('pipelineSaved', {
+        pipeline: {
+          id: 'PL-2',
+          projectId: 'P-1',
+          name: 'Doc pass',
+          category: 'documentation',
+          revision: 1,
+          lanes: [
+            { id: 'ln-1', label: 'writer', kanbanVisible: true },
+            { id: 'ln-2', label: 'done', kanbanVisible: true, terminal: true },
+          ],
+          steps: [{ id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder' }],
+          updatedAt: new Date().toISOString(),
+        },
+      }),
+    );
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    const groups = [...el.querySelectorAll('.side-group')];
+    expect(groups).toHaveLength(2);
+    expect(groups[0]!.querySelector('.side-group-label')?.textContent?.trim()).toBe('Documentation');
+    expect(groups[0]!.querySelector('.side-item .item-name')?.textContent?.trim()).toBe('Doc pass');
+    expect(groups[1]!.querySelector('.side-group-label')?.textContent?.trim()).toBe('General');
+    expect(groups[1]!.textContent).toContain('Standard coding card');
   });
 
   it('renders the pipeline as a linear diagram of step nodes', async () => {
@@ -99,12 +144,43 @@ describe('PipelineEditorComponent', () => {
       'approval',
       'done',
     ]);
+    expect([...el.querySelectorAll('.node-kind')].map((node) => node.textContent?.trim())).toEqual([
+      'Agent',
+      'Set',
+      'Approval',
+      'Completion',
+    ]);
     expect([...el.querySelectorAll('.node-stage')].map((node) => node.textContent?.trim())).toEqual([
-      'swimlane',
-      'hidden',
-      'swimlane',
+      'Lane',
+      'Hidden',
+      'Lane',
       'done',
     ]);
+  });
+
+  it('offers the step-type palette from add step and inserts the picked preset', async () => {
+    seedPipeline();
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    await openEditor(fixture);
+
+    el.querySelector<HTMLButtonElement>('.add-node')!.click();
+    await fixture.whenStable();
+
+    const columns = [...el.querySelectorAll('.palette .palette-title')].map((node) => node.textContent?.trim());
+    expect(columns).toEqual(['Agent step', 'Approval step', 'Set step', 'Completion step']);
+
+    const reviewer = [...el.querySelectorAll<HTMLButtonElement>('.palette-item')].find(
+      (item) => item.querySelector('.palette-item-label')?.textContent?.trim() === 'reviewer',
+    );
+    expect(reviewer).toBeDefined();
+    reviewer!.click();
+    await fixture.whenStable();
+
+    const draft = (
+      fixture.componentInstance as unknown as { editing: () => { steps: readonly { agentKind: string }[] } }
+    ).editing();
+    expect(draft.steps[draft.steps.length - 2]).toMatchObject({ kind: 'agent', agentKind: 'reviewer' });
   });
 
   it('opens the side panel with the selected node settings', async () => {
@@ -116,19 +192,18 @@ describe('PipelineEditorComponent', () => {
     el.querySelectorAll<HTMLButtonElement>('.node-select')[0]!.click();
     await fixture.whenStable();
 
-    expect(el.querySelector('.panel .panel-title')?.textContent).toContain('step 1');
+    expect(el.querySelector('.panel .panel-title')?.textContent).toContain('Step 1');
+    expect(el.querySelector('.panel .panel-title')?.textContent).toContain('coder');
     expect(el.querySelector<HTMLSelectElement>('.field.agent select')!.value).toBe('coder');
     expect(el.querySelector<HTMLInputElement>('.flag input[type="checkbox"]')!.checked).toBe(true);
-    // An agent step selects a predefined agent; it no longer exposes a
-    // free-form instructions field (the agent owns its instructions).
-    expect(el.querySelector<HTMLTextAreaElement>('.field textarea')).toBeNull();
+    // The General tab carries the agent step's instructions field.
+    expect(el.querySelector<HTMLTextAreaElement>('.field textarea')).not.toBeNull();
   });
 
   it('authors and saves a new pipeline from the diagram and side panel', async () => {
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.new')!.click();
-    await fixture.whenStable();
+    await newPipeline(fixture);
 
     await type(fixture, el.querySelector<HTMLInputElement>('.edit-bar input.name')!, 'Quick fix');
     el.querySelector<HTMLButtonElement>('.node-select')!.click();
@@ -145,10 +220,9 @@ describe('PipelineEditorComponent', () => {
             {
               id: 'st-1',
               kind: 'agent',
-              boardVisible: true,
+              laneId: 'ln-1',
               agentKind: 'coder',
             },
-            { id: 'st-2', kind: 'human', boardVisible: true, terminal: true },
           ],
         },
       },
@@ -192,6 +266,8 @@ describe('PipelineEditorComponent', () => {
 
     el.querySelectorAll<HTMLButtonElement>('.node-select')[0]!.click();
     await fixture.whenStable();
+    el.querySelectorAll<HTMLButtonElement>('.panel-tab')[1]!.click();
+    await fixture.whenStable();
     el.querySelector<HTMLButtonElement>('.add-outcome')!.click();
     await fixture.whenStable();
     await type(fixture, el.querySelector<HTMLInputElement>('.outcome-rule input')!, 'rework');
@@ -212,18 +288,22 @@ describe('PipelineEditorComponent', () => {
           projectId: 'P-1',
           name: 'review loop',
           revision: 1,
+          lanes: [
+            { id: 'ln-1', label: 'coder', kanbanVisible: true },
+            { id: 'ln-2', label: 'reviewer', kanbanVisible: true },
+            { id: 'ln-3', label: 'done', kanbanVisible: true, terminal: true },
+          ],
           steps: [
-            { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder' },
+            { id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder' },
             {
               id: 'st-2',
               kind: 'agent',
-              boardVisible: true,
+              laneId: 'ln-2',
               agentKind: 'reviewer',
-              outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toStepId: 'st-1' }],
+              outcomes: [{ outcome: 'approved' }, { outcome: 'changes_requested', toLaneId: 'ln-1' }],
               requiresOutcome: true,
-              errorReturnToStepId: 'st-1',
+              errorReturnToLaneId: 'ln-1',
             },
-            { id: 'st-3', kind: 'human', boardVisible: true, terminal: true },
           ],
           updatedAt: new Date().toISOString(),
         },
@@ -233,17 +313,19 @@ describe('PipelineEditorComponent', () => {
     const el = fixture.nativeElement as HTMLElement;
     await openEditor(fixture);
 
-    const nodes = [...el.querySelectorAll('.diagram .node')];
-    const routes = [...nodes[1]!.querySelectorAll('.node-route')];
-    expect(routes).toHaveLength(2);
-    expect(routes[0]!.textContent).toContain('changes_requested');
-    expect(routes[0]!.textContent).toContain('→');
-    expect(routes[0]!.textContent).toContain('coder');
-    expect(routes[1]!.classList).toContain('failure');
-    expect(routes[0]!.classList).not.toContain('failure');
+    const chips = [...el.querySelectorAll('.diagram .route-chip')];
+    expect(chips).toHaveLength(2);
+    expect(chips[0]!.textContent).toContain('changes_requested');
+    expect(chips[0]!.classList).toContain('failure');
+    expect(chips[1]!.textContent).toContain('failure');
+    expect(chips[1]!.classList).toContain('failure');
+    const edges = [...el.querySelectorAll('.diagram .route-edge')];
+    expect(edges).toHaveLength(2);
+    expect(edges[0]!.getAttribute('marker-end')).toBe('url(#route-arrow-err)');
+    expect(edges[1]!.getAttribute('marker-end')).toBe('url(#route-arrow-err)');
   });
 
-  it('separates presentation, execution, outcomes, and failure into groups', async () => {
+  it('separates step type, execution, board, and error recovery in the General tab', async () => {
     seedPipeline();
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
@@ -253,14 +335,13 @@ describe('PipelineEditorComponent', () => {
     await fixture.whenStable();
 
     const labels = [...el.querySelectorAll('.panel .group-label')].map((node) => node.textContent?.trim());
-    expect(labels).toEqual(['presentation', 'execution', 'outcomes', 'on failure']);
+    expect(labels).toEqual(['step type', 'execution', 'board', 'on execution error']);
   });
 
   it('shows validation only after save and resets it for the next draft', async () => {
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.new')!.click();
-    await fixture.whenStable();
+    await newPipeline(fixture);
     expect(el.querySelector('.edit-error')).toBeNull();
 
     el.querySelector<HTMLButtonElement>('.edit-bar .save')!.click();
@@ -268,7 +349,7 @@ describe('PipelineEditorComponent', () => {
     expect(el.querySelector('.edit-error')?.textContent).toContain('Pipeline name is required');
     el.querySelector<HTMLButtonElement>('.edit-bar .back')!.click();
     await fixture.whenStable();
-    el.querySelector<HTMLButtonElement>('.new')!.click();
+    await newPipeline(fixture);
     await fixture.whenStable();
     expect(el.querySelector('.edit-error')).toBeNull();
   });
@@ -277,8 +358,7 @@ describe('PipelineEditorComponent', () => {
     seedProject(events, 'P-2');
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.new')!.click();
-    await fixture.whenStable();
+    await newPipeline(fixture);
     const staleSave = el.querySelector<HTMLButtonElement>('.edit-bar .save')!;
     const component = fixture.componentInstance as unknown as {
       editing: () => { projectId: string } | null;
@@ -298,7 +378,11 @@ describe('PipelineEditorComponent', () => {
     seedPipeline();
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
-    el.querySelector<HTMLButtonElement>('.row .row-actions .danger')!.click();
+    await openEditor(fixture);
+
+    el.querySelector<HTMLButtonElement>('.edit-bar .overflow')!.click();
+    await fixture.whenStable();
+    el.querySelector<HTMLButtonElement>('.menu-item.danger')!.click();
     await fixture.whenStable();
     expect(events.lastCommand('requestPipelineDelete')).toBeUndefined();
 
@@ -307,5 +391,63 @@ describe('PipelineEditorComponent', () => {
     expect(events.lastCommand('requestPipelineDelete')).toMatchObject({
       requestPipelineDelete: { pipelineId: 'PL-1' },
     });
+  });
+
+  it('picks a category in the settings tab and saves it', async () => {
+    seedPipeline();
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    await openEditor(fixture);
+
+    el.querySelectorAll<HTMLButtonElement>('.editor-tabs .tab')[1]!.click();
+    await fixture.whenStable();
+    await select(fixture, el.querySelector<HTMLSelectElement>('.settings select')!, 'research');
+    el.querySelector<HTMLButtonElement>('.edit-bar .save')!.click();
+    await fixture.whenStable();
+
+    expect(events.lastCommand('requestPipelineSave')?.requestPipelineSave?.pipeline).toMatchObject({
+      id: 'PL-1',
+      name: 'Standard coding card',
+      category: 'research',
+    });
+  });
+
+  it('offers the project justfile recipes as palette presets and inspector recipes', async () => {
+    seedPipeline();
+    restCalls = [];
+    restResponse = { ok: true, body: { recipes: [{ name: 'check', description: 'Run the checks' }] } };
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+    await openEditor(fixture);
+
+    expect(restCalls).toContain('/justfile?projectId=P-1');
+
+    // The Set step palette column carries the recipe as a preset.
+    el.querySelector<HTMLButtonElement>('.add-node')!.click();
+    await fixture.whenStable();
+    const preset = [...el.querySelectorAll<HTMLButtonElement>('.palette-item')].find(
+      (item) => item.querySelector('.palette-item-label')?.textContent?.trim() === 'just check',
+    );
+    expect(preset).toBeDefined();
+    preset!.click();
+    await fixture.whenStable();
+
+    const component = fixture.componentInstance as unknown as {
+      editing: () => { steps: readonly { command?: string; description?: string }[] };
+    };
+    expect(component.editing().steps[component.editing().steps.length - 2]).toMatchObject({
+      kind: 'command',
+      command: 'just check',
+      description: 'check',
+    });
+
+    // The command step's inspector lists the recipes for a re-pick.
+    const justLabel = [...el.querySelectorAll('.panel label.field')].find(
+      (label) => label.querySelector('.field-label')?.textContent?.trim() === 'justfile recipe',
+    );
+    const justSelect = justLabel?.querySelector('select');
+    expect(justSelect).not.toBeNull();
+    await select(fixture, justSelect!, 'check');
+    expect(component.editing().steps[component.editing().steps.length - 2]?.command).toBe('just check');
   });
 });

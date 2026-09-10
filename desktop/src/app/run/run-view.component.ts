@@ -1,15 +1,18 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ElementRef, viewChild } from '@angular/core';
+import { DomSanitizer, type SafeHtml } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { LucideAngularModule, ArrowLeft, Bot, Square, Wrench } from 'lucide-angular';
 import { interval } from 'rxjs';
+import { html as diffHtml, parse as diffParse } from 'diff2html';
 
 import { RunProgress, RunOutcome, runElapsed } from '../core/models/pipeline.models';
 import { Card } from '../core/models/board.models';
 import { RunTranscriptEntry, PipelineService } from '../pipelines/pipeline.service';
 import { BoardService } from '../board/board.service';
 import { ShellService } from '../shell/shell.service';
+import { RestClient } from '../core/rest';
 
 /**
  * The run view (design mock 2026-09-05): a full page for one card's
@@ -30,6 +33,8 @@ export class RunViewComponent {
   private readonly pipelines = inject(PipelineService);
   private readonly router = inject(Router);
   private readonly shell = inject(ShellService);
+  private readonly rest = inject(RestClient);
+  private readonly sanitizer = inject(DomSanitizer);
 
   /** The route param (also set directly in specs). */
   readonly cardId = input.required<string>();
@@ -80,6 +85,51 @@ export class RunViewComponent {
   protected readonly sessionUsage = computed(() => this.session()?.usage);
   protected readonly sessionFiles = computed(() => this.session()?.files ?? []);
 
+  /** The expanded file's row (one diff open at a time). */
+  protected readonly expandedFile = signal<string | null>(null);
+
+  /** The expanded file's patch: null while loading, '' when unavailable. */
+  protected readonly filePatch = signal<string | null>(null);
+
+  /** The expanded file's rendered diff (diff2html markup, trusted). */
+  protected readonly fileDiffMarkup = computed<SafeHtml | null>(() => {
+    const patch = this.filePatch();
+    if (patch === null || patch === '') return null;
+    try {
+      return this.sanitizer.bypassSecurityTrustHtml(
+        diffHtml(diffParse(patch), { outputFormat: 'line-by-line', drawFileList: false, matching: 'lines' }),
+      );
+    } catch {
+      return null;
+    }
+  });
+
+  /** Toggles a file's working-tree diff (fetched on demand, always fresh). */
+  protected async toggleFile(path: string): Promise<void> {
+    if (this.expandedFile() === path) {
+      this.expandedFile.set(null);
+      this.filePatch.set(null);
+      return;
+    }
+    this.expandedFile.set(path);
+    this.filePatch.set(null);
+    const sessionId = this.sessionId();
+    const projectId = this.shell.activeTabId();
+    if (sessionId === undefined || projectId === null) {
+      this.filePatch.set('');
+      return;
+    }
+    const response = await this.rest.get<{ files: readonly { path: string; patch: string }[] }>(
+      `/sessions/${sessionId}/diff?projectId=${projectId}`,
+    );
+    if (this.expandedFile() !== path) return;
+    if (response === null || !response.ok) {
+      this.filePatch.set('');
+      return;
+    }
+    this.filePatch.set(response.body.files.find((file) => file.path === path)?.patch ?? '');
+  }
+
   protected readonly transcript = computed<readonly RunTranscriptEntry[]>(() =>
     this.pipelines.transcriptFor(this.sessionId()),
   );
@@ -98,12 +148,10 @@ export class RunViewComponent {
     const cardState = this.card();
     const pipeline = this.runPipelineOf();
     if (cardState === undefined || pipeline === undefined) return [];
-    return pipeline.steps
-      .filter((step) => !step.terminal)
-      .map((step) => ({
-        step,
-        status: cardState.stepStates[step.id] ?? 'pending',
-      }));
+    return pipeline.steps.map((step) => ({
+      step,
+      status: cardState.stepStates[step.id] ?? 'pending',
+    }));
   });
 
   protected readonly toolCount = computed(

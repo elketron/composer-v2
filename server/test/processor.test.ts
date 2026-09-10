@@ -49,7 +49,7 @@ function blankCard(projectId: string, type: CardType, title: string, blockedBy: 
     description: '',
     tags: [],
     pipelineId: '',
-    stepId: '',
+    laneId: '',
     blockedBy,
     stepStates: {},
     createdAt: '',
@@ -58,12 +58,13 @@ function blankCard(projectId: string, type: CardType, title: string, blockedBy: 
 }
 
 /**
- * The seeded default pipeline's steps:
- * coder → build → test → review → approval → done.
+ * The seeded default pipeline's lanes and steps:
+ * Implementation → Review → Approval → Done, with steps coder/build/test
+ * (Implementation), review (Review), approval (Approval).
  */
-const STEPS = ['st-1', 'st-2', 'st-3', 'st-4', 'st-5', 'st-6'] as const;
-const FIRST = 'st-1';
-const DONE = 'st-6';
+const STEPS = ['st-1', 'st-2', 'st-3', 'st-4', 'st-5'] as const;
+const FIRST = 'ln-1';
+const DONE = 'ln-4';
 
 function pipelineOf(projectId: string, pipelineId = 'PL-1'): Pipeline {
   const pipeline = bus.state.byProject.get(projectId)?.pipelines.get(pipelineId);
@@ -111,15 +112,16 @@ describe('project commands', () => {
     expect(pipeline.id).toBe('PL-1');
     expect(pipeline.revision).toBe(1);
     expect(pipeline.steps.map((step) => step.id)).toEqual([...STEPS]);
-    expect(pipeline.steps[0]?.boardVisible).toBe(true);
-    expect(pipeline.steps.at(-1)?.terminal).toBe(true);
+    expect(pipeline.lanes.map((lane) => lane.id)).toEqual(['ln-1', 'ln-2', 'ln-3', 'ln-4']);
+    expect(pipeline.lanes[0]?.kanbanVisible).toBe(true);
+    expect(pipeline.lanes.at(-1)?.terminal).toBe(true);
     // The Review step carries the shipped outcome rules (S36).
     expect(pipeline.steps[3]?.outcomes).toEqual([
       { outcome: 'approved' },
-      { outcome: 'changes_requested', toStepId: 'st-1' },
+      { outcome: 'changes_requested', toLaneId: 'ln-1' },
     ]);
     expect(pipeline.steps[3]?.requiresOutcome).toBe(true);
-    expect(pipeline.steps.map((step) => step.kind)).toEqual(['agent', 'command', 'command', 'agent', 'human', 'human']);
+    expect(pipeline.steps.map((step) => step.kind)).toEqual(['agent', 'command', 'command', 'agent', 'human']);
     expect(pipeline.steps[3]?.agentKind).toBe('reviewer');
   });
 
@@ -306,11 +308,11 @@ describe('card commands', () => {
     return card;
   }
 
-  function move(cardId: string, toStepId: string, override = false, comment?: string) {
+  function move(cardId: string, toLaneId: string, override = false, comment?: string) {
     return processor.execute(projectId, {
-      type: 'requestCardStepMove',
+      type: 'requestCardLaneMove',
       cardId,
-      toStepId,
+      toLaneId,
       override,
       ...(comment !== undefined ? { comment } : {}),
     });
@@ -322,7 +324,7 @@ describe('card commands', () => {
     expect(first).toBe('T-1');
     expect(second).toBe('T-2');
     expect(card(first).pipelineId).toBe('PL-1');
-    expect(card(first).stepId).toBe(FIRST);
+    expect(card(first).laneId).toBe(FIRST);
     expect(card(first).stepStates).toEqual({});
   });
 
@@ -365,25 +367,25 @@ describe('card commands', () => {
   it('step_move_validates_the_step_and_blockers', async () => {
     const blocker = await createCard('blocker', 'coding');
     const blocked = await createCard('blocked', 'coding', [blocker]);
-    const rejectedMove = await move(blocked, 'st-2', false);
+    const rejectedMove = await move(blocked, 'ln-2', false);
     expect(rejectedMove).toEqual({
       ok: false,
       rejection: { code: 'blocked', message: `Card ${blocked} has unsatisfied blockers` },
     });
 
-    const forced = await move(blocked, 'st-2', true);
+    const forced = await move(blocked, 'ln-2', true);
     expect(forced).toEqual({ ok: true });
-    expect(card(blocked).stepId).toBe('st-2');
+    expect(card(blocked).laneId).toBe('ln-2');
 
-    const unknownStep = await move(blocked, 'st-99');
-    expect(unknownStep).toEqual({
+    const unknownLane = await move(blocked, 'ln-99');
+    expect(unknownLane).toEqual({
       ok: false,
-      rejection: { code: 'unknownStep', message: "Step 'st-99' is not a step of pipeline PL-1" },
+      rejection: { code: 'unknownLane', message: "Lane 'ln-99' is not a lane of pipeline PL-1" },
     });
   });
 
   it('step_move_rejects_unknown_cards_and_no_ops_on_the_same_step', async () => {
-    const unknown = await move('T-99', 'st-2');
+    const unknown = await move('T-99', 'ln-2');
     expect(unknown).toEqual({
       ok: false,
       rejection: { code: 'unknownCard', message: 'Unknown card T-99' },
@@ -404,7 +406,7 @@ describe('card commands', () => {
       pipelineId: 'PL-1',
       revision: 1,
     });
-    const locked = await move(id, 'st-2');
+    const locked = await move(id, 'ln-2');
     expect(locked).toEqual({
       ok: false,
       rejection: { code: 'runActive', message: `Card ${id} has an active pipeline run` },
@@ -416,23 +418,23 @@ describe('card commands', () => {
       revision: 1,
       status: 'cancelled',
     });
-    expect((await move(id, 'st-2')).ok).toBe(true);
+    expect((await move(id, 'ln-2')).ok).toBe(true);
   });
 
   it('the_move_comment_records_the_rejection_comment', async () => {
     const id = await createCard('rejected', 'coding');
-    await move(id, 'st-2');
-    await move(id, 'st-4');
-    await move(id, 'st-2', false, 'needs tests');
+    await move(id, 'ln-2');
+    await move(id, DONE);
+    await move(id, 'ln-2', false, 'needs tests');
     expect(card(id).rejectionComment).toBe('needs tests');
   });
 
   it('blocker_reaching_the_terminal_step_unblocks_dependents', async () => {
     const blocker = await createCard('blocker', 'coding');
     const blocked = await createCard('blocked', 'coding', [blocker]);
-    expect(card(blocked).blockedBy.some((id) => card(id).stepId !== DONE)).toBe(true);
+    expect(card(blocked).blockedBy.some((id) => card(id).laneId !== DONE)).toBe(true);
 
-    await move(blocker, 'st-2');
+    await move(blocker, 'ln-2');
     await move(blocker, DONE);
     const deps = recorded
       .filter((frame) => frame.eventType === 'dependencyStateChanged')
@@ -443,7 +445,7 @@ describe('card commands', () => {
 
   it('pipeline_assign_places_the_card_in_the_first_step', async () => {
     const id = await createCard('traveller', 'coding');
-    await move(id, 'st-3');
+    await move(id, 'ln-3');
 
     const unknown = await processor.execute(projectId, {
       type: 'requestCardPipelineAssign',
@@ -463,9 +465,12 @@ describe('card commands', () => {
         projectId,
         name: 'Docs pass',
         revision: 0,
+        lanes: [
+          { id: 'd-ln-1', label: 'Writing', kanbanVisible: true },
+          { id: 'd-ln-2', label: 'Done', kanbanVisible: true, terminal: true },
+        ],
         steps: [
-          { id: 'd-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Write.' },
-          { id: 'd-2', kind: 'human', boardVisible: true, terminal: true },
+          { id: 'd-1', kind: 'agent', laneId: 'd-ln-1', agentKind: 'coder', instructions: 'Write.' },
         ],
         updatedAt: '',
       },
@@ -480,7 +485,7 @@ describe('card commands', () => {
     expect(assigned.ok).toBe(true);
     expect(recorded.at(-1)?.eventType).toBe('cardPipelineAssigned');
     expect(card(id).pipelineId).toBe('PL-2');
-    expect(card(id).stepId).toBe('d-1');
+    expect(card(id).laneId).toBe('d-ln-1');
   });
 
   it('reopen_returns_a_completed_card_to_the_first_step', async () => {
@@ -498,12 +503,12 @@ describe('card commands', () => {
 
     const result = await processor.execute(projectId, { type: 'requestCardReopen', cardId: id });
     expect(result.ok).toBe(true);
-    expect(card(id).stepId).toBe(FIRST);
+    expect(card(id).laneId).toBe(FIRST);
   });
 
   it('type_change_resets_step_states_and_keeps_the_step', async () => {
     const id = await createCard('switching', 'coding');
-    await move(id, 'st-3');
+    await move(id, 'ln-3');
     await processor.execute(projectId, {
       type: 'requestStepStateUpdate',
       cardId: id,
@@ -521,7 +526,7 @@ describe('card commands', () => {
     expect(changed?.body).toMatchObject({ cardId: id, from: 'coding' });
 
     expect(card(id).type).toBe('design');
-    expect(card(id).stepId).toBe('st-3');
+    expect(card(id).laneId).toBe('ln-3');
     expect(card(id).stepStates).toEqual({});
   });
 
@@ -609,28 +614,28 @@ describe('card commands', () => {
     const result = await processor.execute(projectId, {
       type: 'requestAutomationToggle',
       pipelineId: 'PL-1',
-      stepId: 'st-2',
+      laneId: 'ln-2',
       on: false,
     });
     expect(result.ok).toBe(true);
-    expect(bus.state.byProject.get(projectId)?.automation.get('PL-1')?.get('st-2')).toBe(false);
-    expect(bus.state.byProject.get(projectId)?.automation.get('PL-1')?.get('st-1')).toBeUndefined();
+    expect(bus.state.byProject.get(projectId)?.automation.get('PL-1')?.get('ln-2')).toBe(false);
+    expect(bus.state.byProject.get(projectId)?.automation.get('PL-1')?.get('ln-1')).toBeUndefined();
 
-    const unknownStep = await processor.execute(projectId, {
+    const unknownLane = await processor.execute(projectId, {
       type: 'requestAutomationToggle',
       pipelineId: 'PL-1',
-      stepId: 'st-99',
+      laneId: 'ln-99',
       on: false,
     });
-    expect(unknownStep).toEqual({
+    expect(unknownLane).toEqual({
       ok: false,
-      rejection: { code: 'unknownStep', message: "Step 'st-99' is not a step of pipeline PL-1" },
+      rejection: { code: 'unknownLane', message: "Lane 'ln-99' is not a lane of pipeline PL-1" },
     });
 
     const noScope = await processor.execute(undefined, {
       type: 'requestAutomationToggle',
       pipelineId: 'PL-1',
-      stepId: 'st-2',
+      laneId: 'ln-2',
       on: false,
     });
     expect(noScope).toEqual({

@@ -3,16 +3,14 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 import { LucideAngularModule } from 'lucide-angular';
 
 import { Card } from '../core/models/board.models';
-import { Pipeline, PipelineStep } from '../core/models/pipeline.models';
+import { Pipeline, PipelineLane } from '../core/models/pipeline.models';
 import { BoardCardComponent } from './board-card.component';
 import { BoardService } from './board.service';
 
 /**
- * The board: one column per board-visible step of the selected pipeline
- * (Phase 10). A card's column is the last board-visible step at or before
- * its step — a hidden-step task stays in its previous visible swimlane
- * while its card shows the hidden step and the current step. Every step's
- * swimlane carries its automation toggle.
+ * The board: one column per kanban-visible lane of the selected pipeline
+ * (Phase 10). A card's column is its assigned lane. Every lane carries its
+ * automation toggle.
  */
 @Component({
   selector: 'app-board-columns',
@@ -30,24 +28,19 @@ export class BoardColumnsComponent {
 
   protected readonly columns = computed(() => this.pipeline().columns());
 
-  /** A card's swimlane: the last board-visible step at or before its step. */
-  protected columnOf(card: Card): string | undefined {
-    return this.pipeline().visibleStepOf(card.stepId);
+  protected cardsIn(column: PipelineLane): readonly Card[] {
+    return this.cards().filter((card) => card.laneId === column.id);
   }
 
-  protected cardsIn(column: PipelineStep): readonly Card[] {
-    return this.cards().filter((card) => this.columnOf(card) === column.id);
-  }
-
-  protected automationOn(column: PipelineStep): boolean {
+  protected automationOn(column: PipelineLane): boolean {
     return this.board.automation().isOn(this.pipeline().id, column.id);
   }
 
-  protected toggleAutomation(column: PipelineStep): void {
+  protected toggleAutomation(column: PipelineLane): void {
     void this.board.toggleAutomation(this.pipeline().id, column.id);
   }
 
-  protected onDrop(event: CdkDragDrop<PipelineStep>): void {
+  protected onDrop(event: CdkDragDrop<PipelineLane>): void {
     if (event.previousContainer === event.container) return;
     const card = event.item.data as Card;
     void this.board.requestMove(card.id, event.container.data.id);

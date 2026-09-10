@@ -6,276 +6,517 @@
     </header>
     <p class="state-empty inline">open a project first</p>
   </div>
-} @else if (editing(); as draft) {
-  <div class="editor">
-    <header class="edit-bar">
-      <button class="tool back" (click)="cancel()" title="back to pipelines">
-        <lucide-icon [img]="icons.back" [size]="14" />
-        back
-      </button>
-      <input
-        class="name"
-        type="text"
-        placeholder="pipeline name"
-        [ngModel]="draft.name"
-        (ngModelChange)="updateName($event)"
-      />
-      <button class="tool save" (click)="save()">
-        <lucide-icon [img]="icons.save" [size]="13" />
-        save
-      </button>
-    </header>
+} @else {
+  <div class="page">
+    <aside class="sidebar" aria-label="pipelines">
+      <header class="side-head">
+        <span class="side-title">Pipelines</span>
+        <button class="icon" (click)="newPipeline()" title="new pipeline">
+          <lucide-icon [img]="icons.plus" [size]="13" />
+        </button>
+      </header>
 
-    @if (showError() && validationError(); as invalid) {
-      <p class="edit-error" role="alert">{{ invalid }}</p>
-    } @else if (draft.rejection; as rejection) {
-      <p class="edit-error" role="alert">{{ rejection }}</p>
-    }
-
-    <div class="edit-body">
-      <section class="diagram" aria-label="pipeline steps">
-        <div class="flow">
-          @for (step of draft.steps; track step.id; let si = $index) {
-            <div class="node" [class.selected]="selectedStepId() === step.id" [class.invalid]="showError()" [class.terminal]="step.terminal">
-              <button type="button" class="node-select" (click)="selectStep(si)">
-                <span class="node-index">{{ si + 1 }}</span>
-                <lucide-icon class="node-icon" [img]="step.terminal ? icons.done : stepIcon(step.kind)" [size]="15" />
-                <span class="node-main">
-                  <span class="node-label">{{ nodeLabel(step) }}</span>
-                  <span class="node-detail">{{ nodeDetail(step) }}</span>
-                </span>
-                @if (step.terminal) {
-                  <span class="node-stage done">done</span>
-                } @else if (step.boardVisible) {
-                  <span class="node-stage">swimlane</span>
-                } @else {
-                  <span class="node-stage hidden">hidden</span>
-                }
+      <div class="side-scroll">
+        @if (sidebarGroups().length === 0) {
+          <p class="state-empty inline">no pipelines yet — author the first one</p>
+        }
+        @for (group of sidebarGroups(); track group.id) {
+          <section class="side-group">
+            <header class="side-group-head">
+              <lucide-icon [img]="group.icon" [size]="12" />
+              <span class="side-group-label">{{ group.label }}</span>
+              <span class="side-group-count">{{ group.pipelines.length }}</span>
+            </header>
+            @for (pipeline of group.pipelines; track pipeline.id) {
+              <button
+                class="side-item"
+                [class.active]="isActive(pipeline.id)"
+                (click)="openPipeline(pipeline)"
+                [title]="pipeline.id"
+              >
+                <span class="item-name">{{ pipeline.name }}</span>
+                <span class="item-id">{{ pipeline.id }}</span>
               </button>
-              <div class="node-actions">
-                <button class="mini" (click)="moveStep(si, -1)" [disabled]="!canMoveStep(si, -1)" title="move up">
-                  <lucide-icon [img]="icons.up" [size]="11" />
-                </button>
-                <button class="mini" (click)="moveStep(si, 1)" [disabled]="!canMoveStep(si, 1)" title="move down">
-                  <lucide-icon [img]="icons.down" [size]="11" />
-                </button>
-                <button class="mini danger" (click)="removeStep(si)" [disabled]="step.terminal" title="remove step">
-                  <lucide-icon [img]="icons.trash" [size]="11" />
-                </button>
-              </div>
-
-              @for (route of stepRoutes(si); track route.key) {
-                <div class="node-route" [class.failure]="route.kind === 'failure'">
-                  <span class="route-label">{{ route.label }}</span>
-                  <span class="route-arrow" aria-hidden="true">→</span>
-                  <span class="route-target">{{ route.target }}</span>
-                </div>
-              }
-            </div>
-
-            @if (!$last) {
-              <div class="connector">
-                <span class="line" aria-hidden="true"></span>
-                <button class="insert" (click)="insertStep(si)" title="insert step">+</button>
-                <span class="line" aria-hidden="true"></span>
-              </div>
             }
-          }
+          </section>
+        }
+      </div>
+    </aside>
 
-          <button class="add-node" (click)="addStep()">
-            <lucide-icon [img]="icons.plus" [size]="12" />
-            add step
+    <section class="main">
+      @if (editing(); as draft) {
+        <header class="edit-bar">
+          <button class="tool back" (click)="closeEditor()" title="close the editor">
+            <lucide-icon [img]="icons.back" [size]="14" />
           </button>
-        </div>
-      </section>
-
-      @if (selectedStepDraft(); as step) {
-        <aside class="panel" aria-label="step settings">
-          <div class="panel-head">
-            <span class="panel-title">step {{ selectedStepIndex()! + 1 }}</span>
-            @if (!step.terminal) {
-              <button class="mini danger" (click)="removeStep(selectedStepIndex()!)" title="remove step">
-                <lucide-icon [img]="icons.trash" [size]="11" />
-              </button>
+          <input
+            class="name"
+            type="text"
+            placeholder="pipeline name"
+            [ngModel]="draft.name"
+            (ngModelChange)="updateName($event)"
+          />
+          <button class="tool save" (click)="save()">
+            <lucide-icon [img]="icons.save" [size]="13" />
+            save
+          </button>
+          <div class="menu-anchor">
+            <button class="tool overflow" (click)="toggleMenu(); $event.stopPropagation()" title="more actions">
+              <lucide-icon [img]="icons.more" [size]="14" />
+            </button>
+            @if (menuOpen()) {
+              <div class="menu" (click)="$event.stopPropagation()">
+                <button class="menu-item danger" (click)="deleteEditing()" [disabled]="draft.id === ''">
+                  <lucide-icon [img]="icons.trash" [size]="12" />
+                  delete pipeline
+                </button>
+              </div>
             }
           </div>
+        </header>
 
-          @if (step.terminal) {
-            <p class="panel-hint">the completion swimlane — a card is done when it reaches this step</p>
-          } @else {
-            <label class="field kind">
-              <span class="field-label">kind</span>
-              <select [ngModel]="step.kind" (ngModelChange)="updateStepKind(selectedStepIndex()!, $event)">
-                <option value="agent">agent</option>
-                <option value="command">command</option>
-                <option value="human">approval</option>
-              </select>
-            </label>
+        <nav class="editor-tabs" aria-label="editor tabs">
+          <button class="tab" [class.active]="editorTab() === 'steps'" (click)="selectTab('steps')">Steps</button>
+          <button class="tab" [class.active]="editorTab() === 'settings'" (click)="selectTab('settings')">Settings</button>
+        </nav>
 
-            <section class="panel-group">
-              <span class="group-label">presentation</span>
-              <label class="flag">
-                <input
-                  type="checkbox"
-                  [ngModel]="step.boardVisible"
-                  (ngModelChange)="updateStep(selectedStepIndex()!, { boardVisible: $event })"
-                />
-                board swimlane
-              </label>
-            </section>
+        @if (showError() && validationError(); as invalid) {
+          <p class="edit-error" role="alert">{{ invalid }}</p>
+        } @else if (draft.rejection; as rejection) {
+          <p class="edit-error" role="alert">{{ rejection }}</p>
+        }
 
-            <section class="panel-group">
-              <span class="group-label">execution</span>
-              @switch (step.kind) {
-                @case ('agent') {
-                  <label class="field agent">
-                    <span class="field-label">agent</span>
-                    <select [ngModel]="step.agentKind" (ngModelChange)="updateStep(selectedStepIndex()!, { agentKind: $event })">
-                      @for (agent of agentOptions(); track agent.id) {
-                        <option [value]="agent.id">{{ agent.label }}</option>
-                      }
-                    </select>
-                  </label>
-                  @if (agentDescription(step.agentKind); as description) {
-                    <p class="panel-hint">{{ description }}</p>
-                  }
-                }
-                @case ('command') {
-                  <label class="field">
-                    <span class="field-label">runtime step</span>
-                    <select (change)="applyRuntimeStep(selectedStepIndex()!, $any($event.target).value)">
-                      <option value="">add a predefined step…</option>
-                      @for (preset of runtimeSteps(); track preset.id) {
-                        <option [value]="preset.id">{{ preset.label }}</option>
-                      }
-                    </select>
-                  </label>
-                  <label class="field">
-                    <span class="field-label">command</span>
-                    <textarea
-                      rows="3"
-                      placeholder="shell command"
-                      [ngModel]="step.command"
-                      (ngModelChange)="updateStep(selectedStepIndex()!, { command: $event })"
-                    ></textarea>
-                  </label>
-                  <label class="field">
-                    <span class="field-label">label</span>
-                    <input
-                      type="text"
-                      placeholder="a short label (Build)"
-                      [ngModel]="step.description"
-                      (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
-                    />
-                  </label>
-                }
-                @case ('human') {
-                  <label class="field">
-                    <span class="field-label">approval prompt</span>
-                    <textarea
-                      rows="4"
-                      placeholder="approval prompt"
-                      [ngModel]="step.description"
-                      (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
-                    ></textarea>
-                  </label>
-                }
-              }
-            </section>
+        <div class="edit-body">
+          @switch (editorTab()) {
+            @case ('steps') {
+              <section class="diagram" aria-label="pipeline steps">
+                <div class="flow" #flowEl>
+                  <svg class="edge-overlay" aria-hidden="true">
+                    <defs>
+                      <marker id="route-arrow-ok" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                        <path d="M0 0 L8 4 L0 8 z" class="arrow ok" />
+                      </marker>
+                      <marker id="route-arrow-err" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                        <path d="M0 0 L8 4 L0 8 z" class="arrow err" />
+                      </marker>
+                    </defs>
+                    @for (edge of backwardEdges(); track edge.key) {
+                      <path
+                        class="route-edge failure"
+                        [attr.d]="edge.path"
+                        marker-end="url(#route-arrow-err)"
+                      />
+                    }
+                  </svg>
 
-            @if (step.kind === 'agent') {
-              <section class="panel-group">
-                <span class="group-label">outcomes</span>
-                <button class="mini add-outcome" (click)="addOutcome(selectedStepIndex()!)">+ outcome</button>
-                @for (rule of step.outcomes; track $index) {
-                  <div class="outcome-rule">
-                    <input
-                      type="text"
-                      placeholder="outcome name"
-                      [ngModel]="rule.outcome"
-                      (ngModelChange)="updateOutcome(selectedStepIndex()!, $index, { outcome: $event })"
-                    />
-                    <select
-                      [ngModel]="rule.toStepId"
-                      (ngModelChange)="updateOutcome(selectedStepIndex()!, $index, { toStepId: $event })"
+                  @for (edge of backwardEdges(); track edge.key) {
+                    <div
+                      class="route-chip failure"
+                      [style.left.px]="edge.labelX"
+                      [style.top.px]="edge.labelY"
                     >
-                      <option value="">proceed</option>
-                      @for (target of errorTargets(selectedStepIndex()!); track target.id) {
-                        <option [value]="target.id">return to {{ nodeLabel(target) }}</option>
+                      {{ edge.label }}
+                    </div>
+                  }
+
+                  @for (step of draft.steps; track step.id; let si = $index) {
+                    <div
+                      class="node"
+                      #nodeEl
+                      [class.selected]="selectedStepId() === step.id"
+                      [class.invalid]="showError()"
+                      [class.terminal]="step.terminal"
+                    >
+                      <button type="button" class="node-select" (click)="selectStep(si)">
+                        <span class="node-index">{{ si + 1 }}</span>
+                        <lucide-icon class="node-icon" [img]="step.terminal ? icons.done : stepIcon(step.kind)" [size]="15" />
+                        <span class="node-main">
+                          <span class="node-label">{{ nodeLabel(step) }}</span>
+                          <span class="node-detail">{{ nodeDetail(step) }}</span>
+                        </span>
+                        <span class="node-badges">
+                          <span class="node-kind">{{ stepBadge(step) }}</span>
+                          @if (step.terminal) {
+                            <span class="node-stage done">done</span>
+                          } @else if (step.boardVisible) {
+                            <span class="node-stage">Lane</span>
+                          } @else {
+                            <span class="node-stage hidden">Hidden</span>
+                          }
+                        </span>
+                      </button>
+                      <div class="node-actions">
+                        <button class="mini" (click)="moveStep(si, -1)" [disabled]="!canMoveStep(si, -1)" title="move up">
+                          <lucide-icon [img]="icons.up" [size]="11" />
+                        </button>
+                        <button class="mini" (click)="moveStep(si, 1)" [disabled]="!canMoveStep(si, 1)" title="move down">
+                          <lucide-icon [img]="icons.down" [size]="11" />
+                        </button>
+                        <button
+                          class="mini"
+                          [class.active]="nodeMenuFor() === step.id"
+                          (click)="toggleNodeMenu(step.id); $event.stopPropagation()"
+                          title="step actions"
+                        >
+                          <lucide-icon [img]="icons.more" [size]="11" />
+                        </button>
+                      </div>
+                    </div>
+
+                    @if (!$last) {
+                      <div class="connector">
+                        <span class="line" aria-hidden="true"></span>
+                        @for (outcome of proceedOutcomes(si); track outcome) {
+                          <span class="edge-chip">{{ outcome }}</span>
+                        }
+                        <span class="line" aria-hidden="true"></span>
+                        <button class="insert" (click)="openPalette(si); $event.stopPropagation()" title="insert step">+</button>
+                      </div>
+                    }
+                  }
+
+                  <button class="add-node" (click)="openPalette(null); $event.stopPropagation()">
+                    <lucide-icon [img]="icons.plus" [size]="12" />
+                    add step
+                  </button>
+
+                  @if (paletteAnchor(); as anchor) {
+                    <div
+                      class="palette"
+                      [class.at-end]="anchor.afterIndex === null"
+                      [style.top.px]="anchor.afterIndex === null ? null : (nodeRects()[anchor.afterIndex]?.bottom ?? 0) + 22"
+                      (click)="$event.stopPropagation()"
+                    >
+                      @for (type of paletteModel(); track type.kind) {
+                        <div class="palette-col">
+                          <header class="palette-head">
+                            <lucide-icon [img]="type.icon" [size]="13" />
+                            <span class="palette-title">{{ type.label }}</span>
+                            <span class="palette-desc">{{ type.description }}</span>
+                          </header>
+                          <div class="palette-presets">
+                            @for (preset of type.presets; track preset.id) {
+                              <button class="palette-item" (click)="applyPreset(type, preset)">
+                                <span class="palette-item-label">{{ preset.label }}</span>
+                                @if (preset.description; as presetDescription) {
+                                  <span class="palette-item-desc">{{ presetDescription }}</span>
+                                }
+                              </button>
+                            }
+                          </div>
+                        </div>
                       }
-                    </select>
-                    <button class="mini danger" (click)="removeOutcome(selectedStepIndex()!, $index)" title="remove outcome">
-                      <lucide-icon [img]="icons.trash" [size]="11" />
-                    </button>
+                    </div>
+                  }
+
+                  @if (nodeMenuFor(); as menuStepId) {
+                    @if (nodeMenuPosition(menuStepId); as menuPosition) {
+                      <div
+                        class="node-menu"
+                        [style.left.px]="menuPosition.left"
+                        [style.top.px]="menuPosition.top"
+                        (click)="$event.stopPropagation()"
+                      >
+                        <button class="menu-item" (click)="duplicateStep(menuStepId)">
+                          <lucide-icon [img]="icons.copy" [size]="12" />
+                          duplicate step
+                        </button>
+                        <button class="menu-item danger" (click)="deleteStep(menuStepId)" [disabled]="isTerminalStep(menuStepId)">
+                          <lucide-icon [img]="icons.trash" [size]="12" />
+                          delete step
+                        </button>
+                      </div>
+                    }
+                  }
+                </div>
+              </section>
+
+              @if (selectedStepDraft(); as step) {
+                <aside class="panel" aria-label="step settings">
+                  <div class="panel-head">
+                    <lucide-icon class="panel-icon" [img]="step.terminal ? icons.done : stepIcon(step.kind)" [size]="15" />
+                    <span class="panel-main">
+                      <span class="panel-title">{{ panelTitle(step) }}</span>
+                      <span class="panel-subtitle">{{ nodeDetail(step) }}</span>
+                    </span>
+                    @if (!step.terminal) {
+                      <button class="mini danger" (click)="deleteStep(step.id)" title="delete step">
+                        <lucide-icon [img]="icons.trash" [size]="11" />
+                      </button>
+                    }
                   </div>
-                }
-                @if (step.outcomes.length > 0) {
-                  <label class="flag">
-                    <input
-                      type="checkbox"
-                      [ngModel]="step.requiresOutcome"
-                      (ngModelChange)="updateStep(selectedStepIndex()!, { requiresOutcome: $event })"
-                    />
-                    the agent must report an outcome
-                  </label>
-                }
+
+                  <nav class="panel-tabs" aria-label="step settings tabs">
+                    <button class="panel-tab" [class.active]="inspectorTab() === 'general'" (click)="inspectorTab.set('general')">General</button>
+                    <button class="panel-tab" [class.active]="inspectorTab() === 'outcomes'" (click)="inspectorTab.set('outcomes')">Outcomes</button>
+                    <button class="panel-tab" [class.active]="inspectorTab() === 'advanced'" (click)="inspectorTab.set('advanced')">Advanced</button>
+                  </nav>
+
+                  @switch (inspectorTab()) {
+                    @case ('general') {
+                      @if (step.terminal) {
+                        <section class="panel-group">
+                          <span class="group-label">completion</span>
+                          <label class="field">
+                            <span class="field-label">completion lane label</span>
+                            <input
+                              type="text"
+                              placeholder="done"
+                              [ngModel]="step.description"
+                              (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
+                            />
+                          </label>
+                          <p class="panel-hint">a card is done when it reaches this step; the label names its board lane</p>
+                        </section>
+                      } @else {
+                        <section class="panel-group">
+                          <span class="group-label">step type</span>
+                          <label class="field kind">
+                            <select [ngModel]="step.kind" (ngModelChange)="updateStepKind(selectedStepIndex()!, $event)">
+                              <option value="agent">Agent step</option>
+                              <option value="command">Set step</option>
+                              <option value="human">Approval step</option>
+                            </select>
+                          </label>
+                          <p class="panel-hint">{{ stepTypeHint(step.kind) }}</p>
+                        </section>
+
+                        <section class="panel-group">
+                          <span class="group-label">execution</span>
+                          @switch (step.kind) {
+                            @case ('agent') {
+                              <label class="field agent">
+                                <span class="field-label">agent</span>
+                                <select [ngModel]="step.agentKind" (ngModelChange)="updateStep(selectedStepIndex()!, { agentKind: $event })">
+                                  @for (agent of agentOptions(); track agent.id) {
+                                    <option [value]="agent.id">{{ agent.label }}</option>
+                                  }
+                                </select>
+                              </label>
+                              @if (agentDescription(step.agentKind); as description) {
+                                <p class="panel-hint">{{ description }}</p>
+                              }
+                              <label class="field">
+                                <span class="field-label">instructions</span>
+                                <textarea
+                                  rows="3"
+                                  placeholder="Provide clear instructions for the agent."
+                                  [ngModel]="step.instructions"
+                                  (ngModelChange)="updateStep(selectedStepIndex()!, { instructions: $event })"
+                                ></textarea>
+                              </label>
+                            }
+                            @case ('command') {
+                              <label class="field">
+                                <span class="field-label">predefined operation</span>
+                                <select (change)="applyRuntimeStep(selectedStepIndex()!, $any($event.target).value)">
+                                  <option value="">add a predefined step…</option>
+                                  @for (preset of runtimeSteps(); track preset.id) {
+                                    <option [value]="preset.id">{{ preset.label }}</option>
+                                  }
+                                </select>
+                              </label>
+                              @if (justRecipes().length > 0) {
+                                <label class="field">
+                                  <span class="field-label">justfile recipe</span>
+                                  <select (change)="applyJustRecipe(selectedStepIndex()!, $any($event.target).value)">
+                                    <option value="">run a justfile recipe…</option>
+                                    @for (recipe of justRecipes(); track recipe.name) {
+                                      <option [value]="recipe.name">{{ recipe.name }}</option>
+                                    }
+                                  </select>
+                                </label>
+                              }
+                              <label class="field">
+                                <span class="field-label">command</span>
+                                <textarea
+                                  rows="3"
+                                  placeholder="shell command"
+                                  [ngModel]="step.command"
+                                  (ngModelChange)="updateStep(selectedStepIndex()!, { command: $event })"
+                                ></textarea>
+                              </label>
+                              <label class="field">
+                                <span class="field-label">label</span>
+                                <input
+                                  type="text"
+                                  placeholder="a short label (Build)"
+                                  [ngModel]="step.description"
+                                  (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
+                                />
+                              </label>
+                            }
+                            @case ('human') {
+                              <label class="field">
+                                <span class="field-label">approval prompt</span>
+                                <textarea
+                                  rows="4"
+                                  placeholder="approval prompt"
+                                  [ngModel]="step.description"
+                                  (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
+                                ></textarea>
+                              </label>
+                            }
+                          }
+                        </section>
+
+                        <section class="panel-group">
+                          <span class="group-label">board</span>
+                          <label class="flag">
+                            <input
+                              type="checkbox"
+                              [ngModel]="step.boardVisible"
+                              (ngModelChange)="updateStep(selectedStepIndex()!, { boardVisible: $event })"
+                            />
+                            show this step as a board lane
+                          </label>
+                          <p class="panel-hint">this step will be visible as a lane on the board (a presentation setting, separate from execution)</p>
+                        </section>
+
+                        <section class="panel-group">
+                          <span class="group-label">on execution error</span>
+                          <label class="field">
+                            <select
+                              [ngModel]="step.errorReturnToStepId"
+                              (ngModelChange)="updateStep(selectedStepIndex()!, { errorReturnToStepId: $event })"
+                            >
+                              <option value="">stay on this step</option>
+                              @for (target of errorTargets(selectedStepIndex()!); track target.id) {
+                                <option [value]="target.id">return to {{ nodeLabel(target) }}</option>
+                              }
+                            </select>
+                          </label>
+                          <p class="panel-hint">what to do if the step fails to execute (tool error, timeout, and so on)</p>
+                        </section>
+                      }
+                    }
+
+                    @case ('outcomes') {
+                      @if (!step.terminal && step.kind === 'agent') {
+                        <section class="panel-group">
+                          <span class="group-label">outcomes</span>
+                          <p class="panel-hint">the possible outcomes this step can report and where they go</p>
+                          <label class="flag">
+                            <input
+                              type="checkbox"
+                              [ngModel]="step.requiresOutcome"
+                              (ngModelChange)="updateStep(selectedStepIndex()!, { requiresOutcome: $event })"
+                            />
+                            agent must report an outcome
+                          </label>
+                          <p class="panel-hint">the agent signals its outcome through its reporting tool</p>
+                          <button class="mini add-outcome" (click)="addOutcome(selectedStepIndex()!)">+ add outcome</button>
+                          @for (rule of step.outcomes; track $index) {
+                            <div class="outcome-rule">
+                              <span class="outcome-dot" [class.return]="rule.toStepId.trim() !== ''"></span>
+                              <input
+                                type="text"
+                                placeholder="outcome name"
+                                [ngModel]="rule.outcome"
+                                (ngModelChange)="updateOutcome(selectedStepIndex()!, $index, { outcome: $event })"
+                              />
+                              <select
+                                [ngModel]="rule.toStepId"
+                                (ngModelChange)="updateOutcome(selectedStepIndex()!, $index, { toStepId: $event })"
+                              >
+                                <option value="">proceed</option>
+                                @for (target of errorTargets(selectedStepIndex()!); track target.id) {
+                                  <option [value]="target.id">return to {{ nodeLabel(target) }}</option>
+                                }
+                              </select>
+                              <button class="mini danger" (click)="removeOutcome(selectedStepIndex()!, $index)" title="remove outcome">
+                                <lucide-icon [img]="icons.trash" [size]="11" />
+                              </button>
+                            </div>
+                          }
+                        </section>
+                      } @else {
+                        <p class="panel-hint">only agent steps report named outcomes.</p>
+                      }
+                    }
+
+                    @case ('advanced') {
+                      <section class="panel-group">
+                        <span class="group-label">identity</span>
+                        <div class="stat-row">
+                          <span class="stat-label">step id</span>
+                          <span class="stat-value">{{ step.id }}</span>
+                        </div>
+                        @if (selectedStepIndex(); as currentIndex) {
+                          <div class="stat-row">
+                            <span class="stat-label">order</span>
+                            <span class="stat-value">{{ currentIndex + 1 }} of {{ draft.steps.length }}</span>
+                          </div>
+                        }
+                      </section>
+                    }
+                  }
+
+                  @if (!step.terminal) {
+                    <footer class="panel-footer">
+                      <button class="tool danger" (click)="deleteStep(step.id)">
+                        <lucide-icon [img]="icons.trash" [size]="12" />
+                        delete step
+                      </button>
+                      <button class="tool" (click)="duplicateStep(step.id)">
+                        <lucide-icon [img]="icons.copy" [size]="12" />
+                        duplicate step
+                      </button>
+                    </footer>
+                  }
+                </aside>
+              } @else {
+                <aside class="panel panel-empty">
+                  <p class="panel-hint">select a step to edit its settings</p>
+                </aside>
+              }
+            }
+
+            @case ('settings') {
+              <section class="settings" aria-label="pipeline settings">
+                <div class="settings-col">
+                  <section class="settings-group">
+                    <span class="group-label">identity</span>
+                    <label class="field">
+                      <span class="field-label">category</span>
+                      <select [ngModel]="draft.category" (ngModelChange)="updateCategory($event)">
+                        <option value="">General</option>
+                        @for (category of categoryOptions(); track category.id) {
+                          <option [value]="category.id">{{ category.label }}</option>
+                        }
+                      </select>
+                    </label>
+                    <p class="panel-hint">the sidebar group this pipeline files under (presentation only)</p>
+                  </section>
+
+                  <section class="settings-group">
+                    <span class="group-label">definition</span>
+                    @for (stat of definitionStats(); track stat.label) {
+                      <div class="stat-row">
+                        <span class="stat-label">{{ stat.label }}</span>
+                        <span class="stat-value">{{ stat.value }}</span>
+                      </div>
+                    }
+                  </section>
+
+                  <section class="settings-group">
+                    <span class="group-label">danger zone</span>
+                    <button class="tool danger" (click)="deleteEditing()" [disabled]="draft.id === ''">
+                      <lucide-icon [img]="icons.trash" [size]="12" />
+                      delete pipeline
+                    </button>
+                    <p class="panel-hint">assigned cards block the deletion; reassign them first</p>
+                  </section>
+                </div>
               </section>
             }
-
-            <section class="panel-group">
-              <span class="group-label">on failure</span>
-              <label class="field">
-                <select
-                  [ngModel]="step.errorReturnToStepId"
-                  (ngModelChange)="updateStep(selectedStepIndex()!, { errorReturnToStepId: $event })"
-                >
-                  <option value="">stay here</option>
-                  @for (target of errorTargets(selectedStepIndex()!); track target.id) {
-                    <option [value]="target.id">return to {{ nodeLabel(target) }}</option>
-                  }
-                </select>
-              </label>
-            </section>
           }
-        </aside>
+        </div>
       } @else {
-        <aside class="panel panel-empty">
-          <p class="panel-hint">select a step to edit its settings</p>
-        </aside>
-      }
-    </div>
-  </div>
-} @else {
-  <div class="list-page">
-    <header class="head">
-      <lucide-icon [img]="icons.workflow" [size]="14" />
-      <h1>pipelines</h1>
-      @if (canEdit()) {
-        <button class="new" (click)="newPipeline()">
-          <lucide-icon [img]="icons.plus" [size]="12" />
-          new pipeline
-        </button>
-      }
-    </header>
-
-    <section class="list">
-      @if (list().length === 0) {
-        <p class="state-empty inline">no pipelines yet - author the first one</p>
-      }
-      @for (pipeline of list(); track pipeline.id) {
-        <article class="row">
-          <div class="row-main">
-            <span class="row-name">{{ pipeline.name }}</span>
-            <span class="row-id">{{ pipeline.id }}</span>
-            <span class="row-steps">{{ stepSummary(pipeline) }}</span>
-          </div>
-          <div class="row-actions">
-            <button class="mini" (click)="edit(pipeline)" title="edit">edit</button>
-            <button class="mini danger" (click)="remove(pipeline.id)" title="delete">
-              <lucide-icon [img]="icons.trash" [size]="12" />
-            </button>
-          </div>
-        </article>
+        <div class="empty-main">
+          <lucide-icon [img]="icons.workflow" [size]="16" />
+          <p class="state-empty">select a pipeline from the sidebar, or create one</p>
+        </div>
       }
     </section>
   </div>

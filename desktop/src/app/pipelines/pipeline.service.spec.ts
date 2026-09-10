@@ -4,7 +4,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { FakeEventsClient, provideFakeEventsClient } from '../core/events/events-client.fake';
 import { DomainEventJson } from '../core/events/wire';
 import { ShellService } from '../shell/shell.service';
-import { Pipeline, PipelineStep } from '../core/models/pipeline.models';
+import { Pipeline, PipelineLane, PipelineStep } from '../core/models/pipeline.models';
 import { PipelineService } from './pipeline.service';
 
 describe('PipelineService', () => {
@@ -33,13 +33,25 @@ describe('PipelineService', () => {
   const emit = (event: DomainEventJson): void => events.emit(event);
 
   const pipeline = (id: string, steps: PipelineStep[]): Pipeline =>
-    new Pipeline({ id, name: 'Standard coding card', revision: 1, steps });
+    new Pipeline({
+      id,
+      name: 'Standard coding card',
+      revision: 1,
+      lanes: [
+        ...steps.map((step, index) => new PipelineLane(`ln-${index + 1}`, `ln-${index + 1}`, true, false)),
+        new PipelineLane('ln-done', 'done', true, true),
+      ],
+      steps,
+    });
 
-  const coderStep = PipelineStep.empty('st-1', 'agent').with({
+  const coderStep = new PipelineStep({
+    id: 'st-1',
+    kind: 'agent',
+    laneId: 'ln-1',
     agentKind: 'coder',
     instructions: 'Implement the card.',
   });
-  const gateStep = PipelineStep.empty('st-2', 'human').with({ description: 'Approval' });
+  const gateStep = new PipelineStep({ id: 'st-2', kind: 'human', laneId: 'ln-2', description: 'Approval' });
 
   it('folds saved and deleted pipelines per project', async () => {
     const service = create();
@@ -56,18 +68,22 @@ describe('PipelineService', () => {
           projectId: 'P-1',
           name: 'Standard coding card',
           revision: 1,
+          lanes: [
+            { id: 'ln-1', label: 'Implementation', kanbanVisible: true },
+            { id: 'ln-2', label: 'Approval', kanbanVisible: true },
+            { id: 'ln-3', label: 'Done', kanbanVisible: true, terminal: true },
+          ],
           steps: [
-            { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement the card.' },
-            { id: 'st-2', kind: 'human', boardVisible: true, description: 'Approval' },
-            { id: 'st-3', kind: 'human', boardVisible: true, terminal: true },
+            { id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder', instructions: 'Implement the card.' },
+            { id: 'st-2', kind: 'human', laneId: 'ln-2', description: 'Approval' },
           ],
           updatedAt: '2026-09-05T00:00:00Z',
         },
       },
     });
     expect(service.pipelines().map((p) => p.id)).toEqual(['PL-1']);
-    expect(service.pipelines()[0]?.steps.map((s) => s.kind)).toEqual(['agent', 'human', 'human']);
-    expect(service.pipelines()[0]?.terminalStepId).toBe('st-3');
+    expect(service.pipelines()[0]?.steps.map((s) => s.kind)).toEqual(['agent', 'human']);
+    expect(service.pipelines()[0]?.terminalLaneId).toBe('ln-3');
 
     // An upsert replaces; a delete removes.
     emit({
@@ -80,9 +96,12 @@ describe('PipelineService', () => {
           projectId: 'P-1',
           name: 'Renamed',
           revision: 2,
+          lanes: [
+            { id: 'ln-1', label: 'New', kanbanVisible: true },
+            { id: 'ln-2', label: 'Done', kanbanVisible: true, terminal: true },
+          ],
           steps: [
-            { id: 'st-1', kind: 'command', boardVisible: true, command: 'true' },
-            { id: 'st-2', kind: 'human', boardVisible: true, terminal: true },
+            { id: 'st-1', kind: 'command', laneId: 'ln-1', command: 'true' },
           ],
           updatedAt: '2026-09-05T00:00:01Z',
         },
@@ -90,7 +109,7 @@ describe('PipelineService', () => {
     });
     expect(service.pipelines()[0]?.name).toBe('Renamed');
     expect(service.pipelines()[0]?.revision).toBe(2);
-    expect(service.pipelines()[0]?.steps).toHaveLength(2);
+    expect(service.pipelines()[0]?.steps).toHaveLength(1);
 
     // An older revision arriving late does not regress the current definition.
     emit({
@@ -103,6 +122,7 @@ describe('PipelineService', () => {
           projectId: 'P-1',
           name: 'Standard coding card',
           revision: 1,
+          lanes: [],
           steps: [],
           updatedAt: '2026-09-05T00:00:00Z',
         },
@@ -174,7 +194,7 @@ describe('PipelineService', () => {
       id: 'e4',
       projectId: 'P-1',
       occurredAt: '',
-      pipelineRunEnded: { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', revision: 2, status: 'returned', outcome: 'changes_requested', feedback: 'needs tests', routedToStepId: 'st-1' },
+      pipelineRunEnded: { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', revision: 2, status: 'returned', outcome: 'changes_requested', feedback: 'needs tests', routedToLaneId: 'ln-1' },
     });
     expect(service.runForCard('T-1')).toBeUndefined();
     expect(service.lastRunForCard('T-1')).toMatchObject({
@@ -182,7 +202,7 @@ describe('PipelineService', () => {
       status: 'returned',
       outcome: 'changes_requested',
       feedback: 'needs tests',
-      routedToStepId: 'st-1',
+      routedToLaneId: 'ln-1',
     });
   });
 
@@ -239,8 +259,8 @@ describe('PipelineService', () => {
     const saved = events.published.at(-1)!;
     expect(saved).toMatchObject({ projectId: 'P-1', requestPipelineSave: { pipeline: { id: 'PL-9', name: 'Standard coding card' } } });
     expect(saved.requestPipelineSave?.pipeline.steps).toEqual([
-      { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement the card.' },
-      { id: 'st-2', kind: 'human', boardVisible: true, description: 'Approval' },
+      { id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder', instructions: 'Implement the card.' },
+      { id: 'st-2', kind: 'human', laneId: 'ln-2', description: 'Approval' },
     ]);
 
     await service.remove('P-1', 'PL-9');

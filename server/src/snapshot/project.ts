@@ -17,9 +17,9 @@ export function appendProject(emit: FrameEmitter, project: Project, projectState
   const board = Board.of(projectState);
 
   const automations = [...projectState.automation.entries()].sort(([a], [b]) => a.localeCompare(b));
-  for (const [pipelineId, steps] of automations) {
-    for (const [stepId, on] of [...steps.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-      emit(project.id, 'automationToggled', { pipelineId, stepId, on });
+  for (const [pipelineId, lanes] of automations) {
+    for (const [laneId, on] of [...lanes.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      emit(project.id, 'automationToggled', { pipelineId, laneId, on });
     }
   }
 
@@ -143,7 +143,7 @@ export function appendProject(emit: FrameEmitter, project: Project, projectState
         ...(run.error !== undefined ? { error: run.error } : {}),
         ...(run.outcome !== undefined ? { outcome: run.outcome } : {}),
         ...(run.feedback !== undefined ? { feedback: run.feedback } : {}),
-        ...(run.routedToStepId !== undefined ? { routedToStepId: run.routedToStepId } : {}),
+        ...(run.routedToLaneId !== undefined ? { routedToLaneId: run.routedToLaneId } : {}),
       },
       run.endedAt ?? run.startedAt,
     );

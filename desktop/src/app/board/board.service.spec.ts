@@ -12,7 +12,7 @@ import { BoardService } from './board.service';
 /**
  * BoardService over the event stream: wire events fold into the same signals
  * the fixtures seed; commands publish optimistically and revert on a typed
- * rejection. Phase 10: stage moves, run locks, and pipeline assignment.
+ * rejection. Phase 10: lane moves, run locks, and pipeline assignment.
  */
 describe('BoardService', () => {
   let service: BoardService;
@@ -51,12 +51,18 @@ describe('BoardService', () => {
             name: 'Standard coding card',
             revision: 1,
             updatedAt: new Date().toISOString(),
+            lanes: [
+              { id: 'ln-1', label: 'Implementation', kanbanVisible: true },
+              { id: 'ln-2', label: 'Tests', kanbanVisible: true },
+              { id: 'ln-3', label: 'Build', kanbanVisible: true },
+              { id: 'ln-4', label: 'Approval', kanbanVisible: true },
+              { id: 'ln-5', label: 'Done', kanbanVisible: true, terminal: true },
+            ],
             steps: [
-              { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement.' },
-              { id: 'st-2', kind: 'command', boardVisible: true, command: 'npm test', description: 'Tests' },
-              { id: 'st-3', kind: 'command', boardVisible: true, command: 'npm run build', description: 'Build' },
-              { id: 'st-4', kind: 'human', boardVisible: true, description: 'Approval' },
-              { id: 'st-5', kind: 'human', boardVisible: true, terminal: true },
+              { id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder', instructions: 'Implement.' },
+              { id: 'st-2', kind: 'command', laneId: 'ln-2', command: 'npm test', description: 'Tests' },
+              { id: 'st-3', kind: 'command', laneId: 'ln-3', command: 'npm run build', description: 'Build' },
+              { id: 'st-4', kind: 'human', laneId: 'ln-4', description: 'Approval' },
             ],
           },
         },
@@ -85,15 +91,15 @@ describe('BoardService', () => {
     );
   }
 
-  function emitStageMove(cardId: string, toStepId: string, comment = '', projectId = 'P-1') {
+  function emitStageMove(cardId: string, toLaneId: string, comment = '', projectId = 'P-1') {
     events.emit(
-      wireEvent('cardStepMoved', { cardId, pipelineId: 'PL-1', toStepId, comment }, projectId),
+      wireEvent('cardLaneMoved', { cardId, pipelineId: 'PL-1', toLaneId, comment }, projectId),
     );
   }
 
   it('folds CardCreated into the board and derives blocked cards', () => {
     activateProject('P-1', [
-      { id: 'T-1', stepId: 'st-2' },
+      { id: 'T-1', laneId: 'ln-2' },
       { id: 'T-2', blockedBy: ['T-1'] },
     ]);
     TestBed.tick();
@@ -103,18 +109,18 @@ describe('BoardService', () => {
     expect(service.blockedIds().has('T-1')).toBe(false);
   });
 
-  it('unblocks a card once its blocker reaches the terminal stage', () => {
+  it('unblocks a card once its blocker reaches the terminal lane', () => {
     activateProject('P-1', [
-      { id: 'T-1', stepId: 'st-2' },
+      { id: 'T-1', laneId: 'ln-2' },
       { id: 'T-2', blockedBy: ['T-1'] },
     ]);
     TestBed.tick();
     expect(service.blockedIds().has('T-2')).toBe(true);
 
-    emitStageMove('T-1', 'st-5');
+    emitStageMove('T-1', 'ln-5');
     TestBed.tick();
     expect(service.blockedIds().has('T-2')).toBe(false);
-    expect(service.cardsById().get('T-1')?.stepId).toBe('st-5');
+    expect(service.cardsById().get('T-1')?.laneId).toBe('ln-5');
   });
 
   it('scopes cards per project and swaps with the active tab', () => {
@@ -133,44 +139,44 @@ describe('BoardService', () => {
   describe('requestMove', () => {
     beforeEach(() => {
       activateProject('P-1', [
-        { id: 'T-1', stepId: 'st-2' },
+        { id: 'T-1', laneId: 'ln-2' },
         { id: 'T-2', blockedBy: ['T-1'] },
       ]);
       TestBed.tick();
     });
 
-    it('publishes the stage move optimistically and keeps it on ok', async () => {
-      const promise = service.requestMove('T-1', 'st-3');
+    it('publishes the lane move optimistically and keeps it on ok', async () => {
+      const promise = service.requestMove('T-1', 'ln-3');
       // Optimistic: applied synchronously, before the publish resolves.
-      expect(service.cardsById().get('T-1')?.stepId).toBe('st-3');
+      expect(service.cardsById().get('T-1')?.laneId).toBe('ln-3');
 
       expect(await promise).toEqual({ ok: true });
-      const command = events.lastCommand('requestCardStepMove');
+      const command = events.lastCommand('requestCardLaneMove');
       expect(command?.projectId).toBe('P-1');
-      expect(command?.requestCardStepMove).toEqual({
+      expect(command?.requestCardLaneMove).toEqual({
         cardId: 'T-1',
-        toStepId: 'st-3',
+        toLaneId: 'ln-3',
         override: false,
         comment: '',
       });
     });
 
-    it('rejects stages that are not in the assigned pipeline', async () => {
-      expect(await service.requestMove('T-1', 'st-99')).toEqual({
+    it('rejects lanes that are not in the assigned pipeline', async () => {
+      expect(await service.requestMove('T-1', 'ln-99')).toEqual({
         ok: false,
-        reason: 'unknown-step',
+        reason: 'unknown-lane',
       });
-      expect(events.lastCommand('requestCardStepMove')).toBeUndefined();
-      expect(service.cardsById().get('T-1')?.stepId).toBe('st-2');
+      expect(events.lastCommand('requestCardLaneMove')).toBeUndefined();
+      expect(service.cardsById().get('T-1')?.laneId).toBe('ln-2');
     });
 
     it('rejects moving a blocked card without publishing', async () => {
-      expect(await service.requestMove('T-2', 'st-2')).toEqual({ ok: false, reason: 'blocked' });
-      expect(events.lastCommand('requestCardStepMove')).toBeUndefined();
+      expect(await service.requestMove('T-2', 'ln-2')).toEqual({ ok: false, reason: 'blocked' });
+      expect(events.lastCommand('requestCardLaneMove')).toBeUndefined();
     });
 
     it('rejects unknown cards', async () => {
-      expect(await service.requestMove('T-999', 'st-2')).toEqual({
+      expect(await service.requestMove('T-999', 'ln-2')).toEqual({
         ok: false,
         reason: 'unknown-card',
       });
@@ -179,47 +185,47 @@ describe('BoardService', () => {
     it('rejects while a run is active and allows it again after the run ends', async () => {
       seedRun('T-1');
       TestBed.tick();
-      expect(await service.requestMove('T-1', 'st-3')).toEqual({
+      expect(await service.requestMove('T-1', 'ln-3')).toEqual({
         ok: false,
         reason: 'run-active',
       });
-      expect(events.lastCommand('requestCardStepMove')).toBeUndefined();
+      expect(events.lastCommand('requestCardLaneMove')).toBeUndefined();
 
       endRun('T-1');
       TestBed.tick();
-      expect(await service.requestMove('T-1', 'st-3')).toEqual({ ok: true });
+      expect(await service.requestMove('T-1', 'ln-3')).toEqual({ ok: true });
     });
 
-    it('treats a move to the current stage as a no-op success', async () => {
-      expect(await service.requestMove('T-1', 'st-2')).toEqual({ ok: true });
-      expect(events.lastCommand('requestCardStepMove')).toBeUndefined();
+    it('treats a move to the current lane as a no-op success', async () => {
+      expect(await service.requestMove('T-1', 'ln-2')).toEqual({ ok: true });
+      expect(events.lastCommand('requestCardLaneMove')).toBeUndefined();
     });
 
     it('reverts the optimistic move on a server rejection', async () => {
       events.respondWith({
         ok: false,
-        rejectionCode: WireRejectionCode.REJECTION_CODE_UNKNOWN_STEP,
+        rejectionCode: WireRejectionCode.REJECTION_CODE_UNKNOWN_LANE,
         rejectionMessage: 'nope',
       });
-      const result = await service.requestMove('T-1', 'st-4');
-      expect(result).toEqual({ ok: false, reason: 'unknown-step' });
-      expect(service.cardsById().get('T-1')?.stepId).toBe('st-2');
+      const result = await service.requestMove('T-1', 'ln-4');
+      expect(result).toEqual({ ok: false, reason: 'unknown-lane' });
+      expect(service.cardsById().get('T-1')?.laneId).toBe('ln-2');
     });
   });
 
   describe('forceMove', () => {
     it('publishes with override and bypasses blockers', async () => {
       activateProject('P-1', [
-        { id: 'T-1', stepId: 'st-2' },
+        { id: 'T-1', laneId: 'ln-2' },
         { id: 'T-2', blockedBy: ['T-1'] },
       ]);
       TestBed.tick();
 
-      expect(await service.forceMove('T-2', 'st-3')).toEqual({ ok: true });
-      expect(events.lastCommand('requestCardStepMove')?.requestCardStepMove?.override).toBe(true);
-      expect(await service.forceMove('T-2', 'st-99')).toEqual({
+      expect(await service.forceMove('T-2', 'ln-3')).toEqual({ ok: true });
+      expect(events.lastCommand('requestCardLaneMove')?.requestCardLaneMove?.override).toBe(true);
+      expect(await service.forceMove('T-2', 'ln-99')).toEqual({
         ok: false,
-        reason: 'unknown-step',
+        reason: 'unknown-lane',
       });
     });
   });
@@ -229,38 +235,38 @@ describe('BoardService', () => {
       activateProject('P-1', [
         {
           id: 'T-1',
-          stepId: 'st-2',
+          laneId: 'ln-2',
           assignee: { role: 'coder', model: 'm', effort: 'e' },
         },
       ]);
       TestBed.tick();
     });
 
-    it('folds CardStageMoved: the stage and the rejection comment', () => {
-      emitStageMove('T-1', 'st-3');
+    it('folds CardLaneMoved: the lane and the rejection comment', () => {
+      emitStageMove('T-1', 'ln-3');
       TestBed.tick();
-      expect(service.cardsById().get('T-1')?.stepId).toBe('st-3');
+      expect(service.cardsById().get('T-1')?.laneId).toBe('ln-3');
 
-      emitStageMove('T-1', 'st-2', 'needs work');
+      emitStageMove('T-1', 'ln-2', 'needs work');
       TestBed.tick();
       expect(service.cardsById().get('T-1')?.rejectionComment).toBe('needs work');
     });
 
-    it('folds CardPipelineAssigned: pipeline and first stage', () => {
+    it('folds CardPipelineAssigned: pipeline and first lane', () => {
       events.emit(
         wireEvent(
           'cardPipelineAssigned',
-          { cardId: 'T-1', pipelineId: 'PL-2', stepId: 'd-1' },
+          { cardId: 'T-1', pipelineId: 'PL-2', laneId: 'd-ln-1' },
           'P-1',
         ),
       );
       TestBed.tick();
       const card = service.cardsById().get('T-1')!;
       expect(card.pipelineId).toBe('PL-2');
-      expect(card.stepId).toBe('d-1');
+      expect(card.laneId).toBe('d-ln-1');
     });
 
-    it('folds CardTypeChanged: type and reset step states, stage untouched', () => {
+    it('folds CardTypeChanged: type and reset step states, lane untouched', () => {
       events.emit(
         wireEvent(
           'cardStepStateUpdated',
@@ -280,7 +286,7 @@ describe('BoardService', () => {
 
       const card = service.cardsById().get('T-1')!;
       expect(card.type).toBe('design');
-      expect(card.stepId).toBe('st-2');
+      expect(card.laneId).toBe('ln-2');
       expect(card.stepStates).toEqual({});
     });
 
@@ -296,7 +302,7 @@ describe('BoardService', () => {
       expect(service.cardsById().get('T-1')?.stepStates['st-1']).toBe('running');
     });
 
-    it('folds PipelineStepStarted into the card step and running state immediately', () => {
+    it('folds PipelineStepStarted into the card lane and running state immediately', () => {
       const occurredAt = '2026-09-09T10:00:00.000Z';
       events.emit({
         ...wireEvent(
@@ -314,7 +320,7 @@ describe('BoardService', () => {
       });
 
       const card = service.cardsById().get('T-1')!;
-      expect(card.stepId).toBe('st-3');
+      expect(card.laneId).toBe('ln-3');
       expect(card.stepStates).toEqual({ 'st-3': 'running' });
       expect(card.updatedAt).toBe(occurredAt);
     });
@@ -338,7 +344,7 @@ describe('BoardService', () => {
       });
 
       let card = service.cardsById().get('T-1')!;
-      expect(card.stepId).toBe('st-2');
+      expect(card.laneId).toBe('ln-2');
       expect(card.stepStates).toEqual({ 'st-1': 'failed' });
       expect(card.updatedAt).toBe(failedAt);
 
@@ -357,7 +363,7 @@ describe('BoardService', () => {
       );
 
       card = service.cardsById().get('T-1')!;
-      expect(card.stepId).toBe('st-2');
+      expect(card.laneId).toBe('ln-2');
       expect(card.stepStates).toEqual({ 'st-1': 'failed', 'st-2': 'ok' });
     });
 
@@ -384,49 +390,49 @@ describe('BoardService', () => {
   });
 
   describe('automation toggles', () => {
-    it('publishes the flipped state keyed per pipeline stage and folds the echo', async () => {
-      const promise = service.toggleAutomation('PL-1', 'st-2');
-      expect(service.automation().isOn('PL-1', 'st-2')).toBe(true);
+    it('publishes the flipped state keyed per pipeline lane and folds the echo', async () => {
+      const promise = service.toggleAutomation('PL-1', 'ln-2');
+      expect(service.automation().isOn('PL-1', 'ln-2')).toBe(true);
       await promise;
 
       const command = events.lastCommand('requestAutomationToggle');
       expect(command?.requestAutomationToggle).toEqual({
         pipelineId: 'PL-1',
-        stepId: 'st-2',
+        laneId: 'ln-2',
         on: true,
       });
 
       events.emit(
-        wireEvent('automationToggled', { pipelineId: 'PL-1', stepId: 'st-2', on: false }, 'P-1'),
+        wireEvent('automationToggled', { pipelineId: 'PL-1', laneId: 'ln-2', on: false }, 'P-1'),
       );
       TestBed.tick();
-      expect(service.automation().isOn('PL-1', 'st-2')).toBe(false);
-      // Another stage of the same pipeline is unaffected.
-      expect(service.automation().isOn('PL-1', 'st-3')).toBe(false);
+      expect(service.automation().isOn('PL-1', 'ln-2')).toBe(false);
+      // Another lane of the same pipeline is unaffected.
+      expect(service.automation().isOn('PL-1', 'ln-3')).toBe(false);
     });
 
     it('treats an omitted `on` as false (canonical JSON drops defaults)', () => {
-      events.emit(wireEvent('automationToggled', { pipelineId: 'PL-1', stepId: 'st-3' }, 'P-1'));
+      events.emit(wireEvent('automationToggled', { pipelineId: 'PL-1', laneId: 'ln-3' }, 'P-1'));
       TestBed.tick();
-      expect(service.automation().isOn('PL-1', 'st-3')).toBe(false);
+      expect(service.automation().isOn('PL-1', 'ln-3')).toBe(false);
     });
 
     it('reverts on rejection', async () => {
       events.respondWith({ ok: false, rejectionMessage: 'down' });
-      await service.toggleAutomation('PL-1', 'st-3');
-      expect(service.automation().isOn('PL-1', 'st-3')).toBe(false);
+      await service.toggleAutomation('PL-1', 'ln-3');
+      expect(service.automation().isOn('PL-1', 'ln-3')).toBe(false);
     });
   });
 
   describe('changeType', () => {
     it('publishes the change and resets the step states optimistically', async () => {
-      activateProject('P-1', [{ id: 'T-1', stepId: 'st-2', stepStates: { 'st-1': 'ok' } }]);
+      activateProject('P-1', [{ id: 'T-1', laneId: 'ln-2', stepStates: { 'st-1': 'ok' } }]);
       TestBed.tick();
 
       const promise = service.changeType('T-1', 'docs');
       const optimistic = service.cardsById().get('T-1')!;
       expect(optimistic.type).toBe('docs');
-      expect(optimistic.stepId).toBe('st-2');
+      expect(optimistic.laneId).toBe('ln-2');
       expect(optimistic.stepStates).toEqual({});
       expect(await promise).toEqual({ ok: true });
       expect(events.lastCommand('requestCardTypeChange')?.requestCardTypeChange).toEqual({
@@ -449,11 +455,11 @@ describe('BoardService', () => {
 
   describe('pipeline assignment and reopen', () => {
     beforeEach(() => {
-      activateProject('P-1', [{ id: 'T-1', stepId: 'st-3' }]);
+      activateProject('P-1', [{ id: 'T-1', laneId: 'ln-3' }]);
       TestBed.tick();
     });
 
-    it('assignPipeline publishes and places the card in the first stage', async () => {
+    it('assignPipeline publishes and places the card in the first lane', async () => {
       events.emit(
         wireEvent(
           'pipelineSaved',
@@ -464,9 +470,12 @@ describe('BoardService', () => {
               name: 'Docs pass',
               revision: 1,
               updatedAt: new Date().toISOString(),
+              lanes: [
+                { id: 'd-ln-1', label: 'Writing', kanbanVisible: true },
+                { id: 'd-ln-2', label: 'Done', kanbanVisible: true, terminal: true },
+              ],
               steps: [
-                { id: 'd-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Write.' },
-                { id: 'd-2', kind: 'human', boardVisible: true, terminal: true },
+                { id: 'd-1', kind: 'agent', laneId: 'd-ln-1', agentKind: 'coder', instructions: 'Write.' },
               ],
             },
           },
@@ -478,7 +487,7 @@ describe('BoardService', () => {
       const promise = service.assignPipeline('T-1', 'PL-2');
       const optimistic = service.cardsById().get('T-1')!;
       expect(optimistic.pipelineId).toBe('PL-2');
-      expect(optimistic.stepId).toBe('d-1');
+      expect(optimistic.laneId).toBe('d-ln-1');
       expect(await promise).toEqual({ ok: true });
       expect(events.lastCommand('requestCardPipelineAssign')?.requestCardPipelineAssign).toEqual({
         cardId: 'T-1',
@@ -497,9 +506,12 @@ describe('BoardService', () => {
               name: 'Docs pass',
               revision: 1,
               updatedAt: new Date().toISOString(),
+              lanes: [
+                { id: 'd-ln-1', label: 'Writing', kanbanVisible: true },
+                { id: 'd-ln-2', label: 'Done', kanbanVisible: true, terminal: true },
+              ],
               steps: [
-                { id: 'd-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Write.' },
-                { id: 'd-2', kind: 'human', boardVisible: true, terminal: true },
+                { id: 'd-1', kind: 'agent', laneId: 'd-ln-1', agentKind: 'coder', instructions: 'Write.' },
               ],
             },
           },
@@ -517,12 +529,12 @@ describe('BoardService', () => {
       expect(service.cardsById().get('T-1')?.pipelineId).toBe('PL-1');
     });
 
-    it('reopen publishes requestCardReopen and moves to the first stage', async () => {
-      emitStageMove('T-1', 'st-5');
+    it('reopen publishes requestCardReopen and moves to the first lane', async () => {
+      emitStageMove('T-1', 'ln-5');
       TestBed.tick();
 
       const promise = service.reopen('T-1');
-      expect(service.cardsById().get('T-1')?.stepId).toBe('st-1');
+      expect(service.cardsById().get('T-1')?.laneId).toBe('ln-1');
       expect(await promise).toEqual({ ok: true });
       expect(events.lastCommand('requestCardReopen')?.requestCardReopen).toEqual({ cardId: 'T-1' });
     });
@@ -591,51 +603,51 @@ describe('BoardService', () => {
 
   describe('rejection comment', () => {
     beforeEach(() => {
-      activateProject('P-1', [{ id: 'T-1', stepId: 'st-5' }]);
+      activateProject('P-1', [{ id: 'T-1', laneId: 'ln-5' }]);
       TestBed.tick();
     });
 
-    it('opens the prompt on a drag out of the terminal stage and defers the publish', async () => {
-      expect(await service.requestMove('T-1', 'st-2')).toEqual({ ok: true });
+    it('opens the prompt on a drag out of the terminal lane and defers the publish', async () => {
+      expect(await service.requestMove('T-1', 'ln-2')).toEqual({ ok: true });
       expect(service.rejectionPrompt()).toEqual({ cardId: 'T-1' });
-      expect(service.cardsById().get('T-1')?.stepId).toBe('st-2');
-      expect(events.lastCommand('requestCardStepMove')).toBeUndefined();
+      expect(service.cardsById().get('T-1')?.laneId).toBe('ln-2');
+      expect(events.lastCommand('requestCardLaneMove')).toBeUndefined();
     });
 
     it('publishes the move with the comment once recorded', async () => {
-      await service.requestMove('T-1', 'st-2');
+      await service.requestMove('T-1', 'ln-2');
       service.recordRejectionComment('  needs more tests  ');
 
       expect(service.rejectionPrompt()).toBeNull();
       expect(service.cardsById().get('T-1')?.rejectionComment).toBe('needs more tests');
       await Promise.resolve();
-      expect(events.lastCommand('requestCardStepMove')?.requestCardStepMove).toEqual({
+      expect(events.lastCommand('requestCardLaneMove')?.requestCardLaneMove).toEqual({
         cardId: 'T-1',
-        toStepId: 'st-2',
+        toLaneId: 'ln-2',
         override: false,
         comment: 'needs more tests',
       });
     });
 
     it('publishes without a comment when dismissed', async () => {
-      await service.requestMove('T-1', 'st-2');
+      await service.requestMove('T-1', 'ln-2');
       service.dismissRejectionPrompt();
       await Promise.resolve();
-      expect(events.lastCommand('requestCardStepMove')?.requestCardStepMove?.comment).toBe('');
+      expect(events.lastCommand('requestCardLaneMove')?.requestCardLaneMove?.comment).toBe('');
     });
 
-    it('reverts to the terminal stage when the deferred move is rejected', async () => {
-      await service.requestMove('T-1', 'st-2');
+    it('reverts to the terminal lane when the deferred move is rejected', async () => {
+      await service.requestMove('T-1', 'ln-2');
       events.respondWith({ ok: false, rejectionMessage: 'down' });
       service.recordRejectionComment('why');
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(service.cardsById().get('T-1')?.stepId).toBe('st-5');
+      expect(service.cardsById().get('T-1')?.laneId).toBe('ln-5');
     });
 
-    it('does not open the prompt for moves into the terminal stage', async () => {
-      activateProject('P-1', [{ id: 'T-2', stepId: 'st-4' }]);
+    it('does not open the prompt for moves into the terminal lane', async () => {
+      activateProject('P-1', [{ id: 'T-2', laneId: 'ln-4' }]);
       TestBed.tick();
-      expect(await service.requestMove('T-2', 'st-5')).toEqual({ ok: true });
+      expect(await service.requestMove('T-2', 'ln-5')).toEqual({ ok: true });
       expect(service.rejectionPrompt()).toBeNull();
     });
   });

@@ -65,14 +65,15 @@ export const pipelineHandlers: Record<string, FoldHandler> = {
         }),
       );
     }
-    // The run owns step transitions: the card follows the executing step
-    // (hidden steps project to the previous visible swimlane client-side).
+    // The run owns transitions: the card follows the executing step's lane
+    // (a hidden step shares a lane with its neighbors).
     const card = project.cards.get(body.cardId);
     if (card) {
+      const stepLaneId = project.pipelines.get(body.pipelineId)?.stepById(body.stepId)?.laneId;
       project.cards.set(
         body.cardId,
         card.with({
-          stepId: body.stepId,
+          ...(stepLaneId !== undefined ? { laneId: stepLaneId } : {}),
           stepStates: { ...card.stepStates, [body.stepId]: 'running' },
           updatedAt: envelope.occurredAt,
         }),
@@ -110,7 +111,7 @@ export const pipelineHandlers: Record<string, FoldHandler> = {
           ...(body.error !== undefined ? { error: body.error } : {}),
           ...(body.outcome !== undefined ? { outcome: body.outcome } : {}),
           ...(body.feedback !== undefined ? { feedback: body.feedback } : {}),
-          ...(body.routedToStepId !== undefined ? { routedToStepId: body.routedToStepId } : {}),
+          ...(body.routedToLaneId !== undefined ? { routedToLaneId: body.routedToLaneId } : {}),
           stepId: undefined,
           stepKind: undefined,
         }),

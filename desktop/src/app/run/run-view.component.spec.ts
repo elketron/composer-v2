@@ -7,19 +7,45 @@ import {
   seedProject,
   wireEvent,
 } from '../core/events/events-client.fake';
+import { RestClient } from '../core/rest';
 import { ShellService } from '../shell/shell.service';
 import { BoardService } from '../board/board.service';
 import { PipelineService } from '../pipelines/pipeline.service';
 import { RunViewComponent } from './run-view.component';
 
+const A_TS_DIFF = [
+  '--- a/a.ts',
+  '+++ b/a.ts',
+  '@@ -1,3 +1,3 @@',
+  ' line one',
+  '-line two',
+  '+CHANGED',
+  ' line three',
+].join('\n');
+
 describe('RunViewComponent', () => {
   let events: FakeEventsClient;
+  let restCalls: string[];
+  let restResponse: { ok: boolean; body: unknown } | null;
 
   beforeEach(async () => {
     events = new FakeEventsClient();
+    restCalls = [];
+    restResponse = null;
     await TestBed.configureTestingModule({
       imports: [RunViewComponent],
-      providers: [provideFakeEventsClient(events)],
+      providers: [
+        provideFakeEventsClient(events),
+        {
+          provide: RestClient,
+          useValue: {
+            get: (path: string) => {
+              restCalls.push(path);
+              return Promise.resolve(restResponse);
+            },
+          },
+        },
+      ],
     }).compileComponents();
     // Instantiate before seeding: folds only see events after subscription.
     TestBed.inject(ShellService);
@@ -108,5 +134,53 @@ describe('RunViewComponent', () => {
   it('an unknown card shows the empty state', async () => {
     const fixture = await render('T-404');
     expect((fixture.nativeElement as HTMLElement).textContent).toContain('no card "T-404"');
+  });
+
+  it('expands an edited file into its working-tree diff', async () => {
+    events.emit(
+      wireEvent('agentSessionObserved', {
+        sessionId: 'A-1',
+        files: [{ path: 'a.ts', additions: 1, deletions: 1 }],
+      }),
+    );
+    restResponse = { ok: true, body: { files: [{ path: 'a.ts', patch: A_TS_DIFF }] } };
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+
+    // The file list renders with its delta; the diff is closed at first.
+    const row = el.querySelector<HTMLButtonElement>('.file-row')!;
+    expect(row?.textContent).toContain('a.ts');
+    expect(row?.textContent).toContain('+1');
+    expect(el.querySelector('.file-diff')).toBeNull();
+
+    row.click();
+    await fixture.whenStable();
+
+    expect(restCalls).toEqual(['/sessions/A-1/diff?projectId=P-1']);
+    const diff = el.querySelector('.file-diff');
+    expect(diff).not.toBeNull();
+    expect(diff!.innerHTML).toContain('CHANGED');
+
+    // A second click collapses the diff.
+    el.querySelector<HTMLButtonElement>('.file-row')!.click();
+    await fixture.whenStable();
+    expect(el.querySelector('.file-diff')).toBeNull();
+  });
+
+  it('falls back to the no-diff note when the endpoint fails', async () => {
+    events.emit(
+      wireEvent('agentSessionObserved', {
+        sessionId: 'A-1',
+        files: [{ path: 'a.ts', additions: 1, deletions: 1 }],
+      }),
+    );
+    const fixture = await render();
+    const el = fixture.nativeElement as HTMLElement;
+
+    el.querySelector<HTMLButtonElement>('.file-row')!.click();
+    await fixture.whenStable();
+
+    expect(el.querySelector('.file-diff')).toBeNull();
+    expect(el.textContent).toContain('no working-tree diff for this file');
   });
 });

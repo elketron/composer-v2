@@ -20,7 +20,8 @@ export function composerOverview(state: State, scope: string[], projectId: strin
     const cards = [...board.cards.values()];
     const byStep: Record<string, number> = {};
     for (const card of cards) {
-      const label = board.pipelineOf(card)?.visibleStepOf(card.stepId) ?? card.stepId;
+      const pipeline = board.pipelineOf(card);
+      const label = pipeline?.laneById(card.laneId)?.label ?? card.laneId;
       byStep[label] = (byStep[label] ?? 0) + 1;
     }
     const latestRuns = [...new Set([...board.runs.values()].map((run) => run.cardId))]

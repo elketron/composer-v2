@@ -18,7 +18,7 @@ export interface RunInit {
   error?: string;
   outcome?: string;
   feedback?: string;
-  routedToStepId?: string;
+  routedToLaneId?: string;
   stepId?: string;
   stepKind?: PipelineStepKind;
 }
@@ -34,7 +34,7 @@ export class Run {
   readonly error?: string;
   readonly outcome?: string;
   readonly feedback?: string;
-  readonly routedToStepId?: string;
+  readonly routedToLaneId?: string;
   readonly stepId?: string;
   readonly stepKind?: PipelineStepKind;
 
@@ -49,7 +49,7 @@ export class Run {
     if (init.error !== undefined) this.error = init.error;
     if (init.outcome !== undefined) this.outcome = init.outcome;
     if (init.feedback !== undefined) this.feedback = init.feedback;
-    if (init.routedToStepId !== undefined) this.routedToStepId = init.routedToStepId;
+    if (init.routedToLaneId !== undefined) this.routedToLaneId = init.routedToLaneId;
     if (init.stepId !== undefined) this.stepId = init.stepId;
     if (init.stepKind !== undefined) this.stepKind = init.stepKind;
   }
@@ -84,7 +84,7 @@ export class Run {
       ...(this.error !== undefined ? { error: this.error } : {}),
       ...(this.outcome !== undefined ? { outcome: this.outcome } : {}),
       ...(this.feedback !== undefined ? { feedback: this.feedback } : {}),
-      ...(this.routedToStepId !== undefined ? { routedToStepId: this.routedToStepId } : {}),
+      ...(this.routedToLaneId !== undefined ? { routedToLaneId: this.routedToLaneId } : {}),
       ...(this.stepId !== undefined ? { stepId: this.stepId } : {}),
       ...(this.stepKind !== undefined ? { stepKind: this.stepKind } : {}),
     };

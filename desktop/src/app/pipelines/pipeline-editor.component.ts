@@ -1,14 +1,34 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  afterRenderEffect,
+  computed,
+  effect,
+  inject,
+  signal,
+  viewChild,
+  viewChildren,
+  type ElementRef,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { LucideAngularModule, type LucideIconData } from 'lucide-angular';
 import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  BookOpen,
   Bot,
   Check,
+  Code,
+  Copy,
+  EllipsisVertical,
+  FlaskConical,
+  Folder,
   Plus,
+  Rocket,
   Save,
+  Server,
   SquareCheck,
   Terminal,
   Trash2,
@@ -23,29 +43,75 @@ import {
   PipelineCatalog,
   PipelineStepKind,
   PIPELINE_AGENT_KINDS,
+  PIPELINE_CATEGORIES,
   type PipelineAgentCatalogEntry,
+  type PipelineCategoryCatalogEntry,
   type RuntimeStepCatalogEntry,
 } from '../core/models/pipeline.models';
 import { PipelineService } from './pipeline.service';
 import { EditorDraft, StepDraft } from './editor-draft';
+import {
+  paletteModel,
+  STEP_KIND_BADGES,
+  type JustRecipeEntry,
+  type StepPreset,
+  type StepTypeMeta,
+} from './step-types';
 
-/** One backward route a step announces (outcome or failure recovery). */
-interface StepRoute {
-  readonly key: string;
+/** One sidebar group: a category and the pipelines filed under it. */
+interface SidebarGroup {
+  readonly id: string;
   readonly label: string;
-  readonly target: string;
-  readonly kind: 'outcome' | 'failure';
+  readonly icon: LucideIconData;
+  readonly pipelines: Pipeline[];
 }
 
+/** One backward edge of the diagram's route overlay (returns work earlier). */
+interface BackwardEdge {
+  readonly key: string;
+  readonly path: string;
+  readonly label: string;
+  readonly labelX: number;
+  readonly labelY: number;
+}
+
+/** The flow-relative position of a node (the overflow menu's anchor). */
+interface NodeRect {
+  readonly right: number;
+  readonly bottom: number;
+}
+
+/** The palette's anchor: append at the end, or insert after a step index. */
+interface PaletteAnchor {
+  readonly afterIndex: number | null;
+}
+
+/** One definition stat row of the settings tab. */
+interface DefinitionStat {
+  readonly label: string;
+  readonly value: string;
+}
+
+/** The sidebar icon per category id; unknown ids fall back to General. */
+const CATEGORY_ICONS: Readonly<Record<string, LucideIconData>> = {
+  coding: Code,
+  documentation: BookOpen,
+  research: FlaskConical,
+  release: Rocket,
+  infrastructure: Server,
+};
+
+const GENERAL_ICON = Folder;
+
 /**
- * The pipeline editor (S4, staged in Phase 10; the linear visual editor in
- * S37). Pipelines are user-authored (the ownership rule): the view lists
- * the project's pipelines and authors them from scratch. Editing is a full
- * editor that fills the route: a linear diagram of the pipeline's step
- * nodes, with a right-hand side panel that opens for the selected node's
- * settings. A step made board-visible is its own swimlane; an agent step's
- * agent kind is picked from the backend's shipped agents. The draft's rules
- * (conversion, validation, reordering, id allocation) live on `EditorDraft`.
+ * The pipeline editor (S37 redesign): a category-grouped sidebar of the
+ * project's pipelines beside a full editor — a header (name, save, overflow
+ * menu), a Steps/Settings tab bar, and per tab the flow diagram with its
+ * inspector or the pipeline's settings. Pipelines are user-authored (the
+ * ownership rule); a step made board-visible is its own swimlane; an agent
+ * step's agent kind is picked from the backend's shipped agents. The
+ * draft's rules (conversion, validation, reordering, id allocation) live on
+ * `EditorDraft`.
  */
 @Component({
   selector: 'app-pipeline-editor',
@@ -53,6 +119,9 @@ interface StepRoute {
   imports: [LucideAngularModule, FormsModule],
   templateUrl: './pipeline-editor.component.html',
   styleUrl: './pipeline-editor.component.scss',
+  host: {
+    '(document:click)': 'onDocumentClick()',
+  },
 })
 export class PipelineEditorComponent {
   private readonly shell = inject(ShellService);
@@ -63,16 +132,42 @@ export class PipelineEditorComponent {
   protected readonly projectId = computed(() => this.shell.activeTabId());
   protected readonly list = computed(() => this.pipelines.pipelines());
 
-  /** The server's executor catalog (agents + runtime steps); empty until loaded. */
-  protected readonly catalog = signal<PipelineCatalog>({ agents: [], runtimeSteps: [] });
+  /** The server's executor catalog (agents + runtime steps + categories); empty until loaded. */
+  protected readonly catalog = signal<PipelineCatalog>({ agents: [], runtimeSteps: [], categories: [] });
+
+  /** The active project's justfile recipes (the Set step's presets). */
+  protected readonly justRecipes = signal<readonly JustRecipeEntry[]>([]);
 
   protected readonly kinds: readonly PipelineStepKind[] = ['agent', 'command', 'human'];
 
-  /** The working copy being authored; null shows the list. */
+  /** The working copy being authored; null shows the empty main area. */
   protected readonly editing = signal<EditorDraft | null>(null);
+
+  /** The active editor tab (the mockup's Steps / Settings). */
+  protected readonly editorTab = signal<'steps' | 'settings'>('steps');
+
+  /** The header overflow menu (delete pipeline). */
+  protected readonly menuOpen = signal(false);
+
+  /** The add-step palette's anchor (null = closed). */
+  protected readonly paletteAnchor = signal<PaletteAnchor | null>(null);
+
+  /** The node whose overflow menu is open (step id; null = closed). */
+  protected readonly nodeMenuFor = signal<string | null>(null);
+
+  /** The diagram's measured backward edges and node anchors (flow-relative). */
+  protected readonly backwardEdges = signal<readonly BackwardEdge[]>([]);
+  protected readonly nodeRects = signal<readonly NodeRect[]>([]);
+
+  private readonly nodeEls = viewChildren<ElementRef<HTMLElement>>('nodeEl');
+  private readonly flowEl = viewChild<ElementRef<HTMLElement>>('flowEl');
+  private resizeObserver: ResizeObserver | null = null;
 
   /** The step node selected in the diagram (opens the node side panel). */
   protected readonly selectedStepId = signal<string | null>(null);
+
+  /** The inspector's tab (General / Outcomes / Advanced). */
+  protected readonly inspectorTab = signal<'general' | 'outcomes' | 'advanced'>('general');
 
   protected readonly selectedStepIndex = computed(() => {
     const current = this.selectedStepId();
@@ -104,7 +199,38 @@ export class PipelineEditorComponent {
     up: ArrowUp,
     down: ArrowDown,
     done: Check,
+    more: EllipsisVertical,
+    copy: Copy,
   };
+
+  // ---- Sidebar (category groups) ----
+
+  /** The category list the sidebar groups by (catalog first, local fallback). */
+  protected readonly categoryOptions = computed<readonly PipelineCategoryCatalogEntry[]>(() => {
+    const categories = this.catalog().categories;
+    return categories.length > 0 ? categories : PIPELINE_CATEGORIES;
+  });
+
+  /** The pipelines grouped by category (unknown/absent under General, last). */
+  protected readonly sidebarGroups = computed<readonly SidebarGroup[]>(() => {
+    const categories = this.categoryOptions();
+    const groups = categories.map((category) => ({
+      id: category.id,
+      label: category.label,
+      icon: CATEGORY_ICONS[category.id] ?? GENERAL_ICON,
+      pipelines: [] as Pipeline[],
+    }));
+    const general: SidebarGroup = { id: 'general', label: 'General', icon: GENERAL_ICON, pipelines: [] };
+    for (const pipeline of this.list()) {
+      const match = groups.find((group) => group.id === pipeline.category);
+      (match ?? general).pipelines.push(pipeline);
+    }
+    return [...groups, general].filter((group) => group.pipelines.length > 0);
+  });
+
+  protected isActive(pipelineId: string): boolean {
+    return this.editing()?.id === pipelineId;
+  }
 
   constructor() {
     effect(() => {
@@ -114,6 +240,27 @@ export class PipelineEditorComponent {
     effect(() => {
       if (this.rest.serverBase !== null) void this.loadCatalog();
     });
+    // The project's justfile recipes (the Set step palette's presets and
+    // the command inspector's dropdown) reload with the project.
+    effect(() => {
+      const projectId = this.projectId();
+      if (projectId !== null && this.rest.serverBase !== null) void this.loadRecipes(projectId);
+    });
+    // The route overlay measures the rendered nodes after each layout pass
+    // (draft edits and the inspector opening/closing both shift geometry;
+    // the ResizeObserver covers width changes between renders).
+    afterRenderEffect(() => {
+      const flow = this.flowEl()?.nativeElement ?? null;
+      if (flow !== null && this.resizeObserver === null && typeof ResizeObserver !== 'undefined') {
+        this.resizeObserver = new ResizeObserver(() => this.measureDiagram());
+        this.resizeObserver.observe(flow);
+      }
+      void this.nodeEls().length;
+      // Selection toggles the inspector, which shifts the flow's width.
+      void this.selectedStepId();
+      this.measureBackwardEdges();
+    });
+    inject(DestroyRef).onDestroy(() => this.resizeObserver?.disconnect());
   }
 
   private async loadCatalog(): Promise<void> {
@@ -121,7 +268,16 @@ export class PipelineEditorComponent {
     if (response === null || !response.ok) return;
     const agents = Array.isArray(response.body.agents) ? response.body.agents : [];
     const runtimeSteps = Array.isArray(response.body.runtimeSteps) ? response.body.runtimeSteps : [];
-    this.catalog.set({ agents, runtimeSteps });
+    const categories = Array.isArray(response.body.categories) ? response.body.categories : [];
+    this.catalog.set({ agents, runtimeSteps, categories });
+  }
+
+  private async loadRecipes(projectId: string): Promise<void> {
+    const response = await this.rest.get<{ recipes: readonly JustRecipeEntry[] }>(
+      `/justfile?projectId=${projectId}`,
+    );
+    const recipes = response !== null && response.ok ? (response.body.recipes ?? []) : [];
+    this.justRecipes.set(recipes.filter((recipe) => typeof recipe?.name === 'string' && recipe.name !== ''));
   }
 
   // ---- Executor catalog ----
@@ -152,17 +308,33 @@ export class PipelineEditorComponent {
     this.updateStep(index, { command: preset.command });
   }
 
-  // ---- List (browse) mode ----
-
-  protected stepSummary(pipeline: Pipeline): string {
-    return pipeline.steps.map((step) => step.label).join(' → ');
-  }
-
-  protected canEdit(): boolean {
-    return this.projectId() !== null;
+  /** Applies a justfile recipe (`just <name>`) to the selected command step. */
+  protected applyJustRecipe(index: number, recipeName: string): void {
+    if (recipeName.trim() === '') return;
+    this.updateStep(index, { command: `just ${recipeName.trim()}` });
   }
 
   // ---- Diagram node representation ----
+
+  /** The palette the add-step popover renders (registry + catalog presets). */
+  protected readonly paletteModel = computed(() =>
+    paletteModel(this.agentOptions(), this.runtimeSteps(), this.justRecipes()),
+  );
+
+  /** The type badge vocabulary (Agent / Approval / Set / Completion). */
+  protected stepBadge(step: StepDraft): string {
+    return STEP_KIND_BADGES[step.terminal ? 'completion' : step.kind];
+  }
+
+  /** The inspector's header: "Step 2 — reviewer". */
+  protected panelTitle(step: StepDraft): string {
+    const index = this.selectedStepIndex();
+    return `Step ${index === null ? '?' : index + 1} — ${this.nodeLabel(step)}`;
+  }
+
+  protected isTerminalStep(stepId: string): boolean {
+    return this.editing()?.steps.find((step) => step.id === stepId)?.terminal === true;
+  }
 
   protected stepIcon(kind: PipelineStepKind): LucideIconData {
     switch (kind) {
@@ -175,8 +347,13 @@ export class PipelineEditorComponent {
     }
   }
 
+  /** The step type's one-line description (from the step-type registry). */
+  protected stepTypeHint(kind: PipelineStepKind): string {
+    return this.paletteModel().find((type) => type.kind === kind)?.description ?? '';
+  }
+
   protected nodeLabel(step: StepDraft): string {
-    if (step.terminal) return 'done';
+    if (step.terminal) return step.description?.trim() || 'done';
     switch (step.kind) {
       case 'agent':
         return step.agentKind.trim() !== '' ? this.agentLabel(step.agentKind) : 'agent';
@@ -188,10 +365,10 @@ export class PipelineEditorComponent {
   }
 
   protected nodeDetail(step: StepDraft): string {
-    if (step.terminal) return 'completion';
+    if (step.terminal) return 'Mark card as complete.';
     switch (step.kind) {
       case 'agent':
-        return this.agentLabel(step.agentKind);
+        return step.instructions?.trim() || this.agentLabel(step.agentKind);
       case 'command':
         return step.command || 'shell command';
       case 'human':
@@ -199,35 +376,149 @@ export class PipelineEditorComponent {
     }
   }
 
-  /** The step's backward routes: named outcomes plus its failure recovery. */
-  protected stepRoutes(index: number): StepRoute[] {
-    const draft = this.editing();
-    const step = draft?.steps[index];
-    if (draft === null || step === undefined || step.terminal) return [];
-    const routes: StepRoute[] = [];
-    for (const rule of step.outcomes) {
-      if (rule.toStepId.trim() === '') continue;
-      routes.push({
-        key: `outcome-${rule.outcome}-${rule.toStepId}`,
-        label: rule.outcome.trim() || 'outcome',
-        target: this.nodeLabelFor(draft, rule.toStepId),
-        kind: 'outcome',
-      });
-    }
-    if (step.errorReturnToStepId.trim() !== '') {
-      routes.push({
-        key: 'failure',
-        label: 'failure',
-        target: this.nodeLabelFor(draft, step.errorReturnToStepId),
-        kind: 'failure',
-      });
-    }
-    return routes;
+  /** The step's named outcomes that proceed (green chips on the forward edge). */
+  protected proceedOutcomes(index: number): readonly string[] {
+    const step = this.editing()?.steps[index];
+    if (step === undefined || step.terminal) return [];
+    return step.outcomes
+      .filter((rule) => rule.toStepId.trim() === '')
+      .map((rule) => rule.outcome.trim() || 'outcome');
   }
 
-  private nodeLabelFor(draft: EditorDraft, id: string): string {
-    const target = draft.steps.find((step) => step.id === id);
-    return target === undefined ? id : this.nodeLabel(target);
+  // ---- Diagram geometry (the route overlay + node menus) ----
+
+  /** Re-measures the diagram's nodes (draft edits and resizes). */
+  private measureDiagram(): void {
+    const flow = this.flowEl()?.nativeElement;
+    if (flow === undefined) return;
+    const flowRect = flow.getBoundingClientRect();
+    const rects = this.nodeEls().map((el) => {
+      const rect = el.nativeElement.getBoundingClientRect();
+      return {
+        right: rect.right - flowRect.left,
+        bottom: rect.bottom - flowRect.top,
+      };
+    });
+    this.nodeRects.set(rects);
+    this.measureBackwardEdges();
+  }
+
+  /**
+   * The backward routes as curved left-side edges (a route leaves the
+   * step's left edge and re-enters the earlier lane's node).
+   */
+  private measureBackwardEdges(): void {
+    const draft = this.editing();
+    if (draft === null) {
+      this.backwardEdges.set([]);
+      return;
+    }
+    const flow = this.flowEl()?.nativeElement;
+    if (flow === undefined) return;
+    const flowRect = flow.getBoundingClientRect();
+    const rects = this.nodeEls().map((el) => {
+      const rect = el.nativeElement.getBoundingClientRect();
+      return {
+        left: rect.left - flowRect.left,
+        centerY: rect.top - flowRect.top + rect.height / 2,
+      };
+    });
+    const edges: BackwardEdge[] = [];
+    let lane = 0;
+    for (const [index, step] of draft.steps.entries()) {
+      if (step.terminal) continue;
+      const routes: Array<{ kind: string; label: string; toStepId: string }> = [
+        ...step.outcomes
+          .filter((rule) => rule.toStepId.trim() !== '')
+          .map((rule) => ({
+            kind: 'outcome',
+            label: rule.outcome.trim() || 'outcome',
+            toStepId: rule.toStepId,
+          })),
+        ...(step.errorReturnToStepId.trim() !== ''
+          ? [{ kind: 'failure', label: 'failure', toStepId: step.errorReturnToStepId }]
+          : []),
+      ];
+      for (const route of routes) {
+        const targetIndex = draft.steps.findIndex((candidate) => candidate.id === route.toStepId);
+        const from = rects[index];
+        const to = rects[targetIndex];
+        if (from === undefined || to === undefined || targetIndex < 0 || targetIndex >= index) continue;
+        const x0 = from.left - 8;
+        const y0 = from.centerY;
+        const x1 = to.left - 8;
+        const y1 = to.centerY;
+        const gutter = Math.min(x0, x1) - 36 - lane * 26;
+        lane += 1;
+        edges.push({
+          key: `${step.id}-${route.kind}-${route.toStepId}-${edges.length}`,
+          path: `M ${x0} ${y0} C ${gutter} ${y0}, ${gutter} ${y1}, ${x1} ${y1}`,
+          label: route.label,
+          labelX: (x0 + 6 * gutter + x1) / 8,
+          labelY: (y0 + y1) / 2,
+        });
+      }
+    }
+    this.backwardEdges.set(edges);
+  }
+
+  // ---- Add-step palette ----
+
+  protected openPalette(afterIndex: number | null): void {
+    this.nodeMenuFor.set(null);
+    this.paletteAnchor.update((current) =>
+      current !== null && current.afterIndex === afterIndex ? null : { afterIndex },
+    );
+  }
+
+  protected async applyPreset(type: StepTypeMeta, preset: StepPreset): Promise<void> {
+    const anchor = this.paletteAnchor();
+    this.paletteAnchor.set(null);
+    if (type.kind === 'completion') {
+      // The completion step is the pinned terminal node; both presets select
+      // it ("Custom completion" renames it in the inspector).
+      const draft = this.editing();
+      this.selectedStepId.set(draft?.steps[draft.steps.length - 1]?.id ?? null);
+      return;
+    }
+    const current = this.editing();
+    if (current === null) return;
+    const before = new Set(current.steps.map((step) => step.id));
+    const next =
+      anchor === null || anchor.afterIndex === null
+        ? current.addStep(preset.patch)
+        : current.insertStep(anchor.afterIndex, preset.patch);
+    this.editing.set(next);
+    this.selectFreshStep(before);
+  }
+
+  // ---- Node overflow menu ----
+
+  protected toggleNodeMenu(stepId: string): void {
+    this.paletteAnchor.set(null);
+    this.nodeMenuFor.update((current) => (current === stepId ? null : stepId));
+  }
+
+  protected nodeMenuPosition(stepId: string): { left: number; top: number } | null {
+    const index = this.editing()?.steps.findIndex((step) => step.id === stepId) ?? -1;
+    const rect = this.nodeRects()[index];
+    return rect === undefined ? null : { left: rect.right - 8, top: rect.bottom + 4 };
+  }
+
+  protected duplicateStep(stepId: string): void {
+    this.nodeMenuFor.set(null);
+    const index = this.editing()?.steps.findIndex((step) => step.id === stepId) ?? -1;
+    if (index < 0) return;
+    const before = new Set(this.editing()?.steps.map((step) => step.id) ?? []);
+    this.update((draft) => draft.duplicateStep(index));
+    this.selectFreshStep(before);
+  }
+
+  protected deleteStep(stepId: string): void {
+    this.nodeMenuFor.set(null);
+    const index = this.editing()?.steps.findIndex((step) => step.id === stepId) ?? -1;
+    if (index < 0) return;
+    this.removeStep(index);
   }
 
   // ---- Entering / leaving edit mode ----
@@ -238,7 +529,8 @@ export class PipelineEditorComponent {
     this.openDraft(EditorDraft.newDraft(projectId));
   }
 
-  protected edit(pipeline: Pipeline): void {
+  protected openPipeline(pipeline: Pipeline): void {
+    if (this.editing()?.id === pipeline.id) return;
     const projectId = this.projectId();
     if (projectId === null) return;
     this.openDraft(EditorDraft.fromPipeline(projectId, pipeline));
@@ -248,22 +540,56 @@ export class PipelineEditorComponent {
     this.attemptedSave.set(false);
     this.editing.set(draft);
     this.selectedStepId.set(null);
+    this.editorTab.set('steps');
+    this.menuOpen.set(false);
+    this.paletteAnchor.set(null);
+    this.nodeMenuFor.set(null);
+  }
+
+  protected closeEditor(): void {
+    this.cancel();
   }
 
   protected cancel(): void {
     this.attemptedSave.set(false);
     this.editing.set(null);
     this.selectedStepId.set(null);
+    this.menuOpen.set(false);
+    this.paletteAnchor.set(null);
+    this.nodeMenuFor.set(null);
   }
+
+  // ---- Tabs ----
+
+  protected selectTab(tab: 'steps' | 'settings'): void {
+    this.editorTab.set(tab);
+    this.menuOpen.set(false);
+    this.paletteAnchor.set(null);
+    this.nodeMenuFor.set(null);
+  }
+
+  // ---- Header ----
 
   protected updateName(name: string): void {
     this.update((draft) => draft.withName(name));
+  }
+
+  protected toggleMenu(): void {
+    this.menuOpen.update((open) => !open);
+  }
+
+  /** Any document click outside the popovers closes them. */
+  protected onDocumentClick(): void {
+    if (this.menuOpen()) this.menuOpen.set(false);
+    if (this.paletteAnchor() !== null) this.paletteAnchor.set(null);
+    if (this.nodeMenuFor() !== null) this.nodeMenuFor.set(null);
   }
 
   // ---- Node selection ----
 
   protected selectStep(index: number): void {
     this.selectedStepId.set(this.editing()?.steps[index]?.id ?? null);
+    this.inspectorTab.set('general');
   }
 
   private selectStepById(id: string): void {
@@ -271,22 +597,6 @@ export class PipelineEditorComponent {
   }
 
   // ---- Step (node) mutations ----
-
-  protected addStep(): void {
-    const current = this.editing();
-    if (current === null) return;
-    const before = new Set(current.steps.map((step) => step.id));
-    this.editing.set(current.addStep());
-    this.selectFreshStep(before);
-  }
-
-  protected insertStep(afterIndex: number): void {
-    const current = this.editing();
-    if (current === null) return;
-    const before = new Set(current.steps.map((step) => step.id));
-    this.editing.set(current.insertStep(afterIndex));
-    this.selectFreshStep(before);
-  }
 
   /** Selects the step the mutation just added (its id is newly allocated). */
   private selectFreshStep(before: ReadonlySet<string>): void {
@@ -337,6 +647,29 @@ export class PipelineEditorComponent {
     return this.editing()?.errorTargets(index) ?? [];
   }
 
+  // ---- Settings tab ----
+
+  protected updateCategory(category: string): void {
+    this.update((draft) => draft.withCategory(category));
+  }
+
+  /** The saved pipeline behind the draft (absent for a fresh one). */
+  protected readonly savedPipeline = computed(
+    () => this.list().find((pipeline) => pipeline.id === this.editing()?.id),
+  );
+
+  protected readonly definitionStats = computed<readonly DefinitionStat[]>(() => {
+    const draft = this.editing();
+    if (draft === null) return [];
+    const saved = this.savedPipeline();
+    return [
+      { label: 'id', value: draft.id === '' ? 'new' : draft.id },
+      { label: 'revision', value: saved === undefined ? '—' : String(saved.revision) },
+      { label: 'lanes', value: String(draft.steps.filter((step) => step.boardVisible || step.terminal).length) },
+      { label: 'steps', value: String(draft.steps.filter((step) => !step.terminal).length) },
+    ];
+  });
+
   // ---- Save / delete ----
 
   protected async save(): Promise<void> {
@@ -347,22 +680,28 @@ export class PipelineEditorComponent {
       this.editing.set(current.with({ rejection: null }));
       return;
     }
-    const ok = await this.pipelines.save(current.projectId, current.toPipeline());
-    if (!ok) {
+    const outcome = await this.pipelines.save(current.projectId, current.toPipeline());
+    if (!outcome.ok) {
       const latest = this.editing();
       if (latest !== null) {
         this.editing.set(latest.with({ rejection: this.pipelines.rejection() ?? 'the server rejected the pipeline' }));
       }
       return;
     }
+    // Stay in the editor; a fresh draft adopts the allocated id so a second
+    // save updates instead of duplicating.
+    const latest = this.editing();
+    if (latest !== null && latest.id === '' && outcome.pipelineId !== undefined) {
+      this.editing.set(latest.with({ id: outcome.pipelineId, rejection: null }));
+    }
     this.attemptedSave.set(false);
-    this.editing.set(null);
-    this.selectedStepId.set(null);
   }
 
-  protected async remove(pipelineId: string): Promise<void> {
-    const projectId = this.projectId();
-    if (projectId === null) return;
+  /** Deletes the pipeline being edited (the overflow menu and danger zone). */
+  protected async deleteEditing(): Promise<void> {
+    const current = this.editing();
+    if (current === null || current.id === '') return;
+    this.menuOpen.set(false);
     const confirmed = await this.confirm.confirm({
       title: 'Delete this pipeline?',
       detail: 'Assigned cards block the deletion; reassign them first.',
@@ -370,7 +709,8 @@ export class PipelineEditorComponent {
       danger: true,
     });
     if (!confirmed) return;
-    await this.pipelines.remove(projectId, pipelineId);
+    const removed = await this.pipelines.remove(current.projectId, current.id);
+    if (removed) this.cancel();
   }
 
   private update(fn: (draft: EditorDraft) => EditorDraft): void {

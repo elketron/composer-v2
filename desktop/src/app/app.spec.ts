@@ -105,7 +105,7 @@ describe('restart snapshot folding', () => {
             id: 'T-1',
             projectId: 'P-1',
             type: WireCardType.CARD_TYPE_DESIGN,
-            stepId: 'st-3',
+            laneId: 'ln-3',
           }),
         },
         'P-1',
@@ -121,7 +121,7 @@ describe('restart snapshot folding', () => {
     events.emit(
       wireEvent(
         'automationToggled',
-        { pipelineId: 'PL-1', stepId: 'st-2', on: false },
+        { pipelineId: 'PL-1', laneId: 'ln-2', on: false },
         'P-1',
       ),
     );
@@ -133,7 +133,7 @@ describe('restart snapshot folding', () => {
       'T-2:coding',
     ]);
     expect(board.blockedIds().has('T-2')).toBe(true);
-    expect(board.automation().isOn('PL-1', 'st-2')).toBe(false);
+    expect(board.automation().isOn('PL-1', 'ln-2')).toBe(false);
     expect(plan.messages().map((message) => `${message.role}:${message.index}`)).toEqual([
       'user:1',
       'agent:2',
@@ -143,12 +143,12 @@ describe('restart snapshot folding', () => {
 
     events.emit(
       wireEvent(
-        'cardStepMoved',
-        { cardId: 'T-1', pipelineId: 'PL-1', toStepId: 'st-4' },
+        'cardLaneMoved',
+        { cardId: 'T-1', pipelineId: 'PL-1', toLaneId: 'ln-4' },
         'P-1',
       ),
     );
     TestBed.tick();
-    expect(board.cardsById().get('T-1')?.stepId).toBe('st-4');
+    expect(board.cardsById().get('T-1')?.laneId).toBe('ln-4');
   });
 });

@@ -133,7 +133,7 @@ describe('composer state reads', () => {
 
     await processor.execute(alpha, {
       type: 'requestCardCreate',
-      card: { id: '', projectId: alpha, type: 'coding', title: 'Ship it', description: '', tags: [], pipelineId: '', stepId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
+      card: { id: '', projectId: alpha, type: 'coding', title: 'Ship it', description: '', tags: [], pipelineId: '', laneId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
     });
     await bus.publish(alpha, 'pipelineRunStarted', {
       runId: 'R-1',
@@ -151,7 +151,7 @@ describe('composer state reads', () => {
     });
 
     const single = JSON.parse((await call(id, 'composer_overview', { projectId: alpha })).content as string);
-    expect(single.cards).toEqual({ total: 1, byStep: { 'st-1': 1 } });
+    expect(single.cards).toEqual({ total: 1, byStep: { 'Implementation': 1 } });
     expect(single.latestRuns).toEqual([expect.objectContaining({ status: 'failed', error: 'tests red' })]);
 
     const portfolio = JSON.parse((await call(id, 'composer_overview')).content as string);
@@ -163,7 +163,7 @@ describe('composer state reads', () => {
     const id = await createThread([alpha]);
     await processor.execute(alpha, {
       type: 'requestCardCreate',
-      card: { id: '', projectId: alpha, type: 'coding', title: 'Ship it', description: 'the work', tags: [], pipelineId: '', stepId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
+      card: { id: '', projectId: alpha, type: 'coding', title: 'Ship it', description: 'the work', tags: [], pipelineId: '', laneId: '', blockedBy: [], stepStates: {}, createdAt: '', updatedAt: '' },
     });
     const detail = JSON.parse((await call(id, 'composer_card', { projectId: alpha, cardId: 'T-1' })).content as string);
     expect(detail).toMatchObject({ id: 'T-1', title: 'Ship it', description: 'the work' });

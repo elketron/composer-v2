@@ -247,15 +247,45 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
   font-size: 12px;
-  padding: 3px 0;
+  padding: 3px 4px;
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+  }
+
+  &.open {
+    color: var(--text);
+
+    .file-path {
+      color: var(--accent-soft);
+    }
+  }
 
   .file-path {
-    color: var(--text-dim);
+    color: inherit;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+// The inline working-tree diff (diff2html markup, restyled to the tokens).
+.file-diff {
+  margin: 2px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow-x: auto;
+  font-size: 11px;
 }
 
 .pipeline-row {

@@ -7,9 +7,10 @@ import { nowIso } from '../wire/envelope.js';
 import { ensureAgentFiles } from '../agents/index.js';
 import { resolveModel } from '../store/settings.js';
 import { ReservedIndexes } from '../domain/transcript.js';
+import { observeFileChanges } from '../filesystem/git-changes.js';
 import type { Bus } from '../bus.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from '../engine/types.js';
-import type { PipelineStep } from '../wire/models.js';
+import type { PipelineStep } from '../domain/pipeline.js';
 import { promptFor } from './prompts.js';
 import type { RunTask, RunnerOptions } from './types.js';
 
@@ -42,6 +43,10 @@ export async function runAgentStep(
   // The outcome report belongs to this step only: anything a previous
   // step's agent reported is stale by definition.
   task.outcome = null;
+
+  // The serialized chain for the turn's file-stat enrichment (see the
+  // files event below).
+  let pendingStats: Promise<void> = Promise.resolve();
 
   const sessionId = allocateId(bus.state.byProject.get(task.projectId)?.agentSessions.keys() ?? [], 'A');
   await bus.publish(task.projectId, 'agentSessionStarted', {
@@ -115,10 +120,13 @@ export async function runAgentStep(
       return;
     }
     if (event.kind === 'files') {
-      void bus
-        .publish(task.projectId, 'agentSessionObserved', {
-          sessionId,
-          files: event.files,
+      // The engine names the paths; git fills the stats (the run view's
+      // diff list reads the published observations). The git work chains
+      // per turn: a slow read must not let a stale observation land last.
+      pendingStats = pendingStats
+        .then(async () => {
+          const files = await observeFileChanges(spec.projectDirectory, event.files);
+          await bus.publish(task.projectId, 'agentSessionObserved', { sessionId, files });
         })
         .catch((error) => console.error('runner: failed to publish files:', error));
       return;

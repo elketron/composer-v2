@@ -19,7 +19,16 @@ export function registerActionRoute(app: Hono, deps: HttpDeps): void {
     }
     const outcome = await processor.execute(scope, command);
     if (outcome.ok) {
-      return context.json({ ok: true });
+      // The outcome's payload fields ride the response (runId, pipelineId,
+      // savedPath, transition, cards — the command's own echoes).
+      return context.json({
+        ok: true,
+        ...('pipelineId' in outcome && outcome.pipelineId !== undefined ? { pipelineId: outcome.pipelineId } : {}),
+        ...('runId' in outcome && outcome.runId !== undefined ? { runId: outcome.runId } : {}),
+        ...('savedPath' in outcome && outcome.savedPath !== undefined ? { savedPath: outcome.savedPath } : {}),
+        ...('transition' in outcome && outcome.transition !== undefined ? { transition: outcome.transition } : {}),
+        ...('cards' in outcome && outcome.cards !== undefined ? { cards: outcome.cards } : {}),
+      });
     }
     return context.json({
       ok: false,

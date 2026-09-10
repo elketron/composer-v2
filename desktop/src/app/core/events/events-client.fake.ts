@@ -109,7 +109,7 @@ export function wireCard(overrides: Partial<CardJson> & { id: string }): CardJso
     description: '',
     tags: [],
     pipelineId: 'PL-1',
-    stepId: 'st-1',
+    laneId: 'ln-1',
     blockedBy: [],
     stepStates: {},
     createdAt: now,

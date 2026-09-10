@@ -17,7 +17,7 @@ function card(overrides: Partial<CardData> = {}): Card {
     description: 'A description',
     tags: ['ui'],
     pipelineId: 'PL-1',
-    stepId: 'st-1',
+    laneId: 'ln-1',
     blockedBy: [],
     stepStates: {},
     createdAt: new Date(Date.now() - 3_600_000).toISOString(),
@@ -26,8 +26,8 @@ function card(overrides: Partial<CardData> = {}): Card {
   });
 }
 
-/** The step path seeded into PipelineService so card lookups resolve. */
-function pipelineBody(projectId = 'P-1', hiddenValidation = false) {
+/** The lane path seeded into PipelineService so card lookups resolve. */
+function pipelineBody(projectId = 'P-1') {
   return {
     pipeline: {
       id: 'PL-1',
@@ -35,11 +35,16 @@ function pipelineBody(projectId = 'P-1', hiddenValidation = false) {
       name: 'Standard coding card',
       revision: 1,
       updatedAt: new Date().toISOString(),
+      lanes: [
+        { id: 'ln-1', label: 'coder', kanbanVisible: true },
+        { id: 'ln-2', label: 'Tests', kanbanVisible: true },
+        { id: 'ln-3', label: 'Approval', kanbanVisible: true },
+        { id: 'ln-4', label: 'done', kanbanVisible: true, terminal: true },
+      ],
       steps: [
-        { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement.' },
-        { id: 'st-2', kind: 'command', boardVisible: !hiddenValidation, command: 'npm test', description: 'Tests' },
-        { id: 'st-3', kind: 'human', boardVisible: true, description: 'Approval' },
-        { id: 'st-4', kind: 'human', boardVisible: true, terminal: true },
+        { id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder', instructions: 'Implement.' },
+        { id: 'st-2', kind: 'command', laneId: 'ln-2', command: 'npm test', description: 'Tests' },
+        { id: 'st-3', kind: 'human', laneId: 'ln-3', description: 'Approval' },
       ],
     },
   };
@@ -143,19 +148,13 @@ describe('BoardCardComponent', () => {
     expect(el.querySelector('.run-chip')).toBeNull();
   });
 
-  it('shows the hidden step and current step when execution is inside a hidden step', async () => {
-    // The command step (st-2) is hidden in this pipeline revision.
-    const hidden = card({ stepId: 'st-2' });
-    const fixture = await render(hidden);
+  it('shows the running step while a run works the card', async () => {
+    const fixture = await render(card());
     const el = fixture.nativeElement as HTMLElement;
-    const body = pipelineBody('P-1', true);
-    (body.pipeline as { revision: number }).revision = 2;
-    events.emit(wireEvent('pipelineSaved', body, 'P-1'));
-    await fixture.whenStable();
-    expect(el.querySelector('.hidden-stage')?.textContent).toContain('Tests');
+    expect(el.querySelector('.hidden-stage')).toBeNull();
 
     events.emit(
-      wireEvent('pipelineRunStarted', { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', revision: 2 }),
+      wireEvent('pipelineRunStarted', { runId: 'R-1', cardId: 'T-1', pipelineId: 'PL-1', revision: 1 }),
     );
     events.emit(
       wireEvent('pipelineStepStarted', {
@@ -168,14 +167,10 @@ describe('BoardCardComponent', () => {
     );
     await fixture.whenStable();
     expect(el.querySelector('.hidden-stage')?.textContent).toContain('Tests');
-
-    // A board-visible step renders no hidden-step line.
-    const visible = (await render(card({ id: 'T-2', stepId: 'st-1' }))).nativeElement as HTMLElement;
-    expect(visible.querySelector('.hidden-stage')).toBeNull();
   });
 
   it('renders the lock chip with blocker count when blocked', async () => {
-    const el = (await render(card({ stepId: 'st-1', blockedBy: ['T-9', 'T-10'] }), true))
+    const el = (await render(card({ laneId: 'ln-1', blockedBy: ['T-9', 'T-10'] }), true))
       .nativeElement as HTMLElement;
     const lock = el.querySelector('.lock');
     expect(lock?.textContent?.trim()).toContain('2');

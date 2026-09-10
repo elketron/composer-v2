@@ -81,13 +81,13 @@ describe('wire-golden/events.json', () => {
       expect(Object.values(WireStepStateStatus)).toContain(status);
     }
 
-    const moved = kinds.get('cardStepMoved')?.body as { fromStepId: string; toStepId: string };
-    expect(moved.fromStepId).toBe('st-2');
-    expect(moved.toStepId).toBe('st-3');
+    const moved = kinds.get('cardLaneMoved')?.body as { fromLaneId: string; toLaneId: string };
+    expect(moved.fromLaneId).toBe('ln-2');
+    expect(moved.toLaneId).toBe('ln-3');
 
-    const assigned = kinds.get('cardPipelineAssigned')?.body as { pipelineId: string; stepId: string };
+    const assigned = kinds.get('cardPipelineAssigned')?.body as { pipelineId: string; laneId: string };
     expect(assigned.pipelineId).toBe('PL-1');
-    expect(assigned.stepId).toBe('st-1');
+    expect(assigned.laneId).toBe('ln-1');
 
     const typeChanged = kinds.get('cardTypeChanged')?.body as { from: string; to: string };
     expect(typeChanged.from).toBe(WireCardType.CARD_TYPE_CODING);
@@ -96,9 +96,9 @@ describe('wire-golden/events.json', () => {
     const stepState = kinds.get('cardStepStateUpdated')?.body as { status: string };
     expect(stepState.status).toBe(WireStepStateStatus.STEP_STATE_RUNNING);
 
-    const toggled = kinds.get('automationToggled')?.body as { pipelineId: string; stepId: string };
+    const toggled = kinds.get('automationToggled')?.body as { pipelineId: string; laneId: string };
     expect(toggled.pipelineId).toBe('PL-1');
-    expect(toggled.stepId).toBe('st-2');
+    expect(toggled.laneId).toBe('ln-2');
 
     const runEnded = kinds.get('pipelineRunEnded')?.body as { status: string };
     expect(Object.values(WirePipelineRunStatus)).toContain(runEnded.status);

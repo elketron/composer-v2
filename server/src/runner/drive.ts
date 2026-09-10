@@ -3,10 +3,10 @@
 
 import type { Bus } from '../bus.js';
 import type { AgentEngine } from '../engine/types.js';
-import type { Pipeline, PipelineStep } from '../wire/models.js';
+import type { Pipeline, PipelineStep } from '../domain/pipeline.js';
 import { runAgentStep } from './agent-step.js';
 import { runCommandStep } from './command-step.js';
-import { outcomeBriefOf, stepOrderOf } from './prompts.js';
+import { laneOrderOf, outcomeBriefOf } from './prompts.js';
 import type { GateDecision, OutcomeReport, RunTask, RunnerOptions } from './types.js';
 
 export async function drivePipeline(
@@ -20,11 +20,9 @@ export async function drivePipeline(
   let gate: GateDecision | null = null;
   const card = bus.state.byProject.get(projectId)?.cards.get(cardId);
   if (card === undefined) return;
-  // A returned card reruns from its current step; earlier steps are skipped.
-  const fromOrder = stepOrderOf(pipeline, card.stepId);
-  const steps = pipeline.steps.filter(
-    (step, index) => index >= fromOrder && step.terminal !== true,
-  );
+  // A returned card reruns from its current lane; earlier steps are skipped.
+  const fromOrder = laneOrderOf(pipeline, card.laneId);
+  const steps = pipeline.steps.filter((step) => laneOrderOf(pipeline, step.laneId) >= fromOrder);
 
   for (const step of steps) {
     if (task.stopped) return;
@@ -57,8 +55,8 @@ export async function drivePipeline(
       const rule = reported !== undefined
         ? (step.outcomes ?? []).find((candidate) => candidate.outcome === reported.outcome)
         : undefined;
-      if (reported !== undefined && rule?.toStepId !== undefined) {
-        returnTo = { target: rule.toStepId, report: reported };
+      if (reported !== undefined && rule?.toLaneId !== undefined) {
+        returnTo = { target: rule.toLaneId, report: reported };
       } else if (reported === undefined && (step.outcomes?.length ?? 0) > 0 && step.requiresOutcome === true) {
         const names = (step.outcomes ?? []).map((candidate) => candidate.outcome).join(', ');
         failure = `the step requires an explicit outcome — call composer_report_outcome with one of: ${names}`;
@@ -74,7 +72,7 @@ export async function drivePipeline(
       ...(failure !== undefined ? { error: failure } : {}),
     });
     if (failure !== undefined) {
-      await endRunFailed(bus, task, pipeline, step, failure, step.errorReturnToStepId);
+      await endRunFailed(bus, task, pipeline, step, failure, step.errorReturnToLaneId);
       return;
     }
     if (returnTo !== undefined) {
@@ -96,7 +94,7 @@ export async function drivePipeline(
         const feedback = gate.comment !== undefined && gate.comment.trim() !== ''
           ? gate.comment.trim()
           : 'changes requested at the approval gate';
-        await endRunOutcome(bus, task, pipeline, step, 'changes_requested', feedback, step.errorReturnToStepId);
+        await endRunOutcome(bus, task, pipeline, step, 'changes_requested', feedback, step.errorReturnToLaneId);
         return;
       }
     }
@@ -109,12 +107,12 @@ export async function drivePipeline(
     revision: pipeline.revision,
     status: 'completed',
   });
-  const terminal = pipeline.steps.at(-1);
-  if (terminal !== undefined) {
-    await bus.publish(projectId, 'cardStepMoved', {
+  const terminalLaneId = pipeline.terminalLaneId;
+  if (terminalLaneId !== undefined) {
+    await bus.publish(projectId, 'cardLaneMoved', {
       cardId,
       pipelineId: pipeline.id,
-      toStepId: terminal.id,
+      toLaneId: terminalLaneId,
     });
   }
 }
@@ -134,11 +132,11 @@ async function endRunOutcome(
   routedTo: string | undefined,
 ): Promise<void> {
   if (routedTo !== undefined) {
-    await bus.publish(task.projectId, 'cardStepMoved', {
+    await bus.publish(task.projectId, 'cardLaneMoved', {
       cardId: task.cardId,
       pipelineId: pipeline.id,
-      fromStepId: step.id,
-      toStepId: routedTo,
+      fromLaneId: step.laneId,
+      toLaneId: routedTo,
       ...(feedback !== undefined ? { comment: feedback } : {}),
     });
   }
@@ -150,12 +148,12 @@ async function endRunOutcome(
     status: 'returned',
     outcome,
     ...(feedback !== undefined ? { feedback } : {}),
-    ...(routedTo !== undefined ? { routedToStepId: routedTo } : {}),
+    ...(routedTo !== undefined ? { routedToLaneId: routedTo } : {}),
   });
 }
 
 /**
- * Execution failure: the step failed. The card may move to a recovery step
+ * Execution failure: the step failed. The card may move to a recovery lane
  * (the step's error return), but the run itself stays a failure — a routed
  * recovery is not a successful outcome.
  */
@@ -168,11 +166,11 @@ async function endRunFailed(
   returnTo: string | undefined,
 ): Promise<void> {
   if (returnTo !== undefined) {
-    await bus.publish(task.projectId, 'cardStepMoved', {
+    await bus.publish(task.projectId, 'cardLaneMoved', {
       cardId: task.cardId,
       pipelineId: pipeline.id,
-      fromStepId: step.id,
-      toStepId: returnTo,
+      fromLaneId: step.laneId,
+      toLaneId: returnTo,
     });
   }
   await bus.publish(task.projectId, 'pipelineRunEnded', {
@@ -182,7 +180,7 @@ async function endRunFailed(
     revision: pipeline.revision,
     status: 'failed',
     ...(error !== '' ? { error } : {}),
-    ...(returnTo !== undefined ? { routedToStepId: returnTo } : {}),
+    ...(returnTo !== undefined ? { routedToLaneId: returnTo } : {}),
   });
 }
 

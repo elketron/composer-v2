@@ -20,7 +20,7 @@ import { Run } from '../domain/run.js';
 export interface ProjectState {
   projectId: string;
   cards: Map<string, Card>;
-  /** Automation toggles per pipeline step: pipelineId → stepId → on. */
+  /** Automation toggles per pipeline lane: pipelineId → laneId → on. */
   automation: Map<string, Map<string, boolean>>;
   planningSessions: Map<string, PlanningSession>;
   agentSessions: Map<string, AgentSessionState>;

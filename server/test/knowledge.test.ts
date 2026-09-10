@@ -87,7 +87,7 @@ describe('the knowledge domain', () => {
       on: 'knowledge',
       body: { path: 'editing-notes.md', content: '---\ntitle: Editing notes\n---\n\nbody text\n' },
     });
-    expect(saved.json).toEqual({ ok: true });
+    expect(saved.json).toEqual({ ok: true, savedPath: 'editing-notes.md' });
 
     const read = await get('/knowledge/content?path=editing-notes.md');
     expect(read.json).toMatchObject({

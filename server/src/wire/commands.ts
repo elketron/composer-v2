@@ -21,14 +21,14 @@ export type Command =
   | { type: 'requestProjectRestore'; projectId: string }
   | { type: 'requestCardCreate'; card: Card }
   | { type: 'requestCardsCreate'; cards: Card[] }
-  | { type: 'requestCardStepMove'; cardId: string; toStepId: string; override: boolean; comment?: string }
+  | { type: 'requestCardLaneMove'; cardId: string; toLaneId: string; override: boolean; comment?: string }
   | { type: 'requestCardPipelineAssign'; cardId: string; pipelineId: string }
   | { type: 'requestCardReopen'; cardId: string }
   | { type: 'requestCardTypeChange'; cardId: string; toType: CardType }
   | { type: 'requestCardAssign'; cardId: string; assignee?: Assignee }
   | { type: 'requestCardArchive'; cardId: string }
   | { type: 'requestStepStateUpdate'; cardId: string; stepId: string; status: SubStateStatus }
-  | { type: 'requestAutomationToggle'; pipelineId: string; stepId: string; on: boolean }
+  | { type: 'requestAutomationToggle'; pipelineId: string; laneId: string; on: boolean }
   | { type: 'requestPlanningSessionCreate'; projectId: string }
   | { type: 'requestUserMessage'; sessionId: string; text: string }
   // Planner persistence commands; ticket creation carries the native-edit
@@ -119,6 +119,7 @@ export type RejectionCode =
   | 'unknownSession'
   | 'unknownPipeline'
   | 'unknownStep'
+  | 'unknownLane'
   | 'blocked'
   | 'invalidType'
   | 'invalidCommand'
@@ -140,5 +141,7 @@ export type CommandOutcome =
   // `transition` rides outcome reports: the tool result tells the model
   // what its verdict will do.
   // `cards` rides ticket emission: the agent's tool result names the count.
-  | { ok: true; savedPath?: string; runId?: string; transition?: string; cards?: number }
+  // `pipelineId` rides pipeline saves: a fresh draft adopts the allocated
+  // id so a second save updates instead of duplicating.
+  | { ok: true; savedPath?: string; runId?: string; transition?: string; cards?: number; pipelineId?: string }
   | { ok: false; rejection: Rejection };

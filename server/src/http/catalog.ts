@@ -3,10 +3,10 @@
 // server-wide.
 
 import type { Hono } from 'hono';
-import { PIPELINE_AGENTS, RUNTIME_STEPS } from '../agents/catalog.js';
+import { PIPELINE_AGENTS, PIPELINE_CATEGORIES, RUNTIME_STEPS } from '../agents/catalog.js';
 
 export function registerCatalogRoutes(app: Hono): void {
   app.get('/catalog', (context) =>
-    context.json({ agents: PIPELINE_AGENTS, runtimeSteps: RUNTIME_STEPS }),
+    context.json({ agents: PIPELINE_AGENTS, runtimeSteps: RUNTIME_STEPS, categories: PIPELINE_CATEGORIES }),
   );
 }

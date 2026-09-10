@@ -28,26 +28,26 @@ export class CardTransitions {
    * unless overridden. Dependents whose blocked-ness flips get a
    * dependencyStateChanged.
    */
-  moveCard(cardId: string, toStepId: string, override: boolean, comment: string | undefined): PendingEvent[] {
+  moveCard(cardId: string, toLaneId: string, override: boolean, comment: string | undefined): PendingEvent[] {
     const card = this.board.requireCard(cardId);
     const pipeline = this.board.requirePipelineOf(card);
-    if (pipeline.stepById(toStepId) === undefined) {
-      throw new CommandRejection('unknownStep', `Step '${toStepId}' is not a step of pipeline ${pipeline.id}`);
+    if (pipeline.laneById(toLaneId) === undefined) {
+      throw new CommandRejection('unknownLane', `Lane '${toLaneId}' is not a lane of pipeline ${pipeline.id}`);
     }
     if (this.board.activeRun(cardId) !== undefined) {
       throw new CommandRejection('runActive', `Card ${cardId} has an active pipeline run`);
     }
-    if (card.stepId === toStepId) return [];
+    if (card.laneId === toLaneId) return [];
     if (!override && this.board.isBlocked(card)) {
       throw new CommandRejection('blocked', `Card ${cardId} has unsatisfied blockers`);
     }
-    const moved = card.with({ stepId: toStepId });
+    const moved = card.with({ laneId: toLaneId });
     return [
-      event('cardStepMoved', {
+      event('cardLaneMoved', {
         cardId: card.id,
         pipelineId: pipeline.id,
-        fromStepId: card.stepId,
-        toStepId,
+        fromLaneId: card.laneId,
+        toLaneId,
         ...(comment !== undefined ? { comment } : {}),
       }),
       ...this.dependencyEvents(moved),
@@ -56,7 +56,7 @@ export class CardTransitions {
 
   /**
    * Assigns a card to a pipeline (it appears on that pipeline's board tab).
-   * The assignment always places the card at the pipeline's first step;
+   * The assignment always places the card at the pipeline's first lane;
    * assigning a completed card reopens it. Needs no active run.
    */
   assignPipeline(cardId: string, pipelineId: string): PendingEvent[] {
@@ -70,27 +70,27 @@ export class CardTransitions {
       event('cardPipelineAssigned', {
         cardId: card.id,
         pipelineId: pipeline.id,
-        stepId: pipeline.firstStep().id,
+        laneId: pipeline.firstLaneId(),
       }),
     ];
   }
 
-  /** Reopens a completed card: it returns to its pipeline's first step. */
+  /** Reopens a completed card: it returns to its pipeline's first lane. */
   reopenCard(cardId: string): PendingEvent[] {
     const card = this.board.requireCard(cardId);
     const pipeline = this.board.requirePipelineOf(card);
-    if (!pipeline.isTerminalStep(card.stepId)) {
+    if (!pipeline.isTerminalLane(card.laneId)) {
       throw new CommandRejection('invalidCommand', `Card ${cardId} is not completed`);
     }
     if (this.board.activeRun(cardId) !== undefined) {
       throw new CommandRejection('runActive', `Card ${cardId} has an active pipeline run`);
     }
     return [
-      event('cardStepMoved', {
+      event('cardLaneMoved', {
         cardId: card.id,
         pipelineId: pipeline.id,
-        fromStepId: card.stepId,
-        toStepId: pipeline.firstStep().id,
+        fromLaneId: card.laneId,
+        toLaneId: pipeline.firstLaneId(),
       }),
     ];
   }
@@ -108,14 +108,14 @@ export class CardTransitions {
     return [event('cardStepStateUpdated', { cardId: card.id, stepId, status })];
   }
 
-  /** Toggles a step's automation (human drags are never blocked by them). */
-  toggleAutomation(pipelineId: string, stepId: string, on: boolean): PendingEvent[] {
+  /** Toggles a lane's automation (human drags are never blocked by them). */
+  toggleAutomation(pipelineId: string, laneId: string, on: boolean): PendingEvent[] {
     const pipeline = this.board.pipeline(pipelineId);
     if (pipeline === undefined) throw new CommandRejection('unknownPipeline', `Unknown pipeline ${pipelineId}`);
-    if (pipeline.stepById(stepId) === undefined) {
-      throw new CommandRejection('unknownStep', `Step '${stepId}' is not a step of pipeline ${pipelineId}`);
+    if (pipeline.laneById(laneId) === undefined) {
+      throw new CommandRejection('unknownLane', `Lane '${laneId}' is not a lane of pipeline ${pipelineId}`);
     }
-    return [event('automationToggled', { pipelineId, stepId, on })];
+    return [event('automationToggled', { pipelineId, laneId, on })];
   }
 
   /** Changes a card's type (v1 `change_card_type`); the fold resets step states. Same type is a no-op. */

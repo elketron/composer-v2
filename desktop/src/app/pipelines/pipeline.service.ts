@@ -97,8 +97,18 @@ export class PipelineService {
 
   // ---- Commands (publish; the server validates) ----
 
-  save(projectId: string, pipeline: Pipeline): Promise<boolean> {
-    return this.publish(projectId, { requestPipelineSave: { pipeline: pipeline.toWire() } });
+  /** Saves a pipeline; `ok` is false only on a server rejection. */
+  async save(projectId: string, pipeline: Pipeline): Promise<{ ok: boolean; pipelineId?: string }> {
+    const response = await this.events.publish({
+      projectId,
+      requestPipelineSave: { pipeline: pipeline.toWire() },
+    });
+    if (!response.ok) {
+      this.rejection.set(response.rejectionMessage ?? 'the server refused the request');
+      return { ok: false };
+    }
+    if (this.rejection() !== null) this.rejection.set(null);
+    return { ok: true, ...(response.pipelineId !== undefined ? { pipelineId: response.pipelineId } : {}) };
   }
 
   remove(projectId: string, pipelineId: string): Promise<boolean> {
@@ -247,7 +257,7 @@ export class PipelineService {
             ...(payload.error ? { error: payload.error } : {}),
             ...(payload.outcome ? { outcome: payload.outcome } : {}),
             ...(payload.feedback ? { feedback: payload.feedback } : {}),
-            ...(payload.routedToStepId ? { routedToStepId: payload.routedToStepId } : {}),
+            ...(payload.routedToLaneId ? { routedToLaneId: payload.routedToLaneId } : {}),
           };
           const cardOutcomes = new Map(map.get(projectId) ?? []);
           cardOutcomes.set(payload.cardId, outcome);

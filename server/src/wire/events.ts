@@ -11,7 +11,7 @@
  * catalog or commands), together with the gateway's copy in
  * desktop/electron/server-registry.js.
  */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 13;
 
 import type {
   AgentSession,
@@ -40,23 +40,23 @@ export interface CardCreated {
 }
 
 /**
- * The card moved to a step of its assigned pipeline — a validated manual
- * move (with the rejection comment when it leaves the terminal step) or a
+ * The card moved to a lane of its assigned pipeline — a validated manual
+ * move (with the rejection comment when it leaves the terminal lane) or a
  * run-driven transition.
  */
-export interface CardStepMoved {
+export interface CardLaneMoved {
   cardId: string;
   pipelineId: string;
-  fromStepId?: string;
-  toStepId: string;
+  fromLaneId?: string;
+  toLaneId: string;
   comment?: string;
 }
 
-/** Assignment always places the card at the pipeline's first step; assigning a completed card reopens it. */
+/** Assignment always places the card at the pipeline's first lane; assigning a completed card reopens it. */
 export interface CardPipelineAssigned {
   cardId: string;
   pipelineId: string;
-  stepId: string;
+  laneId: string;
 }
 
 export interface CardTypeChanged {
@@ -88,10 +88,10 @@ export interface DependencyStateChanged {
   blockedBy: string[];
 }
 
-/** Automation toggles are keyed per pipeline step (Phase 10). */
+/** Automation toggles are keyed per pipeline lane (Phase 10). */
 export interface AutomationToggled {
   pipelineId: string;
-  stepId: string;
+  laneId: string;
   on: boolean;
 }
 
@@ -253,7 +253,7 @@ export interface PipelineRunEnded {
   /** The reviewer/human feedback the routed card carries back to the coder. */
   feedback?: string;
   /** Where a successful outcome or a recovered failure sent the card. */
-  routedToStepId?: string;
+  routedToLaneId?: string;
 }
 
 /** A parked approval gate was answered; the run resumes. */
@@ -450,7 +450,7 @@ export interface WorkflowDeleted {
 
 export interface EventBodyMap {
   cardCreated: CardCreated;
-  cardStepMoved: CardStepMoved;
+  cardLaneMoved: CardLaneMoved;
   cardPipelineAssigned: CardPipelineAssigned;
   cardTypeChanged: CardTypeChanged;
   cardAssigned: CardAssigned;
@@ -515,7 +515,7 @@ export type EventBody<N extends EventName = EventName> = EventBodyMap[N];
 /** Every event name, in catalog order (the golden fixture's order). */
 export const EVENT_NAMES = Object.keys({
   cardCreated: null,
-  cardStepMoved: null,
+  cardLaneMoved: null,
   cardPipelineAssigned: null,
   cardTypeChanged: null,
   cardAssigned: null,

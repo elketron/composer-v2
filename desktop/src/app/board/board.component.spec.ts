@@ -24,7 +24,7 @@ describe('BoardComponent', () => {
     seedPipeline('PL-1', 'Standard coding card');
   });
 
-  /** The step-path default pipeline the board tabs project. */
+  /** The lane-path default pipeline the board tabs project. */
   function seedPipeline(id: string, name: string, projectId = 'P-1') {
     events.emit(
       {
@@ -38,12 +38,18 @@ describe('BoardComponent', () => {
             name,
             revision: 1,
             updatedAt: new Date().toISOString(),
+            lanes: [
+              { id: 'ln-1', label: 'coder', kanbanVisible: true },
+              { id: 'ln-2', label: 'Build', kanbanVisible: true },
+              { id: 'ln-3', label: 'Test', kanbanVisible: true },
+              { id: 'ln-4', label: 'approval', kanbanVisible: true },
+              { id: 'ln-5', label: 'done', kanbanVisible: true, terminal: true },
+            ],
             steps: [
-              { id: 'st-1', kind: 'agent', boardVisible: true, agentKind: 'coder', instructions: 'Implement.' },
-              { id: 'st-2', kind: 'command', boardVisible: true, command: 'npm run build', description: 'Build' },
-              { id: 'st-3', kind: 'command', boardVisible: true, command: 'npm test', description: 'Test' },
-              { id: 'st-4', kind: 'human', boardVisible: true, description: 'Approval' },
-              { id: 'st-5', kind: 'human', boardVisible: true, terminal: true },
+              { id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder', instructions: 'Implement.' },
+              { id: 'st-2', kind: 'command', laneId: 'ln-2', command: 'npm run build', description: 'Build' },
+              { id: 'st-3', kind: 'command', laneId: 'ln-3', command: 'npm test', description: 'Test' },
+              { id: 'st-4', kind: 'human', laneId: 'ln-4', description: 'Approval' },
             ],
           },
         },
@@ -93,8 +99,8 @@ describe('BoardComponent', () => {
 
   it('the tab selects the cards: only the assigned pipeline\'s cards render', async () => {
     seedPipeline('PL-2', 'Docs pass');
-    seedCard(events, { id: 'T-1', title: 'Diff overlay', stepId: 'st-2' });
-    seedCard(events, { id: 'T-2', title: 'Docs card', pipelineId: 'PL-2', stepId: 'st-1' });
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', laneId: 'ln-2' });
+    seedCard(events, { id: 'T-2', title: 'Docs card', pipelineId: 'PL-2', laneId: 'ln-1' });
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
 
@@ -110,7 +116,7 @@ describe('BoardComponent', () => {
   });
 
   it('the type selector filters the tab\'s cards instead of switching boards', async () => {
-    seedCard(events, { id: 'T-1', title: 'Diff overlay', stepId: 'st-2' });
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', laneId: 'ln-2' });
     seedCard(events, { id: 'T-2', title: 'Spec doc', type: 'docs' });
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
@@ -129,7 +135,7 @@ describe('BoardComponent', () => {
   });
 
   it('renders seeded cards in their swimlane columns (hidden steps project back)', async () => {
-    seedCard(events, { id: 'T-1', title: 'Diff overlay', stepId: 'st-2' });
+    seedCard(events, { id: 'T-1', title: 'Diff overlay', laneId: 'ln-2' });
     seedCard(events, { id: 'T-2', title: 'Grammar cache' });
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
@@ -169,11 +175,11 @@ describe('BoardComponent', () => {
   });
 
   it('shows the rejection comment bar after a drag out of the terminal step', async () => {
-    seedCard(events, { id: 'T-1', stepId: 'st-5' });
+    seedCard(events, { id: 'T-1', laneId: 'ln-5' });
     const service = TestBed.inject(BoardService);
     const fixture = await render();
 
-    await service.requestMove('T-1', 'st-2');
+    await service.requestMove('T-1', 'ln-2');
     await fixture.whenStable();
 
     const el = fixture.nativeElement as HTMLElement;
@@ -219,7 +225,7 @@ describe('BoardComponent', () => {
           description: '',
           tags: [],
           pipelineId: 'PL-1',
-          stepId: 'st-1',
+          laneId: 'ln-1',
           blockedBy: [],
           stepStates: {},
           createdAt: new Date().toISOString(),

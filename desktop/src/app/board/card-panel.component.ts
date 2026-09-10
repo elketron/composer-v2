@@ -59,19 +59,17 @@ export class CardPanelComponent {
     () => this.pipelines.pipelineById(this.card().pipelineId),
   );
 
-  /** Whether the card sits at its pipeline's terminal (Done) step. */
+  /** Whether the card sits at its pipeline's terminal (Done) lane. */
   protected readonly completed = computed(() => {
     const pipeline = this.pipeline();
-    return pipeline !== undefined && pipeline.terminalStepId === this.card().stepId;
+    return pipeline !== undefined && pipeline.isTerminalLane(this.card().laneId);
   });
 
-  /** The pipeline's board-visible steps the card may be dragged to. */
+  /** The pipeline's kanban-visible lanes the card may be dragged to. */
   protected readonly moveTargets = computed(() => {
     const pipeline = this.pipeline();
     if (pipeline === undefined) return [];
-    return pipeline
-      .columns()
-      .filter((step) => step.id !== pipeline.visibleStepOf(this.card().stepId));
+    return pipeline.columns().filter((lane) => lane.id !== this.card().laneId);
   });
 
   constructor() {
@@ -142,12 +140,10 @@ export class CardPanelComponent {
     const pipeline = this.pipeline();
     if (pipeline === undefined) return [];
     const states = this.card().stepStates;
-    return pipeline.steps
-      .filter((step) => !step.terminal)
-      .map((step) => ({
-        step,
-        status: states[step.id] ?? 'pending',
-      }));
+    return pipeline.steps.map((step) => ({
+      step,
+      status: states[step.id] ?? 'pending',
+    }));
   }
 
   protected close(): void {
@@ -172,8 +168,8 @@ export class CardPanelComponent {
     this.board.unassign(this.card().id);
   }
 
-  protected forceMove(stepId: string): void {
-    if (stepId) void this.board.forceMove(this.card().id, stepId);
+  protected forceMove(laneId: string): void {
+    if (laneId) void this.board.forceMove(this.card().id, laneId);
   }
 
   protected reassign(): void {

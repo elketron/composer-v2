@@ -32,8 +32,8 @@ export class Card {
   readonly tags: readonly string[];
   /** The one pipeline the card is assigned to; it appears on that pipeline's board tab. */
   readonly pipelineId: string;
-  /** The card's current step of its assigned pipeline (the board projects it to its swimlane). */
-  readonly stepId: string;
+  /** The card's current lane of its assigned pipeline (the board shows it there). */
+  readonly laneId: string;
   readonly blockedBy: readonly string[];
   readonly assignee?: Assignee;
   readonly sessionId?: string;
@@ -53,7 +53,7 @@ export class Card {
     this.description = json.description;
     this.tags = [...json.tags];
     this.pipelineId = json.pipelineId;
-    this.stepId = json.stepId;
+    this.laneId = json.laneId;
     this.blockedBy = [...json.blockedBy];
     if (json.assignee !== undefined) this.assignee = { ...json.assignee };
     if (json.sessionId !== undefined) this.sessionId = json.sessionId;
@@ -91,7 +91,7 @@ export class Card {
       description: str('description') ?? '',
       tags: readStringArray(record, 'tags'),
       pipelineId: str('pipelineId') ?? '',
-      stepId: str('stepId') ?? '',
+      laneId: str('laneId') ?? str('stepId') ?? '',
       blockedBy: readStringArray(record, 'blockedBy'),
       ...(assigneeJson !== undefined
         ? {
@@ -132,7 +132,7 @@ export class Card {
       description: this.description,
       tags: [...this.tags],
       pipelineId: this.pipelineId,
-      stepId: this.stepId,
+      laneId: this.laneId,
       blockedBy: [...this.blockedBy],
       ...(this.assignee !== undefined ? { assignee: { ...this.assignee } } : {}),
       ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
@@ -174,7 +174,7 @@ export function isBlockedIn(
   return card.blockedBy.some((id) => {
     const blocker = cardsById.get(id);
     if (blocker === undefined) return false;
-    return pipelines.get(blocker.pipelineId)?.steps.find((step) => step.id === blocker.stepId)?.terminal !== true;
+    return pipelines.get(blocker.pipelineId)?.lanes.find((lane) => lane.id === blocker.laneId)?.terminal !== true;
   });
 }
 

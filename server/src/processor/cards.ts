@@ -55,7 +55,7 @@ export async function createCards(p: Processor, scope: string | undefined, cards
       id: card.id !== '' ? card.id : allocateCardId(p, scope),
       projectId: scope,
       pipelineId: pipeline.id,
-      stepId: pipeline.firstStep().id,
+      laneId: pipeline.firstLaneId(),
       stepStates: card.stepStates ?? {},
       createdAt: isSet(card.createdAt) ? card.createdAt : now,
       updatedAt: now,
@@ -100,17 +100,17 @@ export function cardTransitions(
  * unsatisfied blockers reject unless overridden. Dependents whose
  * blocked-ness flips get a dependencyStateChanged.
  */
-export async function moveCardStep(
+export async function moveCardLane(
   p: Processor,
   scope: string | undefined,
   cardId: string,
-  toStepId: string,
+  toLaneId: string,
   override: boolean,
   comment: string | undefined,
 ): Promise<CommandOutcome> {
   const transitions = cardTransitions(p, scope, cardId);
   if (isOutcome(transitions)) return transitions;
-  return transition(p.bus, scope!, () => transitions.moveCard(cardId, toStepId, override, comment));
+  return transition(p.bus, scope!, () => transitions.moveCard(cardId, toLaneId, override, comment));
 }
 
 /**
@@ -180,12 +180,12 @@ export async function updateStepState(
   return transition(p.bus, scope!, () => transitions.updateStepState(cardId, stepId, status));
 }
 
-/** Toggles a step's automation (v1 `toggle_automation`), per pipeline step. */
+/** Toggles a lane's automation (v1 `toggle_automation`), per pipeline lane. */
 export async function toggleAutomation(
   p: Processor,
   scope: string | undefined,
   pipelineId: string,
-  stepId: string,
+  laneId: string,
   on: boolean,
 ): Promise<CommandOutcome> {
   if (scope === undefined || !p.bus.state.projects.has(scope)) {
@@ -195,18 +195,18 @@ export async function toggleAutomation(
   if (state === undefined) {
     return rejected('unknownProject', `Unknown project ${scope}`);
   }
-  return transition(p.bus, scope, () => CardTransitions.of(state).toggleAutomation(pipelineId, stepId, on));
+  return transition(p.bus, scope, () => CardTransitions.of(state).toggleAutomation(pipelineId, laneId, on));
 }
 
 export const cardCommands: CommandMap = [
   command('requestCardCreate', (p, scope, cmd) => createCards(p, scope, [cmd.card])),
   command('requestCardsCreate', (p, scope, cmd) => createCards(p, scope, cmd.cards)),
-  command('requestCardStepMove', (p, scope, cmd) => moveCardStep(p, scope, cmd.cardId, cmd.toStepId, cmd.override, cmd.comment)),
+  command('requestCardLaneMove', (p, scope, cmd) => moveCardLane(p, scope, cmd.cardId, cmd.toLaneId, cmd.override, cmd.comment)),
   command('requestCardPipelineAssign', (p, scope, cmd) => assignCardPipeline(p, scope, cmd.cardId, cmd.pipelineId)),
   command('requestCardReopen', (p, scope, cmd) => reopenCard(p, scope, cmd.cardId)),
   command('requestCardTypeChange', (p, scope, cmd) => changeCardType(p, scope, cmd.cardId, cmd.toType)),
   command('requestCardAssign', (p, scope, cmd) => assignCard(p, scope, cmd.cardId, cmd.assignee)),
   command('requestCardArchive', (p, scope, cmd) => archiveCard(p, scope, cmd.cardId)),
   command('requestStepStateUpdate', (p, scope, cmd) => updateStepState(p, scope, cmd.cardId, cmd.stepId, cmd.status)),
-  command('requestAutomationToggle', (p, scope, cmd) => toggleAutomation(p, scope, cmd.pipelineId, cmd.stepId, cmd.on)),
+  command('requestAutomationToggle', (p, scope, cmd) => toggleAutomation(p, scope, cmd.pipelineId, cmd.laneId, cmd.on)),
 ];

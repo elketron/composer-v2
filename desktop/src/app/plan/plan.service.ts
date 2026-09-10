@@ -564,7 +564,7 @@ interface CardDto {
   readonly id?: unknown;
   readonly type?: unknown;
   readonly pipelineId?: unknown;
-  readonly stepId?: unknown;
+  readonly laneId?: unknown;
   readonly createdAt?: unknown;
   readonly updatedAt?: unknown;
   readonly tags?: unknown;
@@ -609,7 +609,7 @@ function asCommittedCard(value: unknown): Card | null {
     description: typeof dto.description === 'string' ? dto.description : '',
     tags,
     pipelineId: typeof dto.pipelineId === 'string' ? dto.pipelineId : '',
-    stepId: typeof dto.stepId === 'string' ? dto.stepId : '',
+    laneId: typeof dto.laneId === 'string' ? dto.laneId : '',
     blockedBy,
     assignee: asAssignee(dto.assignee),
     sessionId: typeof dto.sessionId === 'string' ? dto.sessionId : undefined,

@@ -36,7 +36,7 @@ export class Board {
     return this.project.pipelines.get(id);
   }
 
-  /** The pipeline a card is assigned to (the card's step is one of its steps). */
+  /** The pipeline a card is assigned to (the card's lane is one of its lanes). */
   pipelineOf(card: Pick<Card, 'pipelineId'>): Pipeline | undefined {
     return this.project.pipelines.get(card.pipelineId);
   }
@@ -67,9 +67,9 @@ export class Board {
     );
   }
 
-  /** Whether a card sits at its pipeline's terminal (completion) step. */
-  isDone(card: Pick<Card, 'pipelineId' | 'stepId'>): boolean {
-    return this.pipelineOf(card)?.isTerminalStep(card.stepId) === true;
+  /** Whether a card sits at its pipeline's terminal (completion) lane. */
+  isDone(card: Pick<Card, 'pipelineId' | 'laneId'>): boolean {
+    return this.pipelineOf(card)?.isTerminalLane(card.laneId) === true;
   }
 
   /** Blocked while any blocker exists and has not reached its own pipeline's terminal step. */

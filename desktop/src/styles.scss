@@ -1,6 +1,8 @@
 // Global theme — tokens from docs/frontend/design.md §1.
 // The same values are exported for TS consumers in core/tokens.ts.
 
+@use 'diff2html/bundles/css/diff2html.min.css';
+
 :root {
   --bg: #0e0e0f;
   --panel: #111112;
@@ -172,4 +174,79 @@ p.state-empty,
 
 .cdk-drag-animating {
   transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+// diff2html (the run view's file diffs) restyled to the dark tokens: its
+// markup renders dynamically, so the overrides live in global styles.
+.d2h-file-wrapper {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.d2h-file-header {
+  display: none;
+}
+
+.d2h-file-list-wrapper {
+  display: none;
+}
+
+.d2h-diff-table {
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.d2h-code-line,
+.d2h-code-line-ctn {
+  color: var(--text-dim);
+}
+
+.d2h-ins {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+
+  ins.d2h-ins,
+  .d2h-ins .d2h-code-line ins,
+  .d2h-ins .d2h-code-line-ctn ins {
+    background: color-mix(in srgb, var(--ok) 28%, transparent);
+    color: var(--ok);
+    text-decoration: none;
+  }
+}
+
+.d2h-del {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+
+  del.d2h-del,
+  .d2h-del .d2h-code-line del,
+  .d2h-del .d2h-code-line-ctn del {
+    background: color-mix(in srgb, var(--err) 24%, transparent);
+    color: var(--err);
+    text-decoration: none;
+  }
+}
+
+.d2h-code-linenumber {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--text-faint);
+}
+
+.d2h-file-side-diff,
+.d2h-diff-tbody,
+.d2h-code-side-linenumber {
+  border-color: var(--border);
+}
+
+.d2h-info {
+  background: var(--panel);
+  color: var(--text-faint);
+}
+
+.d2h-tag {
+  background: transparent;
+  color: var(--text-faint);
 }

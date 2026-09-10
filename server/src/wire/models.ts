@@ -29,8 +29,8 @@ export interface Card {
   tags: readonly string[];
   /** The one pipeline the card is assigned to; it appears on that pipeline's board tab. */
   pipelineId: string;
-  /** The card's current step of its assigned pipeline (the board projects it to its swimlane). */
-  stepId: string;
+  /** The card's current lane of its assigned pipeline (the board shows it there). */
+  laneId: string;
   blockedBy: readonly string[];
   assignee?: Assignee;
   sessionId?: string;
@@ -210,22 +210,36 @@ export interface AgentSession {
 export type PipelineStepKind = 'agent' | 'command' | 'human';
 
 /**
+ * One board lane (a swimlane/column) of a pipeline — the presentation
+ * position a card sits in. Lanes are independent of the executable steps: a
+ * lane may hold several steps or none (the Done lane has no step). The board
+ * projects lanes as columns; steps are execution units bound to a lane.
+ */
+export interface PipelineLane {
+  id: string;
+  label: string;
+  /** Whether the lane becomes a board column (the first lane must). */
+  kanbanVisible: boolean;
+  /** The completion lane; exactly one per pipeline, and it must be last. */
+  terminal?: boolean;
+}
+
+/**
  * One agent-reported named outcome and where it routes. An absent
- * `toStepId` proceeds to the next step; a present one must reference a
- * strictly earlier step — the run ends `returned` and the task moves there.
+ * `toLaneId` proceeds to the next step; a present one must reference a
+ * strictly earlier lane — the run ends `returned` and the card moves there.
  */
 export interface StepOutcomeRule {
   outcome: string;
-  toStepId?: string;
+  toLaneId?: string;
 }
 
+/** One executable step of a user-authored pipeline, bound to a lane. */
 export interface PipelineStep {
   id: string;
   kind: PipelineStepKind;
-  /** Whether the step becomes a board swimlane (the first step must). */
-  boardVisible: boolean;
-  /** The completion step; exactly one per pipeline, and it must be last. */
-  terminal?: boolean;
+  /** The lane the step's work appears in (the board position it advances). */
+  laneId: string;
   agentKind?: string;
   instructions?: string;
   command?: string;
@@ -234,17 +248,25 @@ export interface PipelineStep {
   outcomes?: readonly StepOutcomeRule[];
   /** The agent step must signal its outcome through the tool (S36). */
   requiresOutcome?: boolean;
-  /** A failed step returns the task to this earlier step (S35). */
-  errorReturnToStepId?: string;
+  /** A failed step returns the card to this earlier lane (S35). */
+  errorReturnToLaneId?: string;
 }
 
 export interface Pipeline {
   id: string;
   projectId: string;
   name: string;
+  /**
+   * The sidebar group the editor shows the pipeline under (one of the
+   * server catalog's categories). Optional; absent/unknown values group
+   * under "General".
+   */
+  category?: string;
   /** 1-based; a save that changes the definition allocates the next revision. */
   revision: number;
-  /** The ordered steps (index = forward order; each board-visible step is a swimlane). */
+  /** The board's lanes (columns), in forward order. */
+  lanes: readonly PipelineLane[];
+  /** The ordered executable steps (index = forward execution order). */
   steps: readonly PipelineStep[];
   updatedAt: string;
 }

@@ -151,13 +151,28 @@
                   </span>
                 </div>
                 @for (file of sessionFiles(); track file.path) {
-                  <div class="file-row">
+                  <button
+                    type="button"
+                    class="file-row"
+                    [class.open]="expandedFile() === file.path"
+                    (click)="toggleFile(file.path)"
+                    title="toggle the working-tree diff"
+                  >
                     <span class="file-path">{{ file.path }}</span>
                     <span class="files-delta">
                       <span class="add">+{{ file.additions }}</span>
                       <span class="del">−{{ file.deletions }}</span>
                     </span>
-                  </div>
+                  </button>
+                  @if (expandedFile() === file.path) {
+                    @if (filePatch() === null) {
+                      <p class="state-empty inline">loading diff…</p>
+                    } @else if (fileDiffMarkup(); as markup) {
+                      <div class="file-diff" [innerHTML]="markup"></div>
+                    } @else {
+                      <p class="state-empty inline">no working-tree diff for this file</p>
+                    }
+                  }
                 }
               </div>
             } @else {

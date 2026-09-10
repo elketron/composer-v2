@@ -1,37 +1,45 @@
 // The pipeline draft validation and normalization (SRV-008): the save
-// command's rules — name, steps, the forward path (implicit in a single
-// ordered list), the terminal step, and the per-kind step fields — plus the
-// step-default normalization and the same-definition comparison. These are
-// draft-level concerns, split from the `Pipeline` model (which keeps
-// topology and serialization).
+// command's rules — name, lanes (presentation), steps (execution), the
+// forward path, the terminal lane, and the per-kind step fields — plus the
+// normalization and the same-definition comparison.
 
 import type {
   Pipeline as PipelineJson,
+  PipelineLane as PipelineLaneJson,
   PipelineStep as PipelineStepJson,
 } from '../wire/models.js';
 import type { Pipeline } from './pipeline.js';
 import { CommandRejection } from './rejection.js';
 import { PIPELINE_AGENT_KINDS } from '../agents/names.js';
 
-/** Ceiling on steps one pipeline may carry (v1 M3). */
+/** Ceiling on lanes/steps one pipeline may carry (v1 M3). */
 export const MAX_PIPELINE_STEPS = 64;
 
+/** Ceiling on the category label (editor presentation metadata only). */
+export const MAX_PIPELINE_CATEGORY = 32;
+
+/** A validated draft's normalized category, lanes and steps. */
+export interface NormalizedDraft {
+  category?: string;
+  lanes: PipelineLaneJson[];
+  steps: PipelineStepJson[];
+}
+
+/** The normalized category: trimmed, capped, absent when blank (lenient — the editor groups unknown values under General). */
+function normalizeCategory(category: string | undefined): string | undefined {
+  const trimmed = category?.trim() ?? '';
+  return trimmed === '' ? undefined : trimmed.slice(0, MAX_PIPELINE_CATEGORY);
+}
+
 /**
- * Validates a user-authored draft in full — name, steps, the forward path,
- * the terminal step — and returns the normalized steps the save publishes.
- * Same order, codes, and messages the processor emitted when validation
- * lived there.
+ * Validates a user-authored draft in full — name, lanes, steps, the forward
+ * path, the terminal lane — and returns the normalized lanes and steps the
+ * save publishes.
  */
-export function validateDraft(draft: PipelineJson): PipelineStepJson[] {
+export function validateDraft(draft: PipelineJson): NormalizedDraft {
   const rejection = (message: string): CommandRejection => new CommandRejection('invalidCommand', message);
   if (draft.name.trim() === '') {
     throw rejection('Pipeline name is required');
-  }
-  if (draft.steps.length === 0) {
-    throw rejection('A pipeline needs at least one step');
-  }
-  if (draft.steps.length > MAX_PIPELINE_STEPS) {
-    throw rejection(`Pipeline has ${draft.steps.length} steps; the limit is ${MAX_PIPELINE_STEPS}`);
   }
 
   // Validate user input before normalization drops empty optional fields.
@@ -43,17 +51,37 @@ export function validateDraft(draft: PipelineJson): PipelineStepJson[] {
     }
   }
 
+  const lanes = normalizeLanes(draft.lanes);
   const steps = normalizeSteps(draft.steps);
-  const seen = new Set<string>();
+
+  if (lanes.length === 0) {
+    throw rejection('A pipeline needs at least one lane');
+  }
+  if (lanes.length > MAX_PIPELINE_STEPS) {
+    throw rejection(`Pipeline has ${lanes.length} lanes; the limit is ${MAX_PIPELINE_STEPS}`);
+  }
+  if (steps.length === 0) {
+    throw rejection('A pipeline needs at least one step');
+  }
+  if (steps.length > MAX_PIPELINE_STEPS) {
+    throw rejection(`Pipeline has ${steps.length} steps; the limit is ${MAX_PIPELINE_STEPS}`);
+  }
+
+  const laneIds = new Set<string>();
+  for (const [index, lane] of lanes.entries()) {
+    const label = `Lane ${index + 1}`;
+    if (lane.id === '') throw rejection(`${label} needs an id`);
+    if (laneIds.has(lane.id)) throw rejection(`Lane id '${lane.id}' appears twice`);
+    laneIds.add(lane.id);
+  }
+
+  const stepIds = new Set<string>();
   for (const [index, step] of steps.entries()) {
     const label = `Step ${index + 1}`;
-    if (step.id === '') {
-      throw rejection(`${label} needs an id`);
-    }
-    if (seen.has(step.id)) {
-      throw rejection(`Step id '${step.id}' appears twice`);
-    }
-    seen.add(step.id);
+    if (step.id === '') throw rejection(`${label} needs an id`);
+    if (stepIds.has(step.id)) throw rejection(`Step id '${step.id}' appears twice`);
+    stepIds.add(step.id);
+    if (!laneIds.has(step.laneId)) throw rejection(`${label}: lane '${step.laneId}' is not a lane of the pipeline`);
   }
 
   for (const [index, step] of steps.entries()) {
@@ -64,74 +92,64 @@ export function validateDraft(draft: PipelineJson): PipelineStepJson[] {
         throw rejection(`${label}: agent kind '${agentKind}' has no implementation yet`);
       }
     }
+    const outcomeNames: string[] = [];
     for (const outcome of step.outcomes ?? []) {
-      if (outcome.outcome.trim() === '') {
-        throw rejection(`${label}: an outcome needs a name`);
-      }
-      if (outcome.toStepId !== undefined) {
-        assertEarlierStep(steps, index, outcome.toStepId, `outcome '${outcome.outcome}'`, label, rejection);
+      if (outcome.outcome.trim() === '') throw rejection(`${label}: an outcome needs a name`);
+      outcomeNames.push(outcome.outcome.trim());
+      if (outcome.toLaneId !== undefined) {
+        assertEarlierLane(lanes, step.laneId, outcome.toLaneId, `outcome '${outcome.outcome}'`, label, rejection);
       }
     }
-    const outcomeNames = (step.outcomes ?? []).map((rule) => rule.outcome.trim());
     if (new Set(outcomeNames).size !== outcomeNames.length) {
       throw rejection(`${label}: outcome names must be unique`);
     }
-    if (step.errorReturnToStepId !== undefined) {
-      assertEarlierStep(steps, index, step.errorReturnToStepId, 'the error condition', label, rejection);
+    if (step.errorReturnToLaneId !== undefined) {
+      assertEarlierLane(lanes, step.laneId, step.errorReturnToLaneId, 'the error condition', label, rejection);
     }
-    // A terminal step is a pure swimlane marker: no kind fields required.
-    if (step.terminal !== true) {
-      const message = missingStepField(step);
-      if (message !== null) {
-        throw rejection(`${label}: ${message}`);
-      }
-    }
+    const message = missingStepField(step);
+    if (message !== null) throw rejection(`${label}: ${message}`);
   }
 
-  const terminals = steps.filter((step) => step.terminal === true);
-  if (terminals.length !== 1) {
-    throw rejection('A pipeline needs exactly one terminal (Done) step');
-  }
-  if (!steps.some((step) => step.terminal !== true)) {
-    throw rejection('A pipeline needs at least one non-terminal executable step');
-  }
-  if (steps[steps.length - 1]?.terminal !== true) {
-    throw rejection('The terminal step must be the last step');
-  }
-  if (steps[steps.length - 1]?.boardVisible !== true) {
-    throw rejection('The terminal step must be board-visible');
-  }
-  if (steps[0]?.boardVisible !== true) {
-    throw rejection('The first step must be board-visible');
-  }
-  return steps;
+  const terminals = lanes.filter((lane) => lane.terminal === true);
+  if (terminals.length !== 1) throw rejection('A pipeline needs exactly one terminal (Done) lane');
+  if (lanes[lanes.length - 1]?.terminal !== true) throw rejection('The terminal lane must be the last lane');
+  if (lanes[0]?.kanbanVisible !== true) throw rejection('The first lane must be kanban-visible');
+  if (lanes[lanes.length - 1]?.kanbanVisible !== true) throw rejection('The terminal lane must be kanban-visible');
+
+  return { category: normalizeCategory(draft.category), lanes, steps };
 }
 
-/** A step reference must name a known, strictly-earlier step. */
-function assertEarlierStep(
-  steps: readonly PipelineStepJson[],
-  index: number,
+/** A lane reference must name a strictly-earlier lane than the step's own. */
+function assertEarlierLane(
+  lanes: readonly PipelineLaneJson[],
+  stepLaneId: string,
   targetId: string,
   what: string,
   label: string,
   rejection: (message: string) => CommandRejection,
 ): void {
-  const target = steps.findIndex((step) => step.id === targetId.trim());
-  if (target < 0) {
-    throw rejection(`${label}: ${what} names an unknown step`);
-  }
-  if (target >= index) {
-    throw rejection(`${label}: ${what} may only return to an earlier step`);
-  }
+  const target = lanes.findIndex((lane) => lane.id === targetId.trim());
+  if (target < 0) throw rejection(`${label}: ${what} names an unknown lane`);
+  const from = lanes.findIndex((lane) => lane.id === stepLaneId);
+  if (target >= from) throw rejection(`${label}: ${what} may only return to an earlier lane`);
 }
 
-/** Fills the step defaults the lenient wire allows (board-visible, trimmed text). */
+/** Fills the lane defaults the lenient wire allows (kanban-visible). */
+export function normalizeLanes(lanes: readonly PipelineLaneJson[]): PipelineLaneJson[] {
+  return lanes.map((lane) => ({
+    id: lane.id.trim(),
+    label: lane.label.trim(),
+    kanbanVisible: lane.kanbanVisible !== false,
+    ...(lane.terminal === true ? { terminal: true } : {}),
+  }));
+}
+
+/** Fills the step defaults the lenient wire allows (trimmed text). */
 export function normalizeSteps(steps: readonly PipelineStepJson[]): PipelineStepJson[] {
   return steps.map((step) => ({
     id: step.id.trim(),
     kind: step.kind,
-    boardVisible: step.boardVisible !== false,
-    ...(step.terminal === true ? { terminal: true } : {}),
+    laneId: step.laneId.trim(),
     ...(step.agentKind !== undefined && step.agentKind.trim() !== '' ? { agentKind: step.agentKind.trim() } : {}),
     ...(step.instructions !== undefined && step.instructions.trim() !== ''
       ? { instructions: step.instructions.trim() }
@@ -145,24 +163,26 @@ export function normalizeSteps(steps: readonly PipelineStepJson[]): PipelineStep
           outcomes: step.outcomes
             .map((rule) => ({
               outcome: rule.outcome.trim(),
-              ...(rule.toStepId !== undefined && rule.toStepId.trim() !== ''
-                ? { toStepId: rule.toStepId.trim() }
+              ...(rule.toLaneId !== undefined && rule.toLaneId.trim() !== ''
+                ? { toLaneId: rule.toLaneId.trim() }
                 : {}),
             }))
             .filter((rule) => rule.outcome !== ''),
         }
       : {}),
     ...(step.requiresOutcome === true ? { requiresOutcome: true } : {}),
-    ...(step.errorReturnToStepId !== undefined && step.errorReturnToStepId.trim() !== ''
-      ? { errorReturnToStepId: step.errorReturnToStepId.trim() }
+    ...(step.errorReturnToLaneId !== undefined && step.errorReturnToLaneId.trim() !== ''
+      ? { errorReturnToLaneId: step.errorReturnToLaneId.trim() }
       : {}),
   }));
 }
 
-/** Whether a save would change the definition (name or steps). */
+/** Whether a save would change the definition (name, category, lanes, or steps). */
 export function sameDefinition(current: Pipeline, next: PipelineJson, name: string): boolean {
   return (
     current.name === name &&
+    current.category === normalizeCategory(next.category) &&
+    JSON.stringify(current.lanes.map((lane) => lane.toWire())) === JSON.stringify(normalizeLanes(next.lanes)) &&
     JSON.stringify(current.steps.map((step) => step.toWire())) === JSON.stringify(normalizeSteps(next.steps))
   );
 }
@@ -174,7 +194,6 @@ export function missingStepField(step: PipelineStepJson): string | null {
       if (step.agentKind === undefined || step.agentKind === '') {
         return 'an agent step needs an agent';
       }
-      // The selected agent owns its instructions; a step only names the agent.
       return null;
     case 'command':
       if (step.command === undefined || step.command.trim() === '') {

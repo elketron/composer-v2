@@ -98,12 +98,12 @@ describe('EventsClient', () => {
       id: 'e-1',
       projectId: 'P-1',
       occurredAt: '2026-08-19T12:00:00.000000Z',
-      eventType: 'cardStepMoved',
-      body: { cardId: 'T-1', pipelineId: 'PL-1', toStepId: 'st-3' },
+      eventType: 'cardLaneMoved',
+      body: { cardId: 'T-1', pipelineId: 'PL-1', toLaneId: 'ln-3' },
     });
 
     expect(seen).toHaveLength(1);
-    expect(seen[0].cardStepMoved).toEqual({ cardId: 'T-1', pipelineId: 'PL-1', toStepId: 'st-3' });
+    expect(seen[0].cardLaneMoved).toEqual({ cardId: 'T-1', pipelineId: 'PL-1', toLaneId: 'ln-3' });
   });
 
   it('maps command DTOs onto the action envelope before posting', async () => {
@@ -122,9 +122,9 @@ describe('EventsClient', () => {
 
     await client.publish({
       projectId: 'P-1',
-      requestCardStepMove: {
+      requestCardLaneMove: {
         cardId: 'T-1',
-        toStepId: 'st-3',
+        toLaneId: 'ln-3',
         override: false,
         comment: '',
       },
@@ -150,11 +150,29 @@ describe('EventsClient', () => {
       projectId: 'P-1',
       requestProjectRestore: { projectId: 'P-1' },
     });
+    await client.publish({
+      projectId: 'P-1',
+      requestPipelineSave: {
+        pipeline: {
+          id: 'PL-1',
+          projectId: '',
+          name: 'Standard coding card',
+          category: 'coding',
+          revision: 1,
+          lanes: [
+            { id: 'ln-1', label: 'Implementation', kanbanVisible: true },
+            { id: 'ln-2', label: 'done', kanbanVisible: true, terminal: true },
+          ],
+          steps: [{ id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder' }],
+          updatedAt: '',
+        },
+      },
+    });
 
     expect(posted).toEqual([
       {
         path: 'action',
-        body: { type: 'update', on: 'card', projectId: 'P-1', body: { id: 'T-1', stepId: 'st-3' } },
+        body: { type: 'update', on: 'card', projectId: 'P-1', body: { id: 'T-1', laneId: 'ln-3' } },
       },
       {
         path: 'action',
@@ -198,6 +216,25 @@ describe('EventsClient', () => {
           on: 'project',
           projectId: 'P-1',
           body: { id: 'P-1', archived: false },
+        },
+      },
+      {
+        path: 'action',
+        body: {
+          type: 'create',
+          on: 'pipeline',
+          projectId: 'P-1',
+          body: {
+            id: 'PL-1',
+            name: 'Standard coding card',
+            category: 'coding',
+            revision: 1,
+            lanes: [
+              { id: 'ln-1', label: 'Implementation', kanbanVisible: true },
+              { id: 'ln-2', label: 'done', kanbanVisible: true, terminal: true },
+            ],
+            steps: [{ id: 'st-1', kind: 'agent', laneId: 'ln-1', agentKind: 'coder' }],
+          },
         },
       },
     ]);
@@ -300,8 +337,8 @@ describe('EventsClient (gateway)', () => {
       id,
       projectId,
       occurredAt: '2026-08-19T12:00:00.000000Z',
-      eventType: 'cardStepMoved',
-      body: { cardId: 'T-1', pipelineId: 'PL-1', toStepId: 'st-3' },
+      eventType: 'cardLaneMoved',
+      body: { cardId: 'T-1', pipelineId: 'PL-1', toLaneId: 'ln-3' },
     };
   }
 
@@ -330,7 +367,7 @@ describe('EventsClient (gateway)', () => {
 
     await client.publish({
       projectId: 'alpha',
-      requestCardStepMove: { cardId: 'T-1', toStepId: 'st-3' },
+      requestCardLaneMove: { cardId: 'T-1', toLaneId: 'ln-3' },
     });
 
     expect(server.posted).toHaveLength(1);

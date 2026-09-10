@@ -7,6 +7,7 @@
 
 import {
   Pipeline,
+  PipelineLane,
   PipelineStep,
   PipelineStepKind,
 } from '../core/models/pipeline.models';
@@ -29,6 +30,7 @@ export interface EditorDraftData {
   readonly projectId: string;
   readonly id: string;
   readonly name: string;
+  readonly category: string;
   readonly steps: readonly StepDraft[];
   readonly rejection: string | null;
 }
@@ -37,6 +39,7 @@ export class EditorDraft {
   readonly projectId: string;
   readonly id: string;
   readonly name: string;
+  readonly category: string;
   readonly steps: readonly StepDraft[];
   readonly rejection: string | null;
 
@@ -44,6 +47,7 @@ export class EditorDraft {
     this.projectId = data.projectId;
     this.id = data.id;
     this.name = data.name;
+    this.category = data.category;
     this.steps = data.steps;
     this.rejection = data.rejection;
   }
@@ -54,6 +58,7 @@ export class EditorDraft {
       projectId,
       id: '',
       name: '',
+      category: '',
       steps: [coderDraft('st-1'), terminalDraft('st-2')],
       rejection: null,
     });
@@ -61,11 +66,14 @@ export class EditorDraft {
 
   /** A draft editing an existing pipeline. */
   static fromPipeline(projectId: string, pipeline: Pipeline): EditorDraft {
+    const steps = pipeline.steps.map((step) => stepDraftOf(step, pipeline));
+    steps.push(terminalDraft('done'));
     return new EditorDraft({
       projectId,
       id: pipeline.id,
       name: pipeline.name,
-      steps: pipeline.steps.map(stepDraftOf),
+      category: pipeline.category ?? '',
+      steps,
       rejection: null,
     });
   }
@@ -78,23 +86,41 @@ export class EditorDraft {
     return this.with({ name, rejection: null });
   }
 
+  withCategory(category: string): EditorDraft {
+    return this.with({ category, rejection: null });
+  }
+
   // ---- Step mutations ----
 
-  /** Adds a step ahead of the terminal one. */
-  addStep(): EditorDraft {
-    const step: StepDraft = coderDraft(nextStepId(this.steps));
+  /** Adds a step ahead of the terminal one (a preset fills its fields). */
+  addStep(preset?: Partial<Omit<StepDraft, 'id'>>): EditorDraft {
+    const step: StepDraft = { ...coderDraft(nextStepId(this.steps)), ...preset };
     const terminalIndex = this.steps.findIndex((candidate) => candidate.terminal);
     const steps = [...this.steps];
     steps.splice(terminalIndex < 0 ? steps.length : terminalIndex, 0, step);
     return this.with({ steps, rejection: null });
   }
 
-  /** Inserts a fresh step right after `afterIndex`. */
-  insertStep(afterIndex: number): EditorDraft {
+  /** Inserts a fresh step right after `afterIndex` (a preset fills its fields). */
+  insertStep(afterIndex: number, preset?: Partial<Omit<StepDraft, 'id'>>): EditorDraft {
     const anchor = this.steps[afterIndex];
     if (anchor === undefined || anchor.terminal) return this;
     const steps = [...this.steps];
-    steps.splice(afterIndex + 1, 0, coderDraft(nextStepId(this.steps)));
+    steps.splice(afterIndex + 1, 0, { ...coderDraft(nextStepId(this.steps)), ...preset });
+    return this.with({ steps, rejection: null });
+  }
+
+  /** Duplicates a step (new id) right after it; the terminal cannot be copied. */
+  duplicateStep(index: number): EditorDraft {
+    const source = this.steps[index];
+    if (source === undefined || source.terminal) return this;
+    const copy: StepDraft = {
+      ...source,
+      id: nextStepId(this.steps),
+      outcomes: source.outcomes.map((rule) => ({ ...rule })),
+    };
+    const steps = [...this.steps];
+    steps.splice(index + 1, 0, copy);
     return this.with({ steps, rejection: null });
   }
 
@@ -170,9 +196,9 @@ export class EditorDraft {
     return this.updateStep(stepIndex, { outcomes });
   }
 
-  /** The steps an error return or outcome rule may target: strictly earlier ones. */
+  /** The lanes an error return or outcome rule may target: earlier board-visible steps (each is a lane). */
   errorTargets(index: number): StepDraft[] {
-    return this.steps.slice(0, index).filter((step) => !step.terminal);
+    return this.steps.slice(0, index).filter((step) => !step.terminal && step.boardVisible);
   }
 
   // ---- Validation + conversion ----
@@ -223,7 +249,7 @@ export class EditorDraft {
         const missing = new PipelineStep({
           id,
           kind: step.kind,
-          boardVisible: step.boardVisible,
+          laneId: '',
           ...(text(step.agentKind) ? { agentKind: text(step.agentKind) } : {}),
           ...(text(step.instructions) ? { instructions: text(step.instructions) } : {}),
           ...(text(step.command) ? { command: text(step.command) } : {}),
@@ -241,22 +267,39 @@ export class EditorDraft {
     return null;
   }
 
-  /** The `Pipeline` model a save publishes (trimmed, wire-shaped). */
+  /** The `Pipeline` model a save publishes (trimmed; lanes derived from the draft's swimlanes). */
   toPipeline(): Pipeline {
-    return new Pipeline({
-      id: this.id,
-      name: text(this.name).trim(),
-      revision: 0,
-      steps: this.steps.map((step) => {
+    // A board-visible step starts a new lane; hidden steps share the lane.
+    const stepLane = new Map<string, string>();
+    const lanes: PipelineLane[] = [];
+    let counter = 0;
+    for (const step of this.steps) {
+      if (step.terminal) continue;
+      if (step.boardVisible || lanes.length === 0) {
+        counter += 1;
+        stepLane.set(step.id, `ln-${counter}`);
+        lanes.push(new PipelineLane(`ln-${counter}`, laneLabelOf(step), true, false));
+      } else {
+        stepLane.set(step.id, `ln-${counter}`);
+      }
+    }
+    counter += 1;
+    const terminal = this.steps.find((step) => step.terminal);
+    lanes.push(new PipelineLane(`ln-${counter}`, text(terminal?.description).trim() || 'done', true, true));
+
+    const steps = this.steps
+      .filter((step) => !step.terminal)
+      .map((step) => {
         const outcomes = step.outcomes
-          .map((rule) => ({ outcome: text(rule.outcome).trim(), toStepId: text(rule.toStepId).trim() }))
+          .map((rule) => ({ outcome: text(rule.outcome).trim(), toLaneId: text(rule.toStepId).trim() }))
           .filter((rule) => rule.outcome !== '')
-          .map((rule) => (rule.toStepId !== '' ? rule : { outcome: rule.outcome }));
+          .map((rule) =>
+            rule.toLaneId !== '' ? { outcome: rule.outcome, toLaneId: stepLane.get(rule.toLaneId) ?? rule.toLaneId } : { outcome: rule.outcome },
+          );
         return new PipelineStep({
           id: text(step.id).trim(),
           kind: step.kind,
-          boardVisible: step.boardVisible,
-          ...(step.terminal ? { terminal: true } : {}),
+          laneId: stepLane.get(step.id) ?? '',
           ...(text(step.agentKind).trim() ? { agentKind: text(step.agentKind).trim() } : {}),
           ...(text(step.instructions).trim() ? { instructions: text(step.instructions).trim() } : {}),
           ...(text(step.command).trim() ? { command: text(step.command).trim() } : {}),
@@ -264,28 +307,54 @@ export class EditorDraft {
           ...(outcomes.length > 0 ? { outcomes } : {}),
           ...(outcomes.length > 0 && step.requiresOutcome ? { requiresOutcome: true } : {}),
           ...(text(step.errorReturnToStepId).trim() !== ''
-            ? { errorReturnToStepId: text(step.errorReturnToStepId).trim() }
+            ? { errorReturnToLaneId: stepLane.get(text(step.errorReturnToStepId).trim()) ?? '' }
             : {}),
         });
-      }),
+      });
+
+    return new Pipeline({
+      id: this.id,
+      name: text(this.name).trim(),
+      ...(text(this.category).trim() !== '' ? { category: text(this.category).trim() } : {}),
+      revision: 0,
+      lanes,
+      steps,
     });
   }
 }
 
-function stepDraftOf(step: PipelineStep): StepDraft {
+function stepDraftOf(step: PipelineStep, pipeline: Pipeline): StepDraft {
+  const firstOfLane = pipeline.steps.find((s) => s.laneId === step.laneId)?.id === step.id;
+  const stepForLane = (laneId: string | undefined): string =>
+    laneId !== undefined ? (pipeline.steps.find((s) => s.laneId === laneId)?.id ?? '') : '';
   return {
     id: step.id,
     kind: step.kind,
-    boardVisible: step.boardVisible,
-    terminal: step.terminal,
+    boardVisible: firstOfLane,
+    terminal: false,
     agentKind: step.agentKind ?? '',
     instructions: step.instructions ?? '',
     command: step.command ?? '',
     description: step.description ?? '',
-    outcomes: step.outcomes.map((rule) => ({ outcome: rule.outcome, toStepId: rule.toStepId ?? '' })),
+    outcomes: step.outcomes.map((rule) => ({
+      outcome: rule.outcome,
+      toStepId: stepForLane(rule.toLaneId),
+    })),
     requiresOutcome: step.requiresOutcome,
-    errorReturnToStepId: step.errorReturnToStepId ?? '',
+    errorReturnToStepId: stepForLane(step.errorReturnToLaneId),
   };
+}
+
+/** The lane label derived from the first step of the lane. */
+function laneLabelOf(step: StepDraft): string {
+  switch (step.kind) {
+    case 'agent':
+      return step.agentKind.trim() || 'agent';
+    case 'command':
+      return step.description.trim() || 'command';
+    case 'human':
+      return 'approval';
+  }
 }
 
 /** A fresh coder swimlane step (the editor's default for "+ add step"). */

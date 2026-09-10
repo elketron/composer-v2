@@ -15,7 +15,7 @@
           "ui"
         ],
         "pipelineId": "PL-1",
-        "stepId": "st-2",
+        "laneId": "ln-2",
         "blockedBy": [],
         "assignee": {
           "role": "coder",
@@ -42,12 +42,12 @@
     "id": "e-02",
     "projectId": "P-1",
     "occurredAt": "2026-09-04T12:00:00.123456Z",
-    "eventType": "cardStepMoved",
+    "eventType": "cardLaneMoved",
     "body": {
       "cardId": "T-1",
       "pipelineId": "PL-1",
-      "fromStepId": "st-2",
-      "toStepId": "st-3",
+      "fromLaneId": "ln-2",
+      "toLaneId": "ln-3",
       "comment": "needs tests"
     }
   },
@@ -59,7 +59,7 @@
     "body": {
       "cardId": "T-1",
       "pipelineId": "PL-1",
-      "stepId": "st-1"
+      "laneId": "ln-1"
     }
   },
   {
@@ -125,7 +125,7 @@
     "eventType": "automationToggled",
     "body": {
       "pipelineId": "PL-1",
-      "stepId": "st-2",
+      "laneId": "ln-2",
       "on": true
     }
   },
@@ -220,7 +220,7 @@
           "description": "",
           "tags": [],
           "pipelineId": "PL-1",
-          "stepId": "st-1",
+          "laneId": "ln-1",
           "blockedBy": [],
           "stepStates": {},
           "createdAt": "2026-09-04T12:00:00.123456Z",
@@ -369,27 +369,51 @@
         "id": "PL-1",
         "projectId": "P-1",
         "name": "Standard coding card",
+        "category": "coding",
         "revision": 2,
         "updatedAt": "2026-09-04T12:00:00.123456Z",
+        "lanes": [
+          {
+            "id": "ln-1",
+            "label": "Implementation",
+            "kanbanVisible": true
+          },
+          {
+            "id": "ln-2",
+            "label": "Review",
+            "kanbanVisible": true
+          },
+          {
+            "id": "ln-3",
+            "label": "Approval",
+            "kanbanVisible": true
+          },
+          {
+            "id": "ln-4",
+            "label": "Done",
+            "kanbanVisible": true,
+            "terminal": true
+          }
+        ],
         "steps": [
           {
             "id": "st-1",
             "kind": "agent",
-            "boardVisible": true,
+            "laneId": "ln-1",
             "agentKind": "coder",
             "instructions": "Implement the card per its description."
           },
           {
             "id": "st-2",
             "kind": "command",
-            "boardVisible": false,
+            "laneId": "ln-1",
             "command": "npm test",
             "description": "Run tests"
           },
           {
             "id": "st-3",
             "kind": "agent",
-            "boardVisible": true,
+            "laneId": "ln-2",
             "agentKind": "reviewer",
             "instructions": "Review the implemented card.",
             "outcomes": [
@@ -398,7 +422,7 @@
               },
               {
                 "outcome": "changes_requested",
-                "toStepId": "st-1"
+                "toLaneId": "ln-1"
               }
             ],
             "requiresOutcome": true
@@ -406,14 +430,8 @@
           {
             "id": "st-4",
             "kind": "human",
-            "boardVisible": true,
+            "laneId": "ln-3",
             "description": "Approval"
-          },
-          {
-            "id": "st-5",
-            "kind": "human",
-            "boardVisible": true,
-            "terminal": true
           }
         ]
       }
@@ -479,7 +497,7 @@
       "status": "returned",
       "outcome": "changes_requested",
       "feedback": "needs tests",
-      "routedToStepId": "st-1"
+      "routedToLaneId": "ln-1"
     }
   },
   {

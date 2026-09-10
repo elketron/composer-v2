@@ -54,6 +54,7 @@ export const WireRejectionCode = {
   REJECTION_CODE_UNKNOWN_CARD: 'unknownCard',
   REJECTION_CODE_UNKNOWN_SESSION: 'unknownSession',
   REJECTION_CODE_UNKNOWN_STEP: 'unknownStep',
+  REJECTION_CODE_UNKNOWN_LANE: 'unknownLane',
   REJECTION_CODE_BLOCKED: 'blocked',
   REJECTION_CODE_INVALID_TYPE: 'invalidType',
   REJECTION_CODE_INVALID_COMMAND: 'invalidCommand',
@@ -86,7 +87,7 @@ export interface CardJson {
   readonly description?: string;
   readonly tags?: string[];
   readonly pipelineId?: string;
-  readonly stepId?: string;
+  readonly laneId?: string;
   readonly blockedBy?: string[];
   readonly assignee?: AssigneeJson;
   readonly sessionId?: string;
@@ -179,22 +180,31 @@ export type WirePipelineStepKind =
 export interface PipelineStepJson {
   readonly id: string;
   readonly kind: WirePipelineStepKind;
-  readonly boardVisible?: boolean;
-  readonly terminal?: boolean;
+  readonly laneId: string;
   readonly agentKind?: string;
   readonly instructions?: string;
   readonly command?: string;
   readonly description?: string;
-  readonly outcomes?: readonly { readonly outcome: string; readonly toStepId?: string }[];
+  readonly outcomes?: readonly { readonly outcome: string; readonly toLaneId?: string }[];
   readonly requiresOutcome?: boolean;
-  readonly errorReturnToStepId?: string;
+  readonly errorReturnToLaneId?: string;
+}
+
+export interface PipelineLaneJson {
+  readonly id: string;
+  readonly label: string;
+  readonly kanbanVisible: boolean;
+  readonly terminal?: boolean;
 }
 
 export interface PipelineJson {
   readonly id: string;
   readonly projectId: string;
   readonly name: string;
+  /** The editor's sidebar group (absent = the "General" group). */
+  readonly category?: string;
   readonly revision?: number;
+  readonly lanes: PipelineLaneJson[];
   readonly steps: PipelineStepJson[];
   readonly updatedAt: string;
 }
@@ -281,17 +291,17 @@ export interface DomainEventJson {
   readonly projectId?: string;
   readonly occurredAt?: string;
   readonly cardCreated?: { readonly card: CardJson };
-  readonly cardStepMoved?: {
+  readonly cardLaneMoved?: {
     readonly cardId: string;
     readonly pipelineId: string;
-    readonly fromStepId?: string;
-    readonly toStepId: string;
+    readonly fromLaneId?: string;
+    readonly toLaneId: string;
     readonly comment?: string;
   };
   readonly cardPipelineAssigned?: {
     readonly cardId: string;
     readonly pipelineId: string;
-    readonly stepId: string;
+    readonly laneId: string;
   };
   readonly cardTypeChanged?: {
     readonly cardId: string;
@@ -315,7 +325,7 @@ export interface DomainEventJson {
   };
   readonly automationToggled?: {
     readonly pipelineId: string;
-    readonly stepId: string;
+    readonly laneId: string;
     readonly on: boolean;
   };
   readonly planningSessionCreated?: { readonly session: PlanningSessionJson };
@@ -411,7 +421,7 @@ export interface DomainEventJson {
     readonly error?: string;
     readonly outcome?: string;
     readonly feedback?: string;
-    readonly routedToStepId?: string;
+    readonly routedToLaneId?: string;
   };
   readonly pipelineGateResponded?: {
     readonly runId?: string;
@@ -483,7 +493,7 @@ export interface DomainEventJson {
 /** The payload field names (the oneof members, camelCase). */
 export const EVENT_KINDS = [
   'cardCreated',
-  'cardStepMoved',
+  'cardLaneMoved',
   'cardPipelineAssigned',
   'cardTypeChanged',
   'cardAssigned',
@@ -571,7 +581,7 @@ export type CommandKind =
   | 'requestProjectActivate'
   | 'requestProjectArchive'
   | 'requestProjectRestore'
-  | 'requestCardStepMove'
+  | 'requestCardLaneMove'
   | 'requestCardPipelineAssign'
   | 'requestCardReopen'
   | 'requestCardTypeChange'
@@ -624,9 +634,9 @@ export interface PublishRequestJson {
     readonly tags?: readonly string[];
     readonly pipelineId?: string;
   };
-  readonly requestCardStepMove?: {
+  readonly requestCardLaneMove?: {
     readonly cardId: string;
-    readonly toStepId: string;
+    readonly toLaneId: string;
     readonly override?: boolean;
     readonly comment?: string;
   };
@@ -642,7 +652,7 @@ export interface PublishRequestJson {
   };
   readonly requestAutomationToggle?: {
     readonly pipelineId: string;
-    readonly stepId: string;
+    readonly laneId: string;
     readonly on: boolean;
   };
   readonly requestPlanningSessionCreate?: { readonly projectId: string };
@@ -718,6 +728,8 @@ export interface PublishResponseJson {
   readonly ok: boolean;
   readonly rejectionCode?: WireRejectionCode | string;
   readonly rejectionMessage?: string;
+  /** Rides pipeline saves: the allocated id (a fresh draft adopts it). */
+  readonly pipelineId?: string;
 }
 
 /** Convert a command DTO onto its action route. Null for unknown commands. */
@@ -766,13 +778,13 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
       ...(create.pipelineId ? { pipelineId: create.pipelineId } : {}),
     });
   }
-  if (request.requestCardStepMove) {
+  if (request.requestCardLaneMove) {
     const body: Record<string, unknown> = {
-      id: request.requestCardStepMove.cardId,
-      stepId: request.requestCardStepMove.toStepId,
+      id: request.requestCardLaneMove.cardId,
+      laneId: request.requestCardLaneMove.toLaneId,
     };
-    if (request.requestCardStepMove.override) body['override'] = true;
-    if (request.requestCardStepMove.comment) body['comment'] = request.requestCardStepMove.comment;
+    if (request.requestCardLaneMove.override) body['override'] = true;
+    if (request.requestCardLaneMove.comment) body['comment'] = request.requestCardLaneMove.comment;
     return env('update', 'card', body);
   }
   if (request.requestCardPipelineAssign) {
@@ -816,7 +828,7 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
   if (request.requestAutomationToggle) {
     return env('update', 'automation', {
       pipelineId: request.requestAutomationToggle.pipelineId,
-      stepId: request.requestAutomationToggle.stepId,
+      laneId: request.requestAutomationToggle.laneId,
       on: request.requestAutomationToggle.on,
     });
   }
@@ -831,9 +843,14 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
   }
   if (request.requestPipelineSave) {
     const pipeline = request.requestPipelineSave.pipeline;
+    // The full wire pipeline rides the action body (the codec parses the
+    // same shape back): name, lanes, category, and revision included.
     return env('create', 'pipeline', {
       id: pipeline.id,
       name: pipeline.name,
+      ...(pipeline.category ? { category: pipeline.category } : {}),
+      ...(pipeline.revision !== undefined ? { revision: pipeline.revision } : {}),
+      lanes: pipeline.lanes,
       steps: pipeline.steps,
     });
   }
@@ -996,7 +1013,7 @@ export function cardFromWire(json: CardJson): Card {
     description: json.description ?? '',
     tags: [...(json.tags ?? [])],
     pipelineId: json.pipelineId ?? '',
-    stepId: json.stepId ?? '',
+    laneId: json.laneId ?? '',
     blockedBy: [...(json.blockedBy ?? [])],
     assignee: assigneeFromWire(json.assignee),
     sessionId: json.sessionId || undefined,
