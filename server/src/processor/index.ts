@@ -15,6 +15,7 @@ import type {
   PlanningSession,
 } from '../wire/models.js';
 import { Card } from '../domain/card.js';
+import { Diagram } from '../domain/diagram.js';
 import { Pipeline } from '../domain/pipeline.js';
 import type { Run } from '../domain/run.js';
 import { Board } from '../domain/board.js';
@@ -22,6 +23,7 @@ import { deleteDoc, renameDoc, saveDoc } from '../docs/index.js';
 import { deleteWorkflow, saveWorkflow } from '../workflows.js';
 import { rejected } from './helpers.js';
 import { cardCommands } from './cards.js';
+import { diagramCommands } from './diagrams.js';
 import { docCommands } from './docs.js';
 import { knowledgeCommands } from './knowledge.js';
 import { pipelineCommands } from './pipelines.js';
@@ -46,6 +48,7 @@ const commands = new Map<string, (p: Processor, scope: string | undefined, comma
   ...docCommands,
   ...knowledgeCommands,
   ...workflowCommands,
+  ...diagramCommands,
 ]);
 
 export class Processor {
@@ -130,6 +133,10 @@ export class Processor {
 
   runsOf(projectId: string): Map<string, Run> {
     return this.bus.state.byProject.get(projectId)?.runs ?? new Map();
+  }
+
+  diagramsOf(projectId: string): Map<string, Diagram> {
+    return this.bus.state.byProject.get(projectId)?.diagrams ?? new Map();
   }
 
   /** The project's board (the aggregate the link rules are answered from). */

@@ -13,6 +13,7 @@ import type {
   PlanningSession,
 } from '../wire/models.js';
 import { Card } from '../domain/card.js';
+import { Diagram } from '../domain/diagram.js';
 import { Pipeline } from '../domain/pipeline.js';
 import { Project } from '../domain/project.js';
 import { Run } from '../domain/run.js';
@@ -33,6 +34,8 @@ export interface ProjectState {
   runs: Map<string, Run>;
   /** The active run per card (at most one). */
   activeRuns: Map<string, string>;
+  /** Each saved diagram, keyed by id (Phase 11: the canvas). */
+  diagrams: Map<string, Diagram>;
 }
 
 export type TranscriptEntryState =
@@ -91,6 +94,7 @@ export function emptyProjectState(projectId: string): ProjectState {
     deletedPipelines: new Set(),
     runs: new Map(),
     activeRuns: new Map(),
+    diagrams: new Map(),
   };
 }
 

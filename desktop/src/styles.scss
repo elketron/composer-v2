@@ -4,6 +4,56 @@
 @use "diff2html/bundles/css/diff2html.min.css";
 @use "@foblex/flow/styles/default";
 
+// The foblex canvas theme reads semantic tokens; the app runs dark, so the
+// html element carries data-theme="dark" (index.html) and the surfaces and
+// lines the canvas draws with bind to the app's own palette here — without
+// this the editor renders on foblex's light gray page.
+html[data-theme="dark"] {
+  --ff-color-surface-page: var(--bg);
+  --ff-color-surface-canvas: var(--bg);
+  --ff-color-surface-card: var(--panel);
+  --ff-color-surface-muted: var(--panel);
+  --ff-color-surface-soft: var(--panel);
+  --ff-color-text-primary: var(--text);
+  --ff-color-text-secondary: var(--text-dim);
+  --ff-color-text-tertiary: var(--text-faint);
+  --ff-color-border-default: var(--border);
+  --ff-color-border-subtle: var(--border);
+  --ff-color-border-strong: var(--border-strong);
+  --ff-color-accent: var(--accent-soft);
+  --ff-color-accent-strong: var(--accent-soft);
+  --ff-color-selection-fill: color-mix(in srgb, var(--accent) 16%, transparent);
+  --ff-color-selection-stroke: color-mix(
+    in srgb,
+    var(--accent) 40%,
+    transparent
+  );
+  --ff-color-connection: var(--text-faint);
+  --ff-color-connection-muted: var(--text-faint);
+  --ff-color-connector-connected: var(--accent-soft);
+  --ff-color-grid: color-mix(in srgb, var(--text) 8%, transparent);
+  --ff-color-grid-strong: color-mix(in srgb, var(--text) 14%, transparent);
+  // The canvas host is transformed with the viewport, so its surface slides
+  // over the f-background grid and hides everything beneath it — keep the
+  // surface transparent (the flow panel shows through) and give the
+  // connector ring (which aliases this color) a solid value instead.
+  --ff-canvas-background-color: transparent;
+  --ff-connector-node-ring-color: var(--panel);
+  // The canvas draws its own node surfaces (.node-shape) — foblex's node
+  // frame styling must stay invisible so decision diamonds aren't wrapped
+  // in an oversized card box.
+  --ff-node-background-color: transparent;
+  --ff-node-border-color: transparent;
+  --ff-node-border-color-selected: transparent;
+  --ff-node-shadow: none;
+  --ff-node-shadow-selected: none;
+  // The node frame's 24px padding and 56px min-height steal space from the
+  // label pill (which carries its own padding) — the canvas owns node
+  // geometry via [fNodeSize].
+  --ff-node-padding: 0;
+  --ff-node-min-height: 0;
+}
+
 :root {
   --bg: #0e0e0f;
   --panel: #111112;

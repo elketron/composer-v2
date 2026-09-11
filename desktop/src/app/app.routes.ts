@@ -7,6 +7,7 @@ import { DashboardComponent } from './dashboard/dashboard.component';
 // Type-only: the docs view (and its CodeMirror editor) loads lazily —
 // the editor would otherwise ride the initial bundle past its budget.
 import type { DocsComponent } from './docs/docs.component';
+import type { CanvasComponent } from './canvas/canvas.component';
 import { PlanComponent } from './plan/plan.component';
 import { CodingViewComponent } from './pipelines/coding-view.component';
 import { RunViewComponent } from './run/run-view.component';
@@ -16,6 +17,10 @@ import { KnowledgeService } from './knowledge/knowledge.service';
 
 /** Leaving the docs view with unsaved edits confirms first (Phase 9). */
 export const docsUnsavedGuard: CanDeactivateFn<DocsComponent> = (component) =>
+  component.confirmLeave();
+
+/** Leaving the canvas with unsaved diagram edits confirms first (Phase 11). */
+export const canvasUnsavedGuard: CanDeactivateFn<CanvasComponent> = (component) =>
   component.confirmLeave();
 
 /** Leaving the assistant with an unsaved knowledge note confirms first. */
@@ -50,6 +55,11 @@ export const routes: Routes = [
         path: 'docs',
         loadComponent: () => import('./docs/docs.component').then((m) => m.DocsComponent),
         canDeactivate: [docsUnsavedGuard],
+      },
+      {
+        path: 'canvas',
+        loadComponent: () => import('./canvas/canvas.component').then((m) => m.CanvasComponent),
+        canDeactivate: [canvasUnsavedGuard],
       },
       { path: 'run/:cardId', component: RunViewComponent },
       { path: '**', redirectTo: 'board' },

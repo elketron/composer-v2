@@ -106,7 +106,7 @@ export class ShellService {
   rememberWorkspaceUrl(url: string): void {
     const path = url.split(/[?#]/, 1)[0];
     const match = path.match(
-      /^\/projects\/([^/]+)\/(coding\/(?:board|plan|docs|pipelines|coding|run\/[^/]+))$/,
+      /^\/projects\/([^/]+)\/(coding\/(?:board|plan|docs|pipelines|coding|canvas|run\/[^/]+))$/,
     );
     if (!match) return;
     const projectId = decodeURIComponent(match[1]);
@@ -206,7 +206,7 @@ function readLastViews(): Record<string, string> {
       Object.entries(value).filter(
         (entry): entry is [string, string] =>
           typeof entry[1] === 'string' &&
-          /^coding\/(?:board|plan|docs|pipelines|coding|run\/[^/]+)$/.test(entry[1]),
+          /^coding\/(?:board|plan|docs|pipelines|coding|canvas|run\/[^/]+)$/.test(entry[1]),
       ),
     );
   } catch {

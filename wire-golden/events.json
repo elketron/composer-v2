@@ -844,5 +844,106 @@
     "body": {
       "path": "stale-procedure.md"
     }
+  },
+  {
+    "id": "e-59",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "diagramSaved",
+    "body": {
+      "diagram": {
+        "id": "DG-1",
+        "projectId": "P-1",
+        "name": "Request flow",
+        "nodes": [
+          {
+            "id": "A",
+            "type": "screen",
+            "label": "start",
+            "description": "the entry page",
+            "groupId": "G-1",
+            "x": 40,
+            "y": 80,
+            "w": 120,
+            "h": 46
+          },
+          {
+            "id": "B",
+            "type": "decision",
+            "label": "valid?",
+            "description": "",
+            "groupId": null,
+            "x": 240,
+            "y": 80,
+            "w": 160,
+            "h": 76
+          },
+          {
+            "id": "C",
+            "type": "process",
+            "label": "save",
+            "description": "",
+            "groupId": null,
+            "x": 440,
+            "y": 80,
+            "w": 120,
+            "h": 46
+          }
+        ],
+        "edges": [
+          {
+            "id": "e-A-B",
+            "from": "A",
+            "to": "B",
+            "label": "submit"
+          },
+          {
+            "id": "e-B-C",
+            "from": "B",
+            "to": "C",
+            "label": "yes"
+          }
+        ],
+        "groups": [
+          {
+            "id": "G-1",
+            "label": "Onboarding",
+            "x": 16,
+            "y": 40,
+            "w": 300,
+            "h": 200
+          }
+        ],
+        "viewport": {
+          "x": -12,
+          "y": 0,
+          "scale": 1
+        },
+        "updatedAt": "2026-09-04T12:00:00.123456Z"
+      }
+    }
+  },
+  {
+    "id": "e-60",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "diagramDeleted",
+    "body": {
+      "diagramId": "DG-2"
+    }
+  },
+  {
+    "id": "e-61",
+    "projectId": "P-1",
+    "occurredAt": "2026-09-04T12:00:00.123456Z",
+    "eventType": "diagramViewportChanged",
+    "body": {
+      "diagramId": "DG-1",
+      "viewport": {
+        "x": -30,
+        "y": 10,
+        "scale": 1.25
+      }
+    }
   }
 ]

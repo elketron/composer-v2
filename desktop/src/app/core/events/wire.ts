@@ -62,6 +62,7 @@ export const WireRejectionCode = {
   REJECTION_CODE_UNKNOWN_AGENT_KIND: 'unknownAgentKind',
   REJECTION_CODE_RUN_ACTIVE: 'runActive',
   REJECTION_CODE_PIPELINE_NOT_RUNNING: 'pipelineNotRunning',
+  REJECTION_CODE_UNKNOWN_DIAGRAM: 'unknownDiagram',
 } as const;
 export type WireRejectionCode = (typeof WireRejectionCode)[keyof typeof WireRejectionCode];
 
@@ -166,6 +167,56 @@ export interface WorkflowInfoJson {
   readonly links: string[];
   readonly size: number;
   readonly recordedAt?: string;
+  readonly updatedAt: string;
+}
+
+/** One node of a saved diagram (the canvas draws it). */
+export interface DiagramNodeJson {
+  readonly id: string;
+  readonly type?: 'screen' | 'process' | 'decision' | 'note';
+  readonly label: string;
+  readonly description?: string;
+  readonly groupId?: string | null;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/** One connection between two diagram nodes. */
+export interface DiagramEdgeJson {
+  readonly id?: string;
+  readonly from: string;
+  readonly to: string;
+  readonly label?: string;
+}
+
+/** One named group of diagram nodes (a semantic container). */
+export interface DiagramGroupJson {
+  readonly id: string;
+  readonly label: string;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/** The persisted canvas viewport (pan position + zoom scale). */
+export interface DiagramViewportJson {
+  readonly x: number;
+  readonly y: number;
+  readonly scale: number;
+}
+
+/** One saved diagram (Phase 11); content is database truth (rides events). */
+export interface DiagramJson {
+  readonly id: string;
+  readonly projectId?: string;
+  readonly name: string;
+  readonly nodes: DiagramNodeJson[];
+  readonly edges: DiagramEdgeJson[];
+  readonly groups?: DiagramGroupJson[];
+  readonly viewport?: DiagramViewportJson | null;
   readonly updatedAt: string;
 }
 
@@ -488,6 +539,9 @@ export interface DomainEventJson {
   readonly knowledgeDeleted?: { readonly path: string };
   readonly workflowSaved?: { readonly workflow: WorkflowInfoJson };
   readonly workflowDeleted?: { readonly path: string };
+  readonly diagramSaved?: { readonly diagram: DiagramJson };
+  readonly diagramDeleted?: { readonly diagramId: string };
+  readonly diagramViewportChanged?: { readonly diagramId: string; readonly viewport: DiagramViewportJson };
 }
 
 /** The payload field names (the oneof members, camelCase). */
@@ -550,6 +604,9 @@ export const EVENT_KINDS = [
   'knowledgeDeleted',
   'workflowSaved',
   'workflowDeleted',
+  'diagramSaved',
+  'diagramDeleted',
+  'diagramViewportChanged',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -612,6 +669,9 @@ export type CommandKind =
   | 'requestKnowledgeSave'
   | 'requestKnowledgeDelete'
   | 'requestWorkflowDelete'
+  | 'requestDiagramSave'
+  | 'requestDiagramDelete'
+  | 'requestDiagramViewport'
   | 'requestAgentSessionStart'
   | 'requestAgentSessionStop';
 
@@ -696,6 +756,9 @@ export interface PublishRequestJson {
   };
   readonly requestKnowledgeDelete?: { readonly path: string };
   readonly requestWorkflowDelete?: { readonly path: string };
+  readonly requestDiagramSave?: { readonly diagram: DiagramJson };
+  readonly requestDiagramDelete?: { readonly diagramId: string };
+  readonly requestDiagramViewport?: { readonly diagramId: string; readonly viewport: DiagramViewportJson };
 }
 
 /** The generic write-path envelope (`POST /action`, http.rs). */
@@ -715,7 +778,8 @@ export interface ActionEnvelopeJson {
   | 'proposal'
   | 'doc'
   | 'knowledge'
-  | 'workflow';
+  | 'workflow'
+  | 'diagram';
   readonly projectId: string;
   readonly body: Record<string, unknown>;
 }
@@ -730,6 +794,8 @@ export interface PublishResponseJson {
   readonly rejectionMessage?: string;
   /** Rides pipeline saves: the allocated id (a fresh draft adopts it). */
   readonly pipelineId?: string;
+  /** Rides diagram saves: the allocated id (a fresh canvas adopts it). */
+  readonly diagramId?: string;
 }
 
 /** Convert a command DTO onto its action route. Null for unknown commands. */
@@ -965,6 +1031,25 @@ export function actionForCommand(request: PublishRequestJson): ActionRoute | nul
   }
   if (request.requestWorkflowDelete) {
     return env('delete', 'workflow', { path: request.requestWorkflowDelete.path });
+  }
+  if (request.requestDiagramSave) {
+    const diagram = request.requestDiagramSave.diagram;
+    return env('create', 'diagram', {
+      id: diagram.id,
+      name: diagram.name,
+      nodes: diagram.nodes,
+      edges: diagram.edges,
+      groups: diagram.groups ?? [],
+    });
+  }
+  if (request.requestDiagramDelete) {
+    return env('delete', 'diagram', { id: request.requestDiagramDelete.diagramId });
+  }
+  if (request.requestDiagramViewport) {
+    return env('update', 'diagram', {
+      id: request.requestDiagramViewport.diagramId,
+      viewport: request.requestDiagramViewport.viewport,
+    });
   }
   return null;
 }

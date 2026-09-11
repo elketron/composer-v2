@@ -113,6 +113,14 @@ export function appendProject(emit: FrameEmitter, project: Project, projectState
     emit(project.id, 'pipelineSaved', { pipeline: pipeline.toWire() });
   }
 
+  // Saved diagrams replay after pipelines (Phase 11): the fold upserts by
+  // id, so a fresh save reconciles idempotently with the snapshot.
+  for (const diagram of [...projectState.diagrams.values()].sort((a, b) =>
+    a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id),
+  )) {
+    emit(project.id, 'diagramSaved', { diagram: diagram.toWire() });
+  }
+
   // Run records replay as compact started/ended pairs at their original
   // timestamps (active runs additionally replay their current step, so the
   // fold lands on the same run status and card position).

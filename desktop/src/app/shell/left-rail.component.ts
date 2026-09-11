@@ -50,7 +50,7 @@ export class LeftRailComponent {
       },
       { id: 'agent', label: 'coding', icon: Bot, route: `${base}/coding` },
       { id: 'docs', label: 'docs', icon: BookOpen, route: `${base}/docs` },
-      { id: 'canvas', label: 'canvas', icon: PenTool },
+      { id: 'canvas', label: 'canvas', icon: PenTool, route: `${base}/canvas` },
     ];
   });
 

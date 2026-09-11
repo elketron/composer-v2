@@ -26,7 +26,7 @@ const path = require('node:path');
 
 // Bump together with server/src/wire/events.ts PROTOCOL_VERSION on any
 // wire change (event catalog or commands).
-const PROTOCOL_VERSION = 13;
+const PROTOCOL_VERSION = 15;
 
 const PROBE_TIMEOUT_MS = 1_500;
 const SPAWN_POLL_MS = 250;

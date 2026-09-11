@@ -289,6 +289,27 @@ const bodies: { [N in keyof EventBodyMap]: EventBodyMap[N] } = {
     },
   },
   workflowDeleted: { path: 'stale-procedure.md' },
+  diagramSaved: {
+    diagram: {
+      id: 'DG-1',
+      projectId: 'P-1',
+      name: 'Request flow',
+      nodes: [
+        { id: 'A', type: 'screen', label: 'start', description: 'the entry page', groupId: 'G-1', x: 40, y: 80, w: 120, h: 46 },
+        { id: 'B', type: 'decision', label: 'valid?', description: '', groupId: null, x: 240, y: 80, w: 160, h: 76 },
+        { id: 'C', type: 'process', label: 'save', description: '', groupId: null, x: 440, y: 80, w: 120, h: 46 },
+      ],
+      edges: [
+        { id: 'e-A-B', from: 'A', to: 'B', label: 'submit' },
+        { id: 'e-B-C', from: 'B', to: 'C', label: 'yes' },
+      ],
+      groups: [{ id: 'G-1', label: 'Onboarding', x: 16, y: 40, w: 300, h: 200 }],
+      viewport: { x: -12, y: 0, scale: 1 },
+      updatedAt: TS,
+    },
+  },
+  diagramDeleted: { diagramId: 'DG-2' },
+  diagramViewportChanged: { diagramId: 'DG-1', viewport: { x: -30, y: 10, scale: 1.25 } },
 };
 
 const frames = EVENT_NAMES.map((name, index) =>

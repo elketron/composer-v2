@@ -1,24 +1,24 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>composer</title>
-  <base href="/">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!--
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <title>composer</title>
+    <base href="/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
     Renderer CSP (Electron security guidance): scripts and objects are
     locked to the app bundle ('self' covers the file:// production load);
     styles need 'unsafe-inline' for Angular's runtime-injected component
     styles; connect allows the composer server on loopback plus the dev
     server's HMR websocket. No unsafe-eval: Angular AOT builds don't need it.
   -->
-  <meta
-    http-equiv="Content-Security-Policy"
-    content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; base-uri 'self'; object-src 'none'; frame-src 'none'"
-  >
-  <link rel="icon" type="image/x-icon" href="favicon.ico">
-</head>
-<body>
-  <app-root></app-root>
-</body>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; base-uri 'self'; object-src 'none'; frame-src 'none'"
+    />
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  </head>
+  <body>
+    <app-root></app-root>
+  </body>
 </html>

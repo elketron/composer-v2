@@ -13,6 +13,7 @@
 import type { EventEnvelope } from '../wire/envelope.js';
 import type { EventName } from '../wire/events.js';
 import { cardHandlers } from './cards.js';
+import { diagramHandlers } from './diagrams.js';
 import { pipelineHandlers } from './pipelines.js';
 import { planningHandlers } from './planning.js';
 import { projectHandlers } from './projects.js';
@@ -35,6 +36,7 @@ const handlers = new Map<EventName, (state: State, envelope: EventEnvelope, proj
   Object.entries({
     ...projectHandlers,
     ...cardHandlers,
+    ...diagramHandlers,
     ...planningHandlers,
     ...pipelineHandlers,
     ...sessionHandlers,

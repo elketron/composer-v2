@@ -11,7 +11,7 @@
  * catalog or commands), together with the gateway's copy in
  * desktop/electron/server-registry.js.
  */
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 15;
 
 import type {
   AgentSession,
@@ -23,6 +23,8 @@ import type {
   CardProposal,
   CardType,
   ChatMessage,
+  Diagram,
+  DiagramViewport,
   DocInfo,
   KnowledgeEntryInfo,
   Pipeline,
@@ -446,6 +448,24 @@ export interface WorkflowDeleted {
   path: string;
 }
 
+// ---- Diagrams (Phase 11): the canvas's database-backed saves. A create and
+// an update are the same record (the fold upserts by id); the content rides
+// the event — the event log is the diagrams' database. Project-scoped. ----
+
+export interface DiagramSaved {
+  diagram: Diagram;
+}
+
+export interface DiagramDeleted {
+  diagramId: string;
+}
+
+/** The viewport-only save: patches the diagram's pan/zoom in place. */
+export interface DiagramViewportChanged {
+  diagramId: string;
+  viewport: DiagramViewport;
+}
+
 // ---- The catalog: name → payload shape (the one registry both sides use) ----
 
 export interface EventBodyMap {
@@ -507,6 +527,9 @@ export interface EventBodyMap {
   knowledgeDeleted: KnowledgeDeleted;
   workflowSaved: WorkflowSaved;
   workflowDeleted: WorkflowDeleted;
+  diagramSaved: DiagramSaved;
+  diagramDeleted: DiagramDeleted;
+  diagramViewportChanged: DiagramViewportChanged;
 }
 
 export type EventName = keyof EventBodyMap;
@@ -572,6 +595,9 @@ export const EVENT_NAMES = Object.keys({
   knowledgeDeleted: null,
   workflowSaved: null,
   workflowDeleted: null,
+  diagramSaved: null,
+  diagramDeleted: null,
+  diagramViewportChanged: null,
 }) as EventName[];
 
 /** Events that persist for the live stream but skip replay (v1 rule). */

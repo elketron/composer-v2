@@ -108,6 +108,80 @@ export interface WorkflowInfo {
   updatedAt: string;
 }
 
+// ---- Diagrams (Phase 11: the free-form canvas). Node types are semantic
+// (screen/process/decision/note) — shape, icon, and color are presentation
+// defaults the editor derives from the type, never the source of meaning.
+// Legacy payloads (V0) carry none of the new fields; the domain's
+// normalization reads them as note-typed, ungrouped nodes. ----
+
+export type DiagramNodeType = 'screen' | 'process' | 'decision' | 'note';
+
+/**
+ * One node of a saved diagram. Positions are canvas coordinates; the size is
+ * explicit so the editor and the server agree. `type` is absent only in
+ * pre-V1 payloads (read as `note`).
+ */
+export interface DiagramNode {
+  id: string;
+  type?: DiagramNodeType;
+  label: string;
+  /** Longer supporting text (the LLM-facing context beyond the label). */
+  description?: string;
+  /** The group the node sits in (absent/null = ungrouped). */
+  groupId?: string | null;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** One connection between two diagram nodes (a freeform label rides it). */
+export interface DiagramEdge {
+  /** Stable connection id; saves without one get a deterministic `e-…`. */
+  id?: string;
+  from: string;
+  to: string;
+  label?: string;
+}
+
+/**
+ * One named group of nodes (a semantic container, not a decoration).
+ * Membership rides the nodes' `groupId`; the frame carries its own geometry.
+ */
+export interface DiagramGroup {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** The persisted canvas viewport (pan position + zoom scale). */
+export interface DiagramViewport {
+  x: number;
+  y: number;
+  scale: number;
+}
+
+/**
+ * One saved diagram the canvas draws (Phase 11). Diagrams are database
+ * truth: the content (nodes, edges, groups, viewport) rides the
+ * `diagramSaved` event and lives in the event log, rehydrated into the fold
+ * and served by the snapshot — unlike docs, no file is involved.
+ */
+export interface Diagram {
+  id: string;
+  projectId: string;
+  name: string;
+  nodes: DiagramNode[];
+  edges: DiagramEdge[];
+  groups: DiagramGroup[];
+  /** The last viewport (absent = the editor fits the content on open). */
+  viewport?: DiagramViewport | null;
+  updatedAt: string;
+}
+
 /**
  * One transcript message. Assistant-thread messages (Phase 7) carry a
  * stable `id` and the `parentId` they follow (absent = the thread root) —

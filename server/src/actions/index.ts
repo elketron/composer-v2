@@ -2,6 +2,7 @@ import type { Command } from '../wire/commands.js';
 import { asRecord, readObject, readString } from '../wire/read.js';
 import { cardActions } from './cards.js';
 import { conversationActions } from './conversations.js';
+import { diagramActions } from './diagrams.js';
 import { fileActions } from './files.js';
 import { pipelineActions } from './pipelines.js';
 import { projectActions } from './projects.js';
@@ -13,6 +14,7 @@ const actions: ActionRegistry = {
   ...pipelineActions,
   ...conversationActions,
   ...fileActions,
+  ...diagramActions,
 };
 
 export function fromAction(action: unknown, scopeProjectId?: string): Command | null {

@@ -8,6 +8,8 @@ import type {
   Assignee,
   Card,
   CardType,
+  Diagram,
+  DiagramViewport,
   Pipeline,
   ProposalItem,
   SubStateStatus,
@@ -91,16 +93,17 @@ export type Command =
   // finalizes it into `.composer/workflows/` (the write + the metadata
   // event). The recording lives in the processor, keyed by the agent
   // session. Delete is the human/REST path.
-  | {
-      type: 'requestWorkflowRecordStart';
-      sessionId: string;
-      title: string;
-      description?: string;
-      tags?: string[];
-    }
+  | { type: 'requestWorkflowRecordStart'; sessionId: string; title: string; description?: string; tags?: string[] }
   | { type: 'requestWorkflowRecordStep'; sessionId: string; step: WorkflowStep }
   | { type: 'requestWorkflowRecordStop'; sessionId: string; links?: string[] }
-  | { type: 'requestWorkflowDelete'; path: string };
+  | { type: 'requestWorkflowDelete'; path: string }
+  // Diagrams (Phase 11): the canvas's database-backed saves. Content rides
+  // the command; the events carry the full diagram for the fold/snapshot.
+  // The viewport save is viewport-only so panning never clashes with a
+  // content save (and never trips the client's unsaved-changes guard).
+  | { type: 'requestDiagramSave'; diagram: Diagram }
+  | { type: 'requestDiagramDelete'; diagramId: string }
+  | { type: 'requestDiagramViewport'; diagramId: string; viewport: DiagramViewport };
 
 /** One ticket the planner emits on approval; lands as an ordinary card. */
 export interface TicketEmission {
@@ -120,6 +123,7 @@ export type RejectionCode =
   | 'unknownPipeline'
   | 'unknownStep'
   | 'unknownLane'
+  | 'unknownDiagram'
   | 'blocked'
   | 'invalidType'
   | 'invalidCommand'
@@ -143,5 +147,6 @@ export type CommandOutcome =
   // `cards` rides ticket emission: the agent's tool result names the count.
   // `pipelineId` rides pipeline saves: a fresh draft adopts the allocated
   // id so a second save updates instead of duplicating.
-  | { ok: true; savedPath?: string; runId?: string; transition?: string; cards?: number; pipelineId?: string }
+  // `diagramId` rides diagram saves: the canvas adopts the allocated id.
+  | { ok: true; savedPath?: string; runId?: string; transition?: string; cards?: number; pipelineId?: string; diagramId?: string }
   | { ok: false; rejection: Rejection };

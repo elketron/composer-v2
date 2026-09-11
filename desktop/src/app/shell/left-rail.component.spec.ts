@@ -20,17 +20,26 @@ describe('LeftRailComponent', () => {
     expect(entries.length).toBe(9);
   });
 
-  it('wires board, plan, pipelines, coding, docs and settings as links', async () => {
+  it('wires board, plan, pipelines, coding, docs, canvas and settings as links', async () => {
     const fixture = TestBed.createComponent(LeftRailComponent);
     fixture.componentRef.setInput('projectId', 'P-1');
     await fixture.whenStable();
     const links = [...(fixture.nativeElement as HTMLElement).querySelectorAll('a.entry')];
     const labels = links.map((a) => a.getAttribute('aria-label'));
 
-    expect(labels).toEqual(['board', 'plan', 'pipelines', 'coding', 'docs', 'projects', 'settings']);
+    expect(labels).toEqual([
+      'board',
+      'plan',
+      'pipelines',
+      'coding',
+      'docs',
+      'canvas',
+      'projects',
+      'settings',
+    ]);
   });
 
-  it('renders canvas and account as disabled stubs', async () => {
+  it('renders account as a disabled stub', async () => {
     const fixture = TestBed.createComponent(LeftRailComponent);
     fixture.componentRef.setInput('projectId', 'P-1');
     await fixture.whenStable();
@@ -39,7 +48,7 @@ describe('LeftRailComponent', () => {
     ];
     const labels = disabled.map((el) => el.getAttribute('title'));
 
-    expect(labels).toEqual(['canvas · not available yet', 'account · not available yet']);
+    expect(labels).toEqual(['account · not available yet']);
     for (const el of disabled) {
       expect(el.getAttribute('aria-disabled')).toBe('true');
     }

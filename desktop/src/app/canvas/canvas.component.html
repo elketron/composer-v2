@@ -1,0 +1,428 @@
+<div class="canvas-shell">
+  <aside class="diagram-list">
+    <div class="list-header">
+      <span class="list-title">diagrams</span>
+      <button
+        type="button"
+        class="action icon"
+        aria-label="new diagram"
+        title="new diagram"
+        (click)="createDiagram()"
+      >
+        <lucide-icon [img]="icons.newDiagram" [size]="15" [strokeWidth]="1.5" />
+      </button>
+    </div>
+
+    <div class="list-body">
+      @for (diagram of list(); track diagram.id) {
+        <button
+          type="button"
+          class="diagram-entry"
+          [class.active]="diagram.id === selectedId()"
+          (click)="selectDiagram(diagram.id)"
+        >
+          <span class="entry-name">{{ diagram.name || "Untitled" }}</span>
+          @if (diagramStamp(diagram); as stamp) {
+            <span class="entry-stamp">{{ stamp }}</span>
+          }
+        </button>
+      } @empty {
+        <p class="list-empty">no diagrams yet — add one to start drawing</p>
+      }
+    </div>
+  </aside>
+
+  <section class="editor">
+    @if (selected(); as diagram) {
+      <div class="toolbar">
+        <input
+          type="text"
+          class="field name-field"
+          autocomplete="off"
+          aria-label="diagram name"
+          placeholder="diagram name"
+          [value]="name()"
+          (input)="rename(nameInput.value)"
+          #nameInput
+        />
+        <span class="toolbar-hint"
+          >right-click to add · drag a port to connect · dbl-click a connector
+          label to edit · ctrl+g groups the selection</span
+        >
+        <span class="toolbar-actions">
+          @if (rejection(); as error) {
+            <span class="save-error" [title]="error">{{ error }}</span>
+          }
+          <button
+            type="button"
+            class="action"
+            aria-label="add node"
+            title="add note (right-click the canvas for typed nodes)"
+            (click)="addNode()"
+          >
+            + node
+          </button>
+          @if (dirty()) {
+            <span class="unsaved-pill">unsaved</span>
+          }
+          <button
+            type="button"
+            class="action save"
+            [disabled]="saveDisabled()"
+            (click)="saveDiagram()"
+          >
+            <lucide-icon [img]="icons.save" [size]="14" [strokeWidth]="1.5" />
+            save
+          </button>
+          <button type="button" class="action danger" (click)="deleteDiagram()">
+            <lucide-icon [img]="icons.delete" [size]="14" [strokeWidth]="1.5" />
+            delete
+          </button>
+        </span>
+      </div>
+    }
+
+    <div class="canvas-row" #drawingArea>
+      <f-flow
+        class="drawing"
+        [class.inert]="selected() === null"
+        fDraggable
+        (fSelectionChange)="selectionChanged($event)"
+        (fMoveNodes)="moveNodes($event)"
+        (fCreateConnection)="createConnection($event)"
+        (fDeleteSelected)="deleteSelected($event)"
+        (fDropToGroup)="dropToGroup($event)"
+        (contextmenu)="openContextMenu($event)"
+      >
+        <f-selection-area />
+        <f-background>
+          <f-rect-pattern
+            [vSize]="24"
+            [hSize]="24"
+            vColor="rgba(194, 192, 182, 0.09)"
+            hColor="rgba(194, 192, 182, 0.09)"
+          />
+        </f-background>
+
+        <f-canvas
+          fZoom
+          [position]="viewport()"
+          [scale]="viewport().scale"
+          (fCanvasChange)="canvasChanged($event)"
+        >
+          @for (group of groups(); track group.id) {
+            <div
+              fGroup
+              class="flow-group"
+              [fGroupId]="group.id"
+              [fGroupPosition]="{ x: group.x, y: group.y }"
+              [fGroupSize]="{ width: group.w, height: group.h }"
+              [class.f-selected]="selectedGroupIds().includes(group.id)"
+              (fGroupSizeChange)="groupResized(group.id, $event)"
+              (dblclick)="editGroupLabel()"
+            >
+              <span class="group-title" fDragHandle>
+                <lucide-icon [img]="icons.group" [size]="12" [strokeWidth]="1.5" />
+                {{ group.label || "Group" }}
+              </span>
+              <span fResizeHandle fResizeHandleType="right-bottom" class="group-resize rb"></span>
+              <span fResizeHandle fResizeHandleType="right" class="group-resize r"></span>
+              <span fResizeHandle fResizeHandleType="bottom" class="group-resize b"></span>
+            </div>
+          }
+
+          @for (edge of edges(); track edge.id) {
+            <f-connection
+              [fConnectionId]="edge.id"
+              [fSourceId]="sourceId(edge.from)"
+              [fTargetId]="targetId(edge.to)"
+              fType="bezier"
+              [fReassignDisabled]="true"
+              [class.f-selected]="selectedEdgeId() === edge.id"
+              [class.editing]="editingEdgeId() === edge.id"
+            >
+              <f-connection-marker-arrow [type]="markerEnd" />
+              <span
+                fConnectionContent
+                class="edge-label"
+                [class.empty]="!edge.label"
+                (dblclick)="startEditEdge(edge.id, edge.label, $event)"
+              >
+                {{ edge.label }}
+              </span>
+            </f-connection>
+          }
+
+          @for (node of nodes(); track node.id) {
+            <article
+              fNode
+              fDragHandle
+              class="flow-node"
+              [class.f-selected]="selectedNodeIds().includes(node.id)"
+              [fNodeId]="node.id"
+              [fNodeParentId]="node.groupId"
+              [fNodePosition]="{ x: node.x, y: node.y }"
+              [fNodeSize]="{ width: node.w, height: node.h }"
+              (dblclick)="editNodeLabel()"
+            >
+              <div class="node-shape" [class]="'node-shape type-' + node.type"></div>
+              <div
+                fConnector
+                class="port target-port"
+                fConnectorType="target"
+                fConnectorConnectableSide="left"
+                [fConnectorId]="targetId(node.id)"
+              ></div>
+              <span class="node-pill">
+                <lucide-icon
+                  class="node-icon"
+                  [img]="icons[node.type]"
+                  [size]="13"
+                  [strokeWidth]="1.5"
+                />
+                <strong class="node-label">{{ node.label }}</strong>
+              </span>
+              <div
+                fConnector
+                class="port source-port"
+                fConnectorType="source"
+                fConnectorConnectableSide="right"
+                [fConnectorId]="sourceId(node.id)"
+              ></div>
+            </article>
+          }
+
+          <f-connection-for-create fType="bezier" />
+          <f-snap-connection fType="bezier" />
+        </f-canvas>
+
+        @if (selected()) {
+          @if (nodes().length === 0) {
+            <p class="state-empty inline">
+              right-click the canvas to add a screen, process, decision, or note
+            </p>
+          }
+        }
+
+        @if (selected()) {
+          <div class="canvas-controls" fDragBlocker>
+            <button
+              type="button"
+              class="control"
+              aria-label="zoom out"
+              title="zoom out (−)"
+              (click)="zoomOut()"
+            >
+              −
+            </button>
+            <span class="zoom-level">{{ zoomPercent() }}%</span>
+            <button
+              type="button"
+              class="control"
+              aria-label="zoom in"
+              title="zoom in (+)"
+              (click)="zoomIn()"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              class="control"
+              aria-label="reset zoom"
+              title="reset zoom (0)"
+              (click)="zoomReset()"
+            >
+              1:1
+            </button>
+            <button
+              type="button"
+              class="control"
+              aria-label="fit to screen"
+              title="fit to screen"
+              (click)="fitToScreen()"
+            >
+              ⤢
+            </button>
+          </div>
+        }
+
+        @if (contextMenu(); as menu) {
+          <div
+            class="context-menu"
+            fDragBlocker
+            [style.left.px]="menu.x"
+            [style.top.px]="menu.y"
+          >
+            <button type="button" (click)="createAt(menu, 'screen')">
+              <lucide-icon [img]="icons.screen" [size]="13" [strokeWidth]="1.5" />
+              add screen
+            </button>
+            <button type="button" (click)="createAt(menu, 'process')">
+              <lucide-icon [img]="icons.process" [size]="13" [strokeWidth]="1.5" />
+              add process
+            </button>
+            <button type="button" (click)="createAt(menu, 'decision')">
+              <lucide-icon [img]="icons.decision" [size]="13" [strokeWidth]="1.5" />
+              add decision
+            </button>
+            <button type="button" (click)="createAt(menu, 'note')">
+              <lucide-icon [img]="icons.note" [size]="13" [strokeWidth]="1.5" />
+              add note
+            </button>
+            <span class="menu-sep"></span>
+            <button type="button" (click)="createAt(menu, 'group')">
+              <lucide-icon [img]="icons.group" [size]="13" [strokeWidth]="1.5" />
+              add group
+            </button>
+          </div>
+        }
+      </f-flow>
+
+      @if (editingEdgeId() !== null; as editing) {
+        <div
+          class="edge-label-editor"
+          [style.left.px]="edgeEditorPos()?.x ?? 0"
+          [style.top.px]="edgeEditorPos()?.y ?? 0"
+          fDragBlocker
+        >
+          <input
+            type="text"
+            class="edge-label-input"
+            autocomplete="off"
+            aria-label="edge label editor"
+            placeholder="yes, no, submit, error…"
+            [value]="edgeDraft()"
+            (input)="edgeDraft.set(edgeLabelInput.value)"
+            (keydown.enter)="commitEdgeLabel()"
+            (keydown.escape)="cancelEdgeLabel()"
+            (blur)="commitEdgeLabel()"
+            #edgeLabelInput
+          />
+        </div>
+      }
+
+      @if (panel(); as current) {
+        <aside
+          class="detail-panel"
+          [style.left.px]="panelAnchor().left"
+          [style.top.px]="panelAnchor().top"
+          [style.width.px]="panelAnchor().width"
+        >
+          @switch (current.kind) {
+            @case ("node") {
+              <div class="panel-head">
+                <lucide-icon
+                  [img]="icons[current.node.type]"
+                  [size]="14"
+                  [strokeWidth]="1.5"
+                />
+                <span class="panel-title">node</span>
+              </div>
+              <label class="panel-field">
+                <span>type</span>
+                <select
+                  class="field"
+                  [value]="current.node.type"
+                  (change)="retype($any($event.target).value)"
+                >
+                  @for (type of nodeTypes; track type) {
+                    <option [value]="type" [selected]="type === current.node.type">
+                      {{ type }}
+                    </option>
+                  }
+                </select>
+              </label>
+              <label class="panel-field">
+                <span>title</span>
+                <input
+                  type="text"
+                  class="field"
+                  autocomplete="off"
+                  aria-label="node title"
+                  placeholder="node title"
+                  [value]="current.node.label"
+                  (input)="relabel(titleInput.value)"
+                  #titleInput
+                />
+              </label>
+              <label class="panel-field grow">
+                <span>description</span>
+                <textarea
+                  class="field"
+                  aria-label="node description"
+                  placeholder="what this node is for — the context an LLM reads later"
+                  [value]="current.node.description"
+                  (input)="redescribe(descriptionInput.value)"
+                  #descriptionInput
+                ></textarea>
+              </label>
+              <button type="button" class="action danger" (click)="deleteSelectedNode()">
+                <lucide-icon [img]="icons.delete" [size]="13" [strokeWidth]="1.5" />
+                delete node
+              </button>
+            }
+            @case ("edge") {
+              <div class="panel-head">
+                <span class="panel-kind">connection</span>
+              </div>
+              <label class="panel-field">
+                <span>label</span>
+                <input
+                  type="text"
+                  class="field"
+                  autocomplete="off"
+                  aria-label="edge label"
+                  placeholder="yes, no, submit, error…"
+                  [value]="current.edge.label"
+                  (input)="relabelEdge(edgeInput.value)"
+                  #edgeInput
+                />
+              </label>
+              <button type="button" class="action danger" (click)="deleteSelectedEdge()">
+                <lucide-icon [img]="icons.delete" [size]="13" [strokeWidth]="1.5" />
+                delete connection
+              </button>
+            }
+            @case ("group") {
+              <label class="panel-field">
+                <span>group</span>
+                <input
+                  type="text"
+                  class="field"
+                  autocomplete="off"
+                  aria-label="group label"
+                  placeholder="group label"
+                  [value]="current.group.label"
+                  (input)="regroupLabel(titleInput.value)"
+                  #titleInput
+                />
+              </label>
+              <p class="panel-hint">deleting the group keeps its nodes</p>
+              <button type="button" class="action danger" (click)="deleteSelectedGroup()">
+                <lucide-icon [img]="icons.delete" [size]="13" [strokeWidth]="1.5" />
+                delete group
+              </button>
+            }
+            @case ("multi") {
+              <p class="panel-kind">{{ current.count }} nodes selected</p>
+              <button type="button" class="action" (click)="groupSelection()">
+                <lucide-icon [img]="icons.group" [size]="13" [strokeWidth]="1.5" />
+                group (ctrl+g)
+              </button>
+              <button type="button" class="action danger" (click)="deleteSelectedNode()">
+                <lucide-icon [img]="icons.delete" [size]="13" [strokeWidth]="1.5" />
+                delete all
+              </button>
+            }
+          }
+        </aside>
+      }
+    </div>
+  </section>
+
+  @if (selected() === null) {
+    <div class="empty-state">
+      <p>select a diagram or create a new one to draw</p>
+    </div>
+  }
+</div>

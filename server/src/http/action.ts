@@ -24,6 +24,7 @@ export function registerActionRoute(app: Hono, deps: HttpDeps): void {
       return context.json({
         ok: true,
         ...('pipelineId' in outcome && outcome.pipelineId !== undefined ? { pipelineId: outcome.pipelineId } : {}),
+        ...('diagramId' in outcome && outcome.diagramId !== undefined ? { diagramId: outcome.diagramId } : {}),
         ...('runId' in outcome && outcome.runId !== undefined ? { runId: outcome.runId } : {}),
         ...('savedPath' in outcome && outcome.savedPath !== undefined ? { savedPath: outcome.savedPath } : {}),
         ...('transition' in outcome && outcome.transition !== undefined ? { transition: outcome.transition } : {}),
