@@ -6,6 +6,10 @@ import {
   PipelineJson,
   domainEventKind,
 } from '../core/events/wire';
+import { RestClient } from '../core/rest';
+import { EventDeduper } from '../core/events/dedupe-events';
+import type { PipelineCatalog } from '../core/models/pipeline.models';
+import type { JustRecipeEntry } from './step-types';
 import {
   Pipeline,
   PipelineStep,
@@ -26,9 +30,9 @@ import { ShellService } from '../shell/shell.service';
  */
 @Injectable({ providedIn: 'root' })
 export class PipelineService {
-  private static readonly SEEN_IDS_CAP = 4096;
-
   private readonly events = inject(EventsClient);
+  private readonly dedupe = new EventDeduper();
+  private readonly rest = inject(RestClient);
   private readonly shell = inject(ShellService);
 
   private readonly pipelinesByProject = signal<ReadonlyMap<string, readonly Pipeline[]>>(
@@ -53,6 +57,37 @@ export class PipelineService {
 
   /** The last command rejection, for the views to surface (cleared on success). */
   readonly rejection = signal<string | null>(null);
+
+  /** The attached server's reachability (the lazy reads' gate). */
+  readonly connected = this.events.connected;
+
+  /**
+   * The server's executor catalog (agents + runtime steps + categories;
+   * the editor's sidebars and step pickers) — loaded once per attach via
+   * `ensureCatalog` (FNT-001).
+   */
+  private readonly catalogState = signal<PipelineCatalog>({
+    agents: [],
+    runtimeSteps: [],
+    categories: [],
+  });
+  readonly catalog = this.catalogState.asReadonly();
+  private catalogLoaded = false;
+
+  /**
+   * The projects' justfile recipes (the Set step's presets and the command
+   * inspector's dropdown) — loaded per project via `ensureRecipes`, cached.
+   */
+  private readonly recipesByProject = signal<ReadonlyMap<string, readonly JustRecipeEntry[]>>(
+    new Map(),
+  );
+  private readonly recipesLoaded = new Set<string>();
+
+  /** The active project's justfile recipes ([] until loaded). */
+  readonly justRecipes = computed<readonly JustRecipeEntry[]>(() => {
+    const projectId = this.projectId();
+    return projectId === null ? [] : (this.recipesByProject().get(projectId) ?? []);
+  });
 
   private readonly projectId = computed(() => this.shell.activeTabId());
 
@@ -88,8 +123,6 @@ export class PipelineService {
       this.commandOutputByProject().get(this.projectId() ?? '') ??
       new Map<string, readonly CommandOutputLine[]>(),
   );
-
-  private readonly seenEventIds = new Map<string, true>();
 
   constructor() {
     this.events.events$.subscribe((event) => this.fold(event));
@@ -131,6 +164,60 @@ export class PipelineService {
         ...(comment ? { comment } : {}),
       },
     });
+  }
+
+  // ---- Reads (the editor's catalog + the diff page's patch) ----
+
+  /** Loads the executor catalog once; no-op offline or already loaded. */
+  ensureCatalog(): void {
+    if (this.catalogLoaded || !this.connected() || this.rest.serverBase === null) return;
+    this.catalogLoaded = true;
+    void this.rest.get<PipelineCatalog>('/catalog').then((response) => {
+      if (response === null || !response.ok) {
+        // A retry on the next trigger (an editor opening later).
+        this.catalogLoaded = false;
+        return;
+      }
+      const body = response.body;
+      this.catalogState.set({
+        agents: Array.isArray(body.agents) ? body.agents : [],
+        runtimeSteps: Array.isArray(body.runtimeSteps) ? body.runtimeSteps : [],
+        categories: Array.isArray(body.categories) ? body.categories : [],
+      });
+    });
+  }
+
+  /** Loads a project's justfile recipes once; no-op offline or cached. */
+  ensureRecipes(projectId: string): void {
+    if (
+      projectId === '' ||
+      this.recipesLoaded.has(projectId) ||
+      !this.connected() ||
+      this.rest.serverBase === null
+    ) {
+      return;
+    }
+    this.recipesLoaded.add(projectId);
+    void this.rest
+      .get<{ recipes: readonly JustRecipeEntry[] }>(`/justfile?projectId=${projectId}`)
+      .then((response) => {
+        const recipes = response !== null && response.ok ? (response.body.recipes ?? []) : [];
+        const valid = recipes.filter((recipe) => typeof recipe?.name === 'string' && recipe.name !== '');
+        this.recipesByProject.update((map) => {
+          const next = new Map(map);
+          next.set(projectId, valid);
+          return next;
+        });
+      });
+  }
+
+  /** One session file's working-tree diff (fetched fresh; '' when unavailable). */
+  async diffFor(sessionId: string, path: string, projectId: string): Promise<string> {
+    const response = await this.rest.get<{ files: readonly { path: string; patch: string }[] }>(
+      `/sessions/${sessionId}/diff?projectId=${projectId}`,
+    );
+    if (response === null || !response.ok) return '';
+    return response.body.files.find((file) => file.path === path)?.patch ?? '';
   }
 
   // ---- Selectors ----
@@ -179,14 +266,7 @@ export class PipelineService {
   // ---- Event fold (stream → signals; idempotent) ----
 
   private fold(event: DomainEventJson): void {
-    if (event.id) {
-      if (this.seenEventIds.has(event.id)) return;
-      this.seenEventIds.set(event.id, true);
-      if (this.seenEventIds.size > PipelineService.SEEN_IDS_CAP) {
-        const oldest = this.seenEventIds.keys().next().value;
-        if (oldest !== undefined) this.seenEventIds.delete(oldest);
-      }
-    }
+    if (!this.dedupe.first(event)) return;
     const projectId = event.projectId ?? '';
     switch (domainEventKind(event)) {
       case 'pipelineSaved': {

@@ -69,7 +69,7 @@ export class PaletteService {
         label: `open ${project.name}`,
         hint: project.directory ?? undefined,
         keywords: 'project open workspace',
-        run: () => void this.navigate(this.shell.workspaceUrl(project.id)),
+        run: () => void this.navigate(this.shell.openProject(project.id)),
       });
       for (const [view, keywords] of PALETTE_VIEWS) {
         items.push({
@@ -77,7 +77,10 @@ export class PaletteService {
           label: `${project.name} · ${view}`,
           hint: view,
           keywords: `project view ${keywords}`,
-          run: () => void this.navigate(`${base}/${view}`),
+          run: () => {
+            this.shell.openProject(project.id);
+            void this.navigate(`${base}/${view}`);
+          },
         });
       }
       items.push({

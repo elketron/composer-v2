@@ -77,12 +77,12 @@
                     <lucide-icon [img]="icons.tool" [size]="12" />
                     {{ entry.toolName }}
                   </span>
-                  @if (toolArgs(entry.args); as args) {
+                  @if (toolArgsPreview(entry); as args) {
                     <span class="tool-args">{{ args }}</span>
                   }
                   @if (entry.result; as result) {
                     <span class="tool-result" [class.is-error]="result.isError">
-                      {{ toolResult(entry) }}
+                      {{ toolResultPreview(entry) }}
                     </span>
                   }
                 </div>

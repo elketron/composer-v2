@@ -22,7 +22,11 @@ Severity means:
 
 ### FNT-001: the pipeline editor fetches the server catalog itself
 
-**Status:** planned. **Categories:** component I/O, misplaced state.
+**Status:** Resolved 2026-09-12. `PipelineService` owns the reads
+(`ensureCatalog`/`ensureRecipes` + `catalog`/`justRecipes` reads, cached
+per project and retried on a failed attach); the editor only triggers.
+
+**Categories:** component I/O, misplaced state.
 
 **References:** `desktop/src/app/pipelines/pipeline-editor.component.ts:41,131,268-282,137,140`
 
@@ -43,7 +47,11 @@ editor's effects replaced by plain reads. The editor keeps zero
 
 ### FNT-002: the diff page fetches its patch itself
 
-**Status:** planned. **Categories:** component I/O, misplaced state.
+**Status:** Resolved 2026-09-12. `PipelineService.diffFor(sessionId, path,
+projectId)` owns the read; the component keeps only the stale-selection
+guard and the render.
+
+**Categories:** component I/O, misplaced state.
 
 **References:** `desktop/src/app/run/diff-view.component.ts:29,40,68-85`
 
@@ -54,7 +62,10 @@ moves to a shared helper (FNT-011).
 
 ### FNT-003: the directory picker bypasses RestClient
 
-**Status:** planned. **Categories:** transport inconsistency.
+**Status:** Resolved 2026-09-12. The browse goes through `RestClient.get`
+(the `backend unavailable` case is its null response).
+
+**Categories:** transport inconsistency.
 
 **References:** `desktop/src/app/core/directory-picker/directory-picker.service.ts:77`
 
@@ -67,7 +78,14 @@ stays in one place.
 
 ### FNT-004: knowledge pane writes service signals directly
 
-**Status:** planned. **Categories:** state ownership, UI state in a service.
+**Status:** Resolved 2026-09-12. `KnowledgeService` owns the editor's
+transitions (`beginEdit`/`cancelEdit`/`saveEdit`/`createNote`/`delete`
+reset mode/selection/dirty themselves; `setEditingDirty` is the pane's
+one mirror intent). The poll loop died by wire: the create response
+carries `savedPath` (`PublishResponseJson` gained the field), so the
+pane selects via `select(savedPath)` — no event-echo wait.
+
+**Categories:** state ownership, UI state in a service.
 
 **References:** `desktop/src/app/knowledge/knowledge-pane.component.ts:88,107,125-126,153-154,169-170,183-184,191-207`
 
@@ -95,7 +113,11 @@ command path can await its own echo.
 
 ### FNT-005: the assistant component writes the service's error signal through an alias
 
-**Status:** planned. **Categories:** state ownership.
+**Status:** Resolved 2026-09-12. `archiveThread` sets the service's own
+error and returns void; the component only awaits it (every other
+publish path already set the service's error itself).
+
+**Categories:** state ownership.
 
 **References:** `desktop/src/app/assistant/assistant.component.ts:50,202`
 
@@ -107,7 +129,14 @@ publish path fails; the component only reads and clears via
 
 ### FNT-006: the event-id dedupe fold block, copy-pasted ×5
 
-**Status:** planned. **Categories:** duplicate code.
+**Status:** Resolved 2026-09-12. One shared `EventDeduper` in
+`core/events/dedupe-events.ts`; all five services hold one and open
+their fold with `if (!this.dedupe.first(event)) return;`. Shape note: a
+class instead of the planned RxJS operator — the plan service maps
+wire → PlanEvent before folding and specs call `applyEvent` directly, so
+the dedupe must live at the fold entry, not in the subscription pipe.
+
+**Categories:** duplicate code.
 
 **References:** `assistant.service.ts:262-270`, `plan.service.ts:156-163`,
 `board.service.ts:356-363`, `pipeline.service.ts:182-189`, and the Set
@@ -123,7 +152,11 @@ applied where services subscribe (`events.events$.pipe(dedupeEvents())`).
 
 ### FNT-007: composer textarea behavior ×2
 
-**Status:** planned. **Categories:** duplicate code.
+**Status:** Resolved 2026-09-12. `core/composer.ts` (`resizeComposer`,
+`composerEnter`); both composers call the helpers (the assistant's
+@-mention keys stay local — only it has mentions).
+
+**Categories:** duplicate code.
 
 **References:** `assistant.component.ts:499-502,527-532` ≡
 `plan-chat.component.ts:91-94,97-103` (identical `resize()` with the
@@ -138,7 +171,11 @@ export function composerKeydown(event: KeyboardEvent): boolean // true = send
 
 ### FNT-008: relative time ×2
 
-**Status:** planned. **Categories:** duplicate code.
+**Status:** Resolved 2026-09-12. `core/age.ts:ageLabel` (the canvas's
+richer ladder — floor semantics + the ≥30d locale fallback); `AgePipe`
+delegates, the canvas dropped its copy.
+
+**Categories:** duplicate code.
 
 **References:** `core/age.pipe.ts:6-17` ≡ `canvas/canvas.component.ts:59-69`
 
@@ -148,7 +185,11 @@ it. (`runElapsed` stays separate — mm:ss, different contract.)
 
 ### FNT-009: markdown render + sanitizer bypass ×3
 
-**Status:** planned. **Categories:** duplicate code, security-sensitive
+**Status:** Resolved 2026-09-12. `core/trusted-html.ts` (`trustHtml`,
+`renderTrustedMarkdown`) — the repo's only `bypassSecurityTrustHtml`
+call sites now live there (docs, knowledge, diff all route through).
+
+**Categories:** duplicate code, security-sensitive
 copy.
 
 **References:** `docs/docs.component.ts:269-283`,
@@ -165,7 +206,11 @@ export function renderTrustedHtml(sanitizer: DomSanitizer, text: string): SafeHt
 
 ### FNT-010: pipeline step projection ×3 + step lookup ×3
 
-**Status:** planned. **Categories:** duplicate code, model leakage.
+**Status:** Resolved 2026-09-12. `Pipeline.stepRowsFor(stepStates)` and
+`Pipeline.stepForRun(run)`; card-panel, run-view, and board-card call
+the model.
+
+**Categories:** duplicate code, model leakage.
 
 **References:** `card-panel.component.ts:139-147` ≡ `run-view.component.ts:101-109`;
 step lookup `board-card.component.ts:57-62` ≡ `card-panel.component.ts:94-99` ≡
@@ -180,7 +225,12 @@ stepForRun(run: RunProgress): PipelineStep | undefined
 
 ### FNT-011: transcript formatting leaks into run-view
 
-**Status:** planned. **Categories:** model leakage.
+**Status:** Resolved 2026-09-12. `outcomeLabel`, `toolArgsPreview`,
+`toolResultPreview` moved beside `RunOutcome` in
+`core/models/pipeline.models.ts`; run-view re-exports them for the
+template and holds no formatting.
+
+**Categories:** model leakage.
 
 **References:** `run-view.component.ts:167-171,186-190,192-203` vs
 `assistant.models.ts:329-331`
@@ -192,7 +242,12 @@ stepForRun(run: RunProgress): PipelineStep | undefined
 
 ### FNT-012: small coercion helpers ×2
 
-**Status:** planned. **Categories:** duplicate code.
+**Status:** Resolved 2026-09-12. `core/models/coerce.ts` (`isRecord`,
+`arrayOfStrings`, `normalizeMessageRole`, `toIso`); the assistant and
+plan models + services import it (`arrayOfStrings` unified on the
+stricter empty-string filter).
+
+**Categories:** duplicate code.
 
 **References:** `isRecord`/`arrayOfStrings` (`assistant.service.ts:680-688` ≡
 `plan.service.ts:652-660`); `toIso`/`normalizeMessageRole`
@@ -203,7 +258,13 @@ import from it.
 
 ### FNT-013: card coercion duplicated inside plan.service
 
-**Status:** planned. **Categories:** duplicate code, correctness risk.
+**Status:** Resolved 2026-09-12. `PlanEvent`'s `CardsCommitted` now
+declares `cards: Card[]` (the wire mapping runs `cardFromWire` already);
+the fold passes them through and `asCommittedCard` plus its satellite
+helpers (`asAssignee`, `asFileStats`, `cardType`, the DTO interfaces)
+are deleted.
+
+**Categories:** duplicate code, correctness risk.
 
 **References:** `plan.service.ts:593-622` (`asCommittedCard`) vs the same
 file using `cardFromWire` (`wire.ts:1093`) for the same event family at
@@ -215,7 +276,14 @@ file using `cardFromWire` (`wire.ts:1093`) for the same event family at
 
 ### FNT-014: assistant turn-activity queries reimplemented in components
 
-**Status:** planned. **Categories:** model leakage, duplicate code.
+**Status:** Resolved 2026-09-12. `AssistantThread.turnActivityFor()` and
+`PlanningSession.turnActivityFor()` own the grouping (each with its key:
+id vs index); `turnActivityLabel` is the shared collapsed label (the plan
+chat adopts the assistant's richer ladder); `assistantToolLabel` now
+takes `{toolName, args}` so both entry types use it; the service exposes
+`siblingsOf()` (branchOf reuses it) and the component dropped its copy.
+
+**Categories:** model leakage, duplicate code.
 
 **References:** `assistant.component.ts:245-269,289-293,312-317` ≡
 `plan-chat.component.ts:31-65,67-73` ≡ `assistant.service.ts:639-646`
@@ -234,7 +302,18 @@ which the model can normalize). Component keeps only loop/render.
 
 ### FNT-015: docs.component orchestrates fetches and owns viewer state
 
-**Status:** planned. **Categories:** misplaced state, gray-zone smart
+**Status:** Resolved 2026-09-12. `DocsService` owns the viewer state
+machine (`viewer` signal: path/text/html/content/error/loading; the
+intents `select(projectId, path)`, `show(path, text)`, `clear()`; the
+stale-response guard rides a request counter). The viewer keeps the raw
+markdown, so `beginEdit` needs no refetch at all — the component's whole
+fetch orchestration (`showDoc`/`showText`/`selectPath` guards) is gone,
+and the component now imports nothing from wire (the last component-level
+wire import is dead). Save/rename failures stay on the editor session's
+`saveError`; a failed delete surfaces through the viewer (the service's
+surface).
+
+**Categories:** misplaced state, gray-zone smart
 component.
 
 **References:** `desktop/src/app/docs/docs.component.ts:55-57,106-131,135-146,172-238,269-283,285-298`
@@ -256,7 +335,27 @@ component-level wire import; replaced by the `Doc` model.
 
 ### FNT-016: canvas.component owns the diagram domain
 
-**Status:** planned. **Categories:** domain state in a component,
+**Status:** Resolved 2026-09-12. `DiagramDraft` (core/models/
+diagram-draft.ts) owns the working copy and every mutation rule —
+`addNode`/`addNodeNear` (id allocation + join-on-drop-in + cascade),
+`groupSelection`, `moveNodes`, `dropToGroup`, `connect` (duplicate
+guard), the label/type/description/group/edge setters (grow-only
+frames), and the deletes (edges die with nodes, groups keep theirs).
+The dirty compare lives on `Diagram.signature()` /
+`diagramContentSignature`. The graph primitives
+(`connectorSourceId/TargetId`, `nodeIdFromConnector`, `groupIdContaining`,
+`overlapsAny`, `freshNodeSpot`, `edgeExists`, `nodesBounds`,
+`applyNodeMoves`) are pure functions on `diagram.models.ts`. The canvas
+holds one `draft` signal and projects `name/nodes/edges/groups` from it
+(1181 → 955 lines; zero domain rules left). flow-editor imports
+`nextNodeId` + the connector helpers; its local `nextNodeId` (byte-equal
+to the model's) is deleted — its `nextGroupId` stays (genuinely
+different rule: the `Group1` namespace includes node ids, unlike the
+canvas's `G1`). Verified by the new `diagram-draft.spec.ts` round-trip
+(open → clean, edits → dirty, projection → save → reopen → clean) plus
+the unchanged canvas component specs.
+
+**Categories:** domain state in a component,
 duplicate graph rules.
 
 **References:** `desktop/src/app/canvas/canvas.component.ts:88-115,181-191,234-248,503-510,536-581,608-633,687-741,700-714,963-995`

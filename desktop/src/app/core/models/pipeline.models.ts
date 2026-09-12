@@ -5,6 +5,7 @@ import {
   WirePipelineRunStatus,
   WirePipelineStepKind,
 } from '../events/wire';
+import type { StepStateStatus } from './board.models';
 import { Bot, SquareCheck, Terminal, type LucideIconData } from 'lucide-angular';
 
 /** The kind of work one pipeline step does (v1 M3, D7). */
@@ -256,6 +257,22 @@ export class Pipeline {
     return this.data.steps.find((step) => step.id === id);
   }
 
+  /** The step a run is executing (undefined when idle or unknown). */
+  stepForRun(run: RunProgress): PipelineStep | undefined {
+    return run.stepId === undefined ? undefined : this.stepById(run.stepId);
+  }
+
+  /** The steps with a card's per-step state (pending when unreported). */
+  stepRowsFor(stepStates: Readonly<Record<string, StepStateStatus>>): {
+    step: PipelineStep;
+    status: StepStateStatus;
+  }[] {
+    return this.data.steps.map((step) => ({
+      step,
+      status: stepStates[step.id] ?? 'pending',
+    }));
+  }
+
   /** The lane's forward presentation order (absent = -1). */
   laneOrder(id: string): number {
     return this.data.lanes.findIndex((lane) => lane.id === id);
@@ -359,6 +376,37 @@ export interface RunOutcome {
 }
 
 // ---- Run representation (the board card's run chip) ----
+
+/** The run view's banner label for a finished run (mirrors the server's outcome vocabulary). */
+export function outcomeLabel(outcome: RunOutcome): string {
+  switch (outcome.status) {
+    case 'failed':
+      return `the run failed${outcome.error ? ' — ' + outcome.error : ''}`;
+    case 'returned':
+      return `${outcome.outcome ?? 'changes needed'}${outcome.feedback ? ' — ' + outcome.feedback : ''}`;
+    case 'cancelled':
+      return 'the run was cancelled';
+    default:
+      return 'the run completed';
+  }
+}
+
+/** One transcript tool call's args line (a capped single-line preview). */
+export function toolArgsPreview(entry: { args?: unknown }): string {
+  const value = entry.args;
+  if (value === undefined || value === null) return '';
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return text.length > 160 ? text.slice(0, 157) + '…' : text;
+}
+
+/** One transcript tool call's result preview: the first non-blank line, capped. */
+export function toolResultPreview(entry: {
+  result?: { readonly content: string; readonly isError: boolean };
+}): string {
+  const content = entry.result?.content ?? '';
+  const firstLine = content.split('\n').find((line) => line.trim() !== '') ?? '';
+  return firstLine.length > 200 ? firstLine.slice(0, 197) + '…' : firstLine;
+}
 
 /** The run chip's label for a run's current step kind. */
 export function runLabel(run: RunProgress | undefined): string | null {

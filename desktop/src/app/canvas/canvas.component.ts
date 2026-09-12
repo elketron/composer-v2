@@ -35,6 +35,7 @@ import {
 } from "lucide-angular";
 
 import { ConfirmService } from "../core/confirm/confirm.service";
+import { ageLabel } from "../core/age";
 import {
   DIAGRAM_NODE_TYPES,
   Diagram,
@@ -43,30 +44,21 @@ import {
   DiagramNodeData,
   DiagramNodeType,
   DiagramViewportData,
-  deterministicEdgeId,
-  fitNodeLabels,
-  nextGroupId,
-  nextNodeId,
+  connectorSourceId,
+  connectorTargetId,
+  nodeIdFromConnector,
   nodeSize,
 } from "../core/models/diagram.models";
+import {
+  DiagramDraft,
+  TYPE_START_LABEL,
+} from "../core/models/diagram-draft";
 import { ShellService } from "../shell/shell.service";
+import { routedProjectId } from "../shell/route-project-id";
 import { DiagramService } from "./diagram.service";
 
 /** The starter name a new diagram opens with. */
 const UNTITLED = "Untitled";
-
-/** The diagram list's relative last-save stamp. */
-function relativeStamp(at: Date): string {
-  const seconds = Math.max(0, Math.round((Date.now() - at.getTime()) / 1000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return at.toLocaleDateString();
-}
 
 /** The zoom buttons' bounds (matches the foblex wheel-zoom clamps). */
 const ZOOM_MIN = 0.2;
@@ -75,44 +67,6 @@ const ZOOM_STEP = 0.2;
 
 /** How long a pan/zoom burst waits before the viewport-only save flies. */
 const VIEWPORT_SAVE_DEBOUNCE_MS = 600;
-
-/** The starter labels (the user renames via the detail panel). */
-const TYPE_START_LABEL: Record<DiagramNodeType, string> = {
-  screen: "Screen",
-  process: "Process",
-  decision: "Decision",
-  note: "Note",
-};
-
-/** Field-order-insensitive content signature (the dirty compare). */
-function nodeSignature(node: DiagramNodeData): string {
-  return JSON.stringify([
-    node.id,
-    node.type,
-    node.label,
-    node.description,
-    node.groupId,
-    node.x,
-    node.y,
-    node.w,
-    node.h,
-  ]);
-}
-
-function edgeSignature(edge: DiagramEdgeData): string {
-  return JSON.stringify([edge.from, edge.to, edge.label]);
-}
-
-function groupSignature(group: DiagramGroupData): string {
-  return JSON.stringify([group.id, group.label, group.x, group.y, group.w, group.h]);
-}
-
-function signatures<T>(
-  items: readonly T[],
-  signature: (item: T) => string,
-): string {
-  return JSON.stringify(items.map(signature).sort());
-}
 
 /** The right-click creation menu's state (viewport position + canvas point). */
 interface ContextMenuState {
@@ -172,16 +126,21 @@ export class CanvasComponent {
   protected readonly markerEnd = EFMarkerType.END;
 
   protected readonly rejection = this.diagrams.rejection;
-  protected readonly projectId = computed(() => this.shell.activeTabId() ?? "");
-  protected readonly list = this.diagrams.diagrams;
+  // This instance always serves one project (the tab reuse strategy keys
+  // instances by project) — a stable id, not the active tab's.
+  protected readonly projectId = computed(() => this.myProjectId || (this.shell.activeTabId() ?? ""));
+  private readonly myProjectId = routedProjectId();
+  protected readonly list = computed(() => this.diagrams.diagramsOf(this.projectId()));
 
   protected readonly selectedId = signal<string | null>(null);
 
-  // The editor's live working copy (name + nodes + edges + groups).
-  protected readonly name = signal(UNTITLED);
-  protected readonly nodes = signal<DiagramNodeData[]>([]);
-  protected readonly edges = signal<DiagramEdgeData[]>([]);
-  protected readonly groups = signal<DiagramGroupData[]>([]);
+  // The editor's live working copy: a DiagramDraft owns the graph and its
+  // mutation rules; the template reads these projections.
+  private readonly draft = signal(DiagramDraft.blank(UNTITLED));
+  protected readonly name = computed(() => this.draft().name);
+  protected readonly nodes = computed(() => this.draft().nodes);
+  protected readonly edges = computed(() => this.draft().edges);
+  protected readonly groups = computed(() => this.draft().groups);
 
   protected readonly selectedNodeIds = signal<string[]>([]);
   protected readonly selectedGroupIds = signal<string[]>([]);
@@ -226,26 +185,11 @@ export class CanvasComponent {
   );
 
   /**
-   * Whether the working copy differs from the saved diagram. Signatures
-   * compare field by field (the fold's wire order differs from the working
-   * copy's, so a raw compare would never settle after a save). The viewport
-   * is excluded — it flows through the viewport-only save.
+   * Whether the working copy differs from the saved diagram (the draft's
+   * signature compare; the viewport is excluded — it flows through the
+   * viewport-only save).
    */
-  protected readonly dirty = computed(() => {
-    const saved = this.selected();
-    if (saved === null) return false;
-    if (saved.name !== this.name()) return true;
-    // Both sides normalize through the label fit, so the load's grow-only
-    // frame correction never reads as an unsaved edit.
-    return (
-      signatures(fitNodeLabels(saved.nodes), nodeSignature) !==
-        signatures(fitNodeLabels(this.nodes()), nodeSignature) ||
-      signatures(saved.edges, edgeSignature) !==
-        signatures(this.edges(), edgeSignature) ||
-      signatures(saved.groups, groupSignature) !==
-        signatures(this.groups(), groupSignature)
-    );
-  });
+  protected readonly dirty = computed(() => this.draft().dirtyAgainst(this.selected()));
 
   protected readonly saveDisabled = computed(() => !this.dirty());
 
@@ -349,7 +293,7 @@ export class CanvasComponent {
     // Webfonts land after the first load's measurements ran — refit once
     // they do so frames computed against the fallback font still grow.
     document.fonts?.ready.then(() => {
-      if (!this.destroyed && this.loadedId !== null) this.fitNodeLabels();
+      if (!this.destroyed && this.loadedId !== null) this.refitNodeLabels();
     });
 
     // Selecting a diagram loads its working copy — once per id. Save echoes
@@ -378,12 +322,9 @@ export class CanvasComponent {
       this.flushViewport();
       this.loadedId = id;
       this.lastLoadedAt = performance.now();
-      this.name.set(diagram.name);
-      // Saved frames predate text measurement — grow the cramped ones so
-      // labels are never truncated (grow-only: never reshuffle a layout).
-      this.nodes.set(fitNodeLabels(diagram.nodes.map((node) => ({ ...node }))));
-      this.edges.set(diagram.edges.map((edge) => ({ ...edge })));
-      this.groups.set(diagram.groups.map((group) => ({ ...group })));
+      // Saved frames predate text measurement — the draft grows the cramped
+      // ones so labels are never truncated (grow-only: never reshuffle).
+      this.draft.set(DiagramDraft.open(diagram));
       this.clearSelection();
       this.contextMenu.set(null);
       this.editingEdgeId.set(null);
@@ -405,11 +346,6 @@ export class CanvasComponent {
       }
     });
 
-    // A fresh project drops any open diagram (the fold may carry none).
-    effect(() => {
-      this.projectId();
-      this.selectedId.set(null);
-    });
   }
 
   protected async selectDiagram(id: string | null): Promise<void> {
@@ -420,15 +356,10 @@ export class CanvasComponent {
 
   protected async createDiagram(): Promise<void> {
     if (this.dirty() && !(await this.confirmDiscard())) return;
-    const draft = new Diagram({
-      id: "",
-      name: UNTITLED,
-      nodes: [],
-      edges: [],
-      groups: [],
-      viewport: null,
-    });
-    const result = await this.diagrams.save(this.projectId(), draft);
+    const result = await this.diagrams.save(
+      this.projectId(),
+      DiagramDraft.blank(UNTITLED).toDiagram("", { x: 0, y: 0, scale: 1 }, UNTITLED),
+    );
     if (result.ok && result.diagramId !== undefined) {
       this.selectedId.set(result.diagramId);
     }
@@ -438,15 +369,7 @@ export class CanvasComponent {
     const projectId = this.projectId();
     const id = this.selectedId();
     if (!projectId || id === null) return;
-    const diagram = new Diagram({
-      id,
-      name: this.name().trim() === "" ? UNTITLED : this.name(),
-      nodes: this.nodes().map((node) => ({ ...node })),
-      edges: this.edges().map((edge) => ({ ...edge })),
-      groups: this.groups().map((group) => ({ ...group })),
-      viewport: this.viewport(),
-    });
-    await this.diagrams.save(projectId, diagram);
+    await this.diagrams.save(projectId, this.draft().toDiagram(id, this.viewport(), UNTITLED));
   }
 
   protected async deleteDiagram(): Promise<void> {
@@ -464,13 +387,13 @@ export class CanvasComponent {
   }
 
   protected rename(value: string): void {
-    this.name.set(value);
+    this.draft.update((draft) => draft.rename(value));
   }
 
   // ---- Node creation (toolbar + the right-click menu) ----
 
   protected addNode(): void {
-    this.createNode("note", this.freshNodeSpot());
+    this.draft.set(this.draft().addNodeNear("note", this.viewportCenterBase()).draft);
   }
 
   /** The context-menu actions: the item lands at the converted point. */
@@ -481,46 +404,26 @@ export class CanvasComponent {
       return;
     }
     const size = nodeSize(TYPE_START_LABEL[type], type);
-    this.createNode(type, {
+    this.addNodeAt(type, {
       x: Math.round(menu.canvasX - size.w / 2),
       y: Math.round(menu.canvasY - size.h / 2),
     });
   }
 
-  private createNode(type: DiagramNodeType, spot: { x: number; y: number }): void {
-    const id = nextNodeId(this.nodes().map((node) => node.id));
-    const label = TYPE_START_LABEL[type];
-    const groupId = this.groupIdContaining(spot.x, spot.y);
-    this.nodes.update((current) => [
-      ...current,
-      { id, type, label, description: "", groupId, x: spot.x, y: spot.y, ...nodeSize(label, type) },
-    ]);
-    this.selectNode(id);
+  private addNodeAt(type: DiagramNodeType, spot: { x: number; y: number }): void {
+    const added = this.draft().addNode(type, spot);
+    this.draft.set(added.draft);
+    this.selectNode(added.nodeId);
     this.editNodeLabel();
-  }
-
-  /** A node created over a group joins it (the right-click expectation). */
-  private groupIdContaining(x: number, y: number): string | null {
-    return (
-      this.groups().find(
-        (group) =>
-          x >= group.x && x <= group.x + group.w && y >= group.y && y <= group.y + group.h,
-      )?.id ?? null
-    );
   }
 
   /** An empty group from the context menu (or Ctrl+G for a formed one). */
   private createGroupAt(x: number, y: number): void {
-    const w = 240;
-    const h = 160;
-    const id = nextGroupId(this.groups().map((group) => group.id));
-    this.groups.update((current) => [
-      ...current,
-      { id, label: "Group", x: Math.round(x - w / 2), y: Math.round(y - h / 2), w, h },
-    ]);
+    const created = this.draft().addGroupAt(x, y);
+    this.draft.set(created.draft);
     this.selectedNodeIds.set([]);
     this.selectedEdgeId.set(null);
-    this.selectedGroupIds.set([id]);
+    this.selectedGroupIds.set([created.groupId]);
     this.editGroupLabel();
   }
 
@@ -539,204 +442,101 @@ export class CanvasComponent {
     const movedGroupIds = new Set(
       event.nodes.map((item) => item.id).filter((id) => this.groups().some((g) => g.id === id)),
     );
-    this.nodes.update((current) =>
-      current.map((node) => {
-        const own = positions.get(node.id);
-        if (own !== undefined) {
-          let moved = { ...node, x: own.x, y: own.y };
-          // A node dragged out of its group's frame leaves the group — but
-          // never when the group itself moved (foblex reports the children's
-          // final positions too, and they legitimately left the old frame).
-          if (moved.groupId !== null && !movedGroupIds.has(moved.groupId)) {
-            const group = this.groups().find((g) => g.id === moved.groupId);
-            const cx = own.x + node.w / 2;
-            const cy = own.y + node.h / 2;
-            const inside =
-              group !== undefined &&
-              cx >= group.x &&
-              cx <= group.x + group.w &&
-              cy >= group.y &&
-              cy <= group.y + group.h;
-            if (!inside) moved = { ...moved, groupId: null };
-          }
-          return moved;
-        }
-        // A moved group drags its contained nodes by the same delta.
-        if (node.groupId === null || !movedGroupIds.has(node.groupId)) return node;
-        const group = this.groups().find((g) => g.id === node.groupId)!;
-        const target = positions.get(group.id)!;
-        return {
-          ...node,
-          x: node.x + (target.x - group.x),
-          y: node.y + (target.y - group.y),
-        };
-      }),
-    );
-    this.groups.update((current) =>
-      current.map((group) => {
-        const position = positions.get(group.id);
-        return position === undefined ? group : { ...group, x: position.x, y: position.y };
-      }),
-    );
+    this.draft.update((draft) => draft.moveNodes(positions, movedGroupIds));
   }
 
   protected groupResized(
     id: string,
     rect: { x: number; y: number; width: number; height: number },
   ): void {
-    this.groups.update((current) =>
-      current.map((group) =>
-        group.id === id
-          ? { ...group, x: rect.x, y: rect.y, w: rect.width, h: rect.height }
-          : group,
-      ),
-    );
+    this.draft.update((draft) => draft.resizeGroup(id, rect));
   }
 
   /** Dropping nodes over a group joins it (foblex's drop-to-group). */
   protected dropToGroup(event: FDropToGroupEvent): void {
-    const ids = new Set(event.nodeIds);
-    this.nodes.update((current) =>
-      current.map((node) =>
-        ids.has(node.id) && node.groupId !== event.targetGroupId
-          ? { ...node, groupId: event.targetGroupId }
-          : node,
-      ),
-    );
+    this.draft.update((draft) => draft.dropToGroup(event.nodeIds, event.targetGroupId));
   }
 
   protected createConnection(event: FCreateConnectionEvent): void {
     if (event.targetId === undefined) return;
-    const from = this.nodeIdFromConnector(event.sourceId);
-    const to = this.nodeIdFromConnector(event.targetId);
-    if (
-      from === to ||
-      !this.nodes().some((node) => node.id === from) ||
-      !this.nodes().some((node) => node.id === to)
-    ) {
-      return;
-    }
-    if (this.edges().some((edge) => edge.from === from && edge.to === to)) return;
-    const edge: DiagramEdgeData = {
-      id: deterministicEdgeId(from, to),
-      from,
-      to,
-      label: "",
-    };
-    this.edges.update((current) => [...current, edge]);
+    const from = nodeIdFromConnector(event.sourceId);
+    const to = nodeIdFromConnector(event.targetId);
+    const created = this.draft().connect(from, to);
+    if (created.edgeId === null) return;
+    const edgeId = created.edgeId;
+    this.draft.set(created.draft);
     this.selectedNodeIds.set([]);
     this.selectedGroupIds.set([]);
-    this.selectedEdgeId.set(edge.id);
+    this.selectedEdgeId.set(edgeId);
     // The connection element doesn't exist yet (foblex emits before render);
     // sync the visual selection once it does.
-    this.afterRender(() => this.flow()?.select([], [edge.id], true));
+    this.afterRender(() => this.flow()?.select([], [edgeId], true));
   }
 
   // ---- The detail panel's edits ----
 
   protected relabel(value: string): void {
-    this.updateSelectedNode((node) => ({
-      ...node,
-      label: value,
-      ...nodeSize(value, node.type),
-    }));
+    this.updateSelectedNode((draft, id) => draft.setNodeLabel(id, value));
   }
 
   protected retype(type: DiagramNodeType): void {
-    this.updateSelectedNode((node) => ({ ...node, type, ...nodeSize(node.label, type) }));
+    this.updateSelectedNode((draft, id) => draft.setNodeType(id, type));
   }
 
   protected redescribe(description: string): void {
-    this.updateSelectedNode((node) => ({ ...node, description }));
+    this.updateSelectedNode((draft, id) => draft.setNodeDescription(id, description));
   }
 
   protected regroupLabel(label: string): void {
     const id = this.selectedGroupIds()[0];
     if (id === undefined) return;
-    this.groups.update((current) =>
-      current.map((group) => (group.id === id ? { ...group, label } : group)),
-    );
+    this.draft.update((draft) => draft.setGroupLabel(id, label));
   }
 
   protected relabelEdge(value: string): void {
     const id = this.selectedEdgeId();
     if (id === null) return;
-    this.edges.update((current) =>
-      current.map((edge) => (edge.id === id ? { ...edge, label: value } : edge)),
-    );
+    this.draft.update((draft) => draft.setEdgeLabel(id, value));
   }
 
   protected deleteSelectedNode(): void {
-    const ids = new Set(this.selectedNodeIds());
-    if (ids.size === 0) return;
-    this.nodes.update((current) => current.filter((node) => !ids.has(node.id)));
-    this.edges.update((current) =>
-      current.filter((edge) => !ids.has(edge.from) && !ids.has(edge.to)),
-    );
+    const ids = this.selectedNodeIds();
+    if (ids.length === 0) return;
+    this.draft.update((draft) => draft.deleteNodes(ids));
     this.clearSelection();
   }
 
   protected deleteSelectedEdge(): void {
     const id = this.selectedEdgeId();
     if (id === null) return;
-    this.edges.update((current) => current.filter((edge) => edge.id !== id));
+    this.draft.update((draft) => draft.deleteEdge(id));
     this.clearSelection();
   }
 
   /** Deleting a group preserves its nodes; only membership goes away. */
   protected deleteSelectedGroup(): void {
-    const ids = new Set(this.selectedGroupIds());
-    if (ids.size === 0) return;
-    this.groups.update((current) => current.filter((group) => !ids.has(group.id)));
-    this.nodes.update((current) =>
-      current.map((node) =>
-        node.groupId !== null && ids.has(node.groupId) ? { ...node, groupId: null } : node,
-      ),
-    );
+    const ids = this.selectedGroupIds();
+    if (ids.length === 0) return;
+    this.draft.update((draft) => draft.deleteGroups(ids));
     this.clearSelection();
   }
 
   /** Ctrl/Cmd+G: a group forms around the selected nodes' bounding box. */
   protected groupSelection(): void {
-    const selected = this.nodes().filter((node) => this.selectedNodeIds().includes(node.id));
-    if (selected.length === 0) return;
-    const pad = 24;
-    const x = Math.min(...selected.map((n) => n.x)) - pad;
-    const y = Math.min(...selected.map((n) => n.y)) - pad;
-    const w = Math.max(...selected.map((n) => n.x + n.w)) - x + pad;
-    const h = Math.max(...selected.map((n) => n.y + n.h)) - y + pad;
-    const id = nextGroupId(this.groups().map((group) => group.id));
-    this.groups.update((current) => [...current, { id, label: "Group", x, y, w, h }]);
-    const memberIds = new Set(selected.map((node) => node.id));
-    this.nodes.update((current) =>
-      current.map((node) => (memberIds.has(node.id) ? { ...node, groupId: id } : node)),
-    );
+    const created = this.draft().groupSelection(this.selectedNodeIds());
+    if (created.groupId === null) return;
+    this.draft.set(created.draft);
   }
 
   /** The keyboard layer's delete (Delete/Backspace with a selection). */
   protected deleteSelected(event: FDeleteSelectedEvent): void {
-    const nodeIds = new Set(event.nodeIds);
-    if (nodeIds.size > 0) {
-      this.nodes.update((current) =>
-        current.filter((node) => !nodeIds.has(node.id)),
-      );
-      this.edges.update((current) =>
-        current.filter((edge) => !nodeIds.has(edge.from) && !nodeIds.has(edge.to)),
-      );
-    }
-    const groupIds = new Set(event.groupIds);
-    if (groupIds.size > 0) {
-      this.groups.update((current) => current.filter((group) => !groupIds.has(group.id)));
-      this.nodes.update((current) =>
-        current.map((node) =>
-          node.groupId !== null && groupIds.has(node.groupId) ? { ...node, groupId: null } : node,
-        ),
-      );
-    }
-    if (event.connectionIds.length > 0) {
-      const keys = new Set(event.connectionIds);
-      this.edges.update((current) => current.filter((edge) => !keys.has(edge.id)));
-    }
+    this.draft.update((draft) =>
+      draft.deleteSelection({
+        nodeIds: event.nodeIds,
+        groupIds: event.groupIds,
+        edgeIds: event.connectionIds,
+      }),
+    );
     this.clearSelection();
   }
 
@@ -767,9 +567,7 @@ export class CanvasComponent {
     if (id === null) return;
     this.editingEdgeId.set(null);
     const value = this.edgeDraft().trim();
-    this.edges.update((current) =>
-      current.map((edge) => (edge.id === id ? { ...edge, label: value } : edge)),
-    );
+    this.draft.update((draft) => draft.setEdgeLabel(id, value));
   }
 
   protected cancelEdgeLabel(): void {
@@ -939,59 +737,29 @@ export class CanvasComponent {
     if (raw === '') return "";
     const at = new Date(raw);
     if (Number.isNaN(at.getTime())) return "";
-    return relativeStamp(at);
+    return ageLabel(at);
   }
 
   // ---- Helpers ----
 
-  protected sourceId(nodeId: string): string {
-    return `${nodeId}:source`;
-  }
+  protected readonly sourceId = connectorSourceId;
 
-  protected targetId(nodeId: string): string {
-    return `${nodeId}:target`;
-  }
-
-  private nodeIdFromConnector(id: string): string {
-    return id.replace(/:(?:source|target)$/, "");
-  }
+  protected readonly targetId = connectorTargetId;
 
   /**
-   * A fresh node lands near the viewport center; occupied spots cascade
-   * diagonally until the node no longer covers an existing one.
+   * A fresh node lands near the viewport center (the occupied-spot cascade
+   * lives in the draft — `addNodeNear`).
    */
-  private freshNodeSpot(): { x: number; y: number } {
-    const cascade = 32;
-    const size = nodeSize("New", "note");
-    let base = { x: 60, y: 60 };
+  private viewportCenterBase(): { x: number; y: number } {
+    const size = nodeSize(TYPE_START_LABEL["note"], "note");
     const flow = this.flow();
-    if (flow) {
-      const rect = flow.hostElement.getBoundingClientRect();
-      const center = flow.getPositionInFlow({
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
-      });
-      base = { x: center.x - size.w / 2, y: center.y - size.h / 2 };
-    }
-    for (let step = 0; step < 24; step += 1) {
-      const x = base.x + step * cascade;
-      const y = base.y + step * cascade;
-      if (!this.overlapsAny(x, y, size.w, size.h)) {
-        return { x: Math.round(x), y: Math.round(y) };
-      }
-    }
-    return { x: Math.round(base.x), y: Math.round(base.y) };
-  }
-
-  private overlapsAny(x: number, y: number, w: number, h: number): boolean {
-    const pad = 12;
-    return this.nodes().some(
-      (node) =>
-        x < node.x + node.w + pad &&
-        x + w + pad > node.x &&
-        y < node.y + node.h + pad &&
-        y + h + pad > node.y,
-    );
+    if (!flow) return { x: 60, y: 60 };
+    const rect = flow.hostElement.getBoundingClientRect();
+    const center = flow.getPositionInFlow({
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    });
+    return { x: center.x - size.w / 2, y: center.y - size.h / 2 };
   }
 
   private zoomBy(direction: 1 | -1): void {
@@ -1022,13 +790,10 @@ export class CanvasComponent {
 
   /**
    * Grows the working copy's frames whose label no longer fits (one-way;
-   * the fonts-ready refit and the load fold both land here).
+   * the fonts-ready refit lands here — the load fold grew in the draft).
    */
-  private fitNodeLabels(): void {
-    const fitted = fitNodeLabels(this.nodes());
-    const changed = fitted.some((node, index) => node !== this.nodes()[index]);
-    if (!changed) return;
-    this.nodes.set(fitted);
+  private refitNodeLabels(): void {
+    this.draft.update((draft) => draft.fitLabels());
   }
 
   // ---- Drawing-area resize adaptation ----
@@ -1156,14 +921,13 @@ export class CanvasComponent {
     this.afterRender(() => this.flow()?.select([id], [], true));
   }
 
+  /** Applies a draft mutation to the first selected node. */
   private updateSelectedNode(
-    update: (node: DiagramNodeData) => DiagramNodeData,
+    update: (draft: DiagramDraft, id: string) => DiagramDraft,
   ): void {
     const id = this.selectedNodeIds()[0];
     if (id === undefined) return;
-    this.nodes.update((current) =>
-      current.map((node) => (node.id === id ? update(node) : node)),
-    );
+    this.draft.update((draft) => update(draft, id));
   }
 
   private clearSelection(): void {
@@ -1174,10 +938,7 @@ export class CanvasComponent {
   }
 
   private clearEditor(): void {
-    this.name.set(UNTITLED);
-    this.nodes.set([]);
-    this.edges.set([]);
-    this.groups.set([]);
+    this.draft.set(DiagramDraft.blank(UNTITLED));
     this.clearSelection();
   }
 

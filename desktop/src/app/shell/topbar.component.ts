@@ -71,6 +71,6 @@ export class TopbarComponent {
   }
 
   protected openProject(id: string): void {
-    void this.router.navigateByUrl(this.shell.workspaceUrl(id));
+    void this.router.navigateByUrl(this.shell.openProject(id));
   }
 }

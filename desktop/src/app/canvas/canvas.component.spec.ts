@@ -1,3 +1,4 @@
+import { provideRouter } from "@angular/router";
 import { ComponentFixture, TestBed } from "@angular/core/testing";
 
 import {
@@ -23,7 +24,11 @@ describe("CanvasComponent", () => {
     events = new FakeEventsClient();
     await TestBed.configureTestingModule({
       imports: [CanvasComponent],
-      providers: [provideFakeEventsClient(events)],
+      providers: [
+        provideFakeEventsClient(events),
+        // The canvas reads its project from the route tree (stable per tab).
+        provideRouter([]),
+      ],
     }).compileComponents();
   });
 

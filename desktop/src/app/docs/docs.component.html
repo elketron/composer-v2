@@ -38,7 +38,7 @@
               class="entry"
               [class.active]="selected() === entry.path && session.mode() === 'view'"
               [class.editing]="selected() === entry.path && session.mode() !== 'view'"
-              (click)="select(entry)"
+              (click)="selectPath(entry.path)"
             >
               <span class="title">{{ entry.title }}</span>
               <span class="path">{{ entry.path }}</span>

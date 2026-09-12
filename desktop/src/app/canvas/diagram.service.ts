@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
 import { EventsClient } from '../core/events/events-client';
+import { EventDeduper } from '../core/events/dedupe-events';
 import { DomainEventJson, DiagramJson, domainEventKind } from '../core/events/wire';
 import { Diagram, DiagramViewportData } from '../core/models/diagram.models';
 import { ShellService } from '../shell/shell.service';
@@ -15,10 +16,10 @@ import { ShellService } from '../shell/shell.service';
 @Injectable({ providedIn: 'root' })
 export class DiagramService {
   private readonly events = inject(EventsClient);
+  private readonly dedupe = new EventDeduper();
   private readonly shell = inject(ShellService);
 
   private readonly diagramsByProject = signal<ReadonlyMap<string, readonly Diagram[]>>(new Map());
-  private readonly seenEventIds = new Set<string>();
 
   readonly rejection = signal<string | null>(null);
 
@@ -28,6 +29,11 @@ export class DiagramService {
   readonly diagrams = computed(
     () => this.diagramsByProject().get(this.projectId() ?? '') ?? [],
   );
+
+  /** One project's diagrams, in id order (a tab reads its own project). */
+  diagramsOf(projectId: string): readonly Diagram[] {
+    return this.diagramsByProject().get(projectId) ?? [];
+  }
 
   constructor() {
     this.events.events$.subscribe((event) => this.fold(event));
@@ -83,10 +89,7 @@ export class DiagramService {
   }
 
   private fold(event: DomainEventJson): void {
-    if (event.id) {
-      if (this.seenEventIds.has(event.id)) return;
-      this.seenEventIds.add(event.id);
-    }
+    if (!this.dedupe.first(event)) return;
     const projectId = event.projectId ?? '';
     switch (domainEventKind(event)) {
       case 'diagramSaved': {

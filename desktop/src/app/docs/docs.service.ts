@@ -1,8 +1,37 @@
 import { Injectable, inject, signal } from '@angular/core';
+import { DomSanitizer, type SafeHtml } from '@angular/platform-browser';
 
 import { EventsClient } from '../core/events/events-client';
 import { DocInfoJson, DomainEventJson, domainEventKind } from '../core/events/wire';
 import { RestClient } from '../core/rest';
+import { renderMarkdown } from '../core/markdown';
+import { trustHtml } from '../core/trusted-html';
+
+/**
+ * The doc viewer's state (FNT-015): what the read pane shows for one
+ * selected path. The raw markdown is kept — the editor begins from it
+ * without a refetch (FNT-015's point: no component-side orchestration).
+ */
+export interface DocsViewerState {
+  readonly path: string | null;
+  /** The file's raw markdown (the editor's source). */
+  readonly text: string | null;
+  /** The rendered markdown (the mermaid directive's input). */
+  readonly html: string | null;
+  /** The trusted form of `html` (the template's innerHTML). */
+  readonly content: SafeHtml | null;
+  readonly error: string | null;
+  readonly loading: boolean;
+}
+
+const IDLE_VIEWER: DocsViewerState = {
+  path: null,
+  text: null,
+  html: null,
+  content: null,
+  error: null,
+  loading: false,
+};
 
 /**
  * The docs index (Phase 9): markdown files under the project's docs/
@@ -14,6 +43,7 @@ import { RestClient } from '../core/rest';
 export class DocsService {
   private readonly events = inject(EventsClient);
   private readonly rest = inject(RestClient);
+  private readonly sanitizer = inject(DomSanitizer);
 
   /** Per-project indexes; only projects opened in this session are keyed. */
   private readonly index = signal<ReadonlyMap<string, readonly DocInfoJson[]>>(new Map());
@@ -21,6 +51,11 @@ export class DocsService {
 
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
+
+  /** The read pane's state (the viewer state machine, FNT-015). */
+  private readonly viewerState = signal<DocsViewerState>(IDLE_VIEWER);
+  readonly viewer = this.viewerState.asReadonly();
+  private viewerRequest = 0;
 
   constructor() {
     this.events.events$.subscribe((event) => this.fold(event));
@@ -86,6 +121,37 @@ export class DocsService {
     return { ok: true, content: response.body.doc.content };
   }
 
+  // ---- The viewer state machine ----
+
+  /** Selects a doc: the read pane fetches and renders it (stale-guarded). */
+  select(projectId: string, path: string): void {
+    if (projectId === '' || path === '') return;
+    const requestId = ++this.viewerRequest;
+    this.viewerState.set({ path, text: null, html: null, content: null, error: null, loading: true });
+    void this.read(projectId, path).then((result) => {
+      // A newer selection (or a show/clear) superseded this read.
+      if (requestId !== this.viewerRequest) return;
+      if (!result.ok) {
+        this.viewerState.update((state) => ({ ...state, loading: false, error: result.error }));
+        return;
+      }
+      this.show(path, result.content);
+    });
+  }
+
+  /** Shows text without refetching (the file is the truth after a save). */
+  show(path: string, text: string): void {
+    this.viewerRequest += 1; // an in-flight read for another state must not land
+    const html = renderMarkdown(text);
+    this.viewerState.set({ path, text, html, content: trustHtml(this.sanitizer, html), error: null, loading: false });
+  }
+
+  /** The viewer shows nothing (project switch, delete, a cancelled create). */
+  clear(): void {
+    this.viewerRequest += 1;
+    this.viewerState.set(IDLE_VIEWER);
+  }
+
   /**
    * Creates or overwrites one doc through the validated processor; the
    * index updates via the docSaved fold (and the next REST refresh).
@@ -111,15 +177,16 @@ export class DocsService {
       : { ok: false, error: response.rejectionMessage ?? `doc '${path}' could not be renamed` };
   }
 
-  /** Deletes one doc from disk; destructive, confirm before calling. */
+  /** Deletes one doc from disk; destructive, confirm before calling. A failure surfaces in the viewer. */
   async delete(projectId: string, path: string): Promise<{ ok: boolean; error?: string }> {
     const response = await this.events.publish({
       projectId,
       requestDocDelete: { path },
     });
-    return response.ok
-      ? { ok: true }
-      : { ok: false, error: response.rejectionMessage ?? `doc '${path}' could not be deleted` };
+    if (response.ok) return { ok: true };
+    const error = response.rejectionMessage ?? `doc '${path}' could not be deleted`;
+    this.viewerState.update((state) => ({ ...state, error }));
+    return { ok: false, error };
   }
 
   private fold(event: DomainEventJson): void {

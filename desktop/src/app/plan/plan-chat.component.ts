@@ -1,12 +1,15 @@
 import { ChangeDetectionStrategy, Component, inject, signal, viewChild, ElementRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { PlanService } from './plan.service';
-import { ChatMessage, PlanningToolEntry } from '../core/models/plan.models';
+import { composerEnter, resizeComposer } from '../core/composer';
 
-type PlanTurnActivity =
-  | { readonly kind: 'message'; readonly id: string; readonly text: string }
-  | { readonly kind: 'tool'; readonly id: string; readonly tool: PlanningToolEntry };
+import { PlanService } from './plan.service';
+import {
+  ChatMessage,
+  PlanningToolEntry,
+  type PlanningTurnActivity,
+} from '../core/models/plan.models';
+import { assistantToolLabel, turnActivityLabel } from '../core/models/assistant.models';
 
 @Component({
   selector: 'app-plan-chat',
@@ -28,17 +31,8 @@ export class PlanChatComponent {
   protected readonly draft = signal('');
   private readonly opened = signal<ReadonlySet<number>>(new Set());
 
-  protected activityFor(message: ChatMessage): PlanTurnActivity[] {
-    const session = this.plan.session();
-    if (!session) return [];
-    const messages = session.messages
-      .filter((entry) => entry.activity && entry.parentIndex === message.index)
-      .sort((a, b) => a.index - b.index)
-      .map((entry) => ({ kind: 'message' as const, id: `message-${entry.index}`, text: entry.text }));
-    const tools = session.toolCalls
-      .filter((entry) => entry.parentIndex === message.index)
-      .map((tool) => ({ kind: 'tool' as const, id: `tool-${tool.toolCallId}`, tool }));
-    return [...messages, ...tools];
+  protected activityFor(message: ChatMessage): PlanningTurnActivity[] {
+    return this.plan.session()?.turnActivityFor(message) ?? [];
   }
 
   protected isLive(message: ChatMessage): boolean {
@@ -60,17 +54,10 @@ export class PlanChatComponent {
     });
   }
 
-  protected activityLabel(activity: readonly PlanTurnActivity[]): string {
-    return `${activity.length} ${activity.length === 1 ? 'activity item' : 'activity items'}`;
-  }
-
-  protected toolLabel(entry: PlanningToolEntry): string {
-    const name = entry.toolName.replace(/^composer_/, '');
-    const first = entry.args && typeof entry.args === 'object'
-      ? Object.values(entry.args as Record<string, unknown>).find((value) => typeof value === 'string')
-      : undefined;
-    return typeof first === 'string' && first !== '' ? `${name} · ${first}` : name;
-  }
+  // The shared model-level label helpers (assistant's richer activity
+  // ladder and the tool-name digest; the entry types line up structurally).
+  protected readonly activityLabel = turnActivityLabel;
+  protected readonly toolLabel = assistantToolLabel;
 
   protected send(): void {
     const text = this.draft();
@@ -89,16 +76,10 @@ export class PlanChatComponent {
 
   /** Grows the composer with its content (up to the CSS cap). */
   protected resize(area: HTMLTextAreaElement): void {
-    area.style.height = 'auto';
-    area.style.height = `${Math.min(area.scrollHeight, 180)}px`;
+    resizeComposer(area);
   }
 
   protected keydown(event: KeyboardEvent): void {
-    // Enter sends; shift+enter (and alt/ctrl+enter) keep editing.
-    if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) {
-      return;
-    }
-    event.preventDefault();
-    this.send();
+    if (composerEnter(event)) this.send();
   }
 }

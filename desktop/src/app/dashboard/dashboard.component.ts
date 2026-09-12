@@ -54,7 +54,7 @@ export class DashboardComponent {
   }
 
   protected openProject(projectId: string): void {
-    void this.router.navigateByUrl(this.shell.workspaceUrl(projectId));
+    void this.router.navigateByUrl(this.shell.openProject(projectId));
   }
 
   protected refresh(): void {

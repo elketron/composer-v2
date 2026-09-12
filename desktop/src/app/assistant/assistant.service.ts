@@ -1,6 +1,8 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
 import { EventsClient } from '../core/events/events-client';
+import { arrayOfStrings, isRecord } from '../core/models/coerce';
+import { EventDeduper } from '../core/events/dedupe-events';
 import {
   DomainEventJson,
   PublishRequestJson,
@@ -31,14 +33,13 @@ import {
  */
 @Injectable({ providedIn: 'root' })
 export class AssistantService {
-  private static readonly SEEN_IDS_CAP = 4096;
 
   private readonly events = inject(EventsClient);
+  private readonly dedupe = new EventDeduper();
 
   private readonly threadsSignal = signal<ReadonlyMap<string, AssistantThread>>(new Map());
   private readonly activeThreadIdSignal = signal<string | null>(null);
   private readonly pendingCreate = new Set<string>();
-  private readonly seenEventIds = new Map<string, true>();
   /** Thread id → (parentId → the active child id) for branch navigation. */
   private readonly branchChoices = signal<ReadonlyMap<string, ReadonlyMap<string, string>>>(new Map());
   /** The thread's work proposals (Phase 8), keyed by proposal id. */
@@ -110,9 +111,11 @@ export class AssistantService {
     return true;
   }
 
-  async archiveThread(threadId: string): Promise<string | null> {
+  async archiveThread(threadId: string): Promise<void> {
     const response = await this.publish('requestAssistantThreadArchive', { threadId });
-    return response.ok ? null : (response.rejectionMessage ?? 'the thread could not be archived');
+    if (!response.ok) {
+      this.error.set(response.rejectionMessage ?? 'the thread could not be archived');
+    }
   }
 
   async restoreThread(threadId: string): Promise<string | null> {
@@ -202,10 +205,15 @@ export class AssistantService {
     return true;
   }
 
+  /** The sibling versions of a forked message, in log order. */
+  siblingsOf(threadId: string, message: AssistantMessage): AssistantMessage[] {
+    return visibleSiblings(this.threadsSignal().get(threadId)?.messages ?? [], message.parentId);
+  }
+
   /** The sibling versions of a forked message (branch navigation). */
   branchOf(threadId: string, message: AssistantMessage): { position: number; count: number } | null {
     if (message.id === '') return null;
-    const siblings = visibleSiblings(this.threadsSignal().get(threadId)?.messages ?? [], message.parentId);
+    const siblings = this.siblingsOf(threadId, message);
     if (siblings.length <= 1) return null;
     return { position: siblings.findIndex((entry) => entry.id === message.id) + 1, count: siblings.length };
   }
@@ -260,15 +268,7 @@ export class AssistantService {
   }
 
   applyEvent(event: DomainEventJson): void {
-    if (event.id) {
-      if (this.seenEventIds.has(event.id)) return;
-      this.seenEventIds.set(event.id, true);
-      if (this.seenEventIds.size > AssistantService.SEEN_IDS_CAP) {
-        const oldest = this.seenEventIds.keys().next().value;
-        if (oldest !== undefined) this.seenEventIds.delete(oldest);
-      }
-    }
-
+    if (!this.dedupe.first(event)) return;
     switch (domainEventKind(event)) {
       case 'assistantThreadCreated': {
         const incoming = asThread(event.assistantThreadCreated?.thread);
@@ -677,12 +677,3 @@ function visibleTranscript(
   return path;
 }
 
-function arrayOfStrings(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && item !== '')
-    : [];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}

@@ -198,7 +198,8 @@ describe('AssistantService', () => {
     emitThread({ id: 'TH-2', name: 'Thread 2', createdAt: '2026-09-06T10:00:01Z' });
     service.select('TH-2');
 
-    expect(await service.archiveThread('TH-2')).toBeNull();
+    await service.archiveThread('TH-2');
+    expect(service.error()).toBeNull();
     expect(events.lastCommand('requestAssistantThreadArchive')).toMatchObject({
       projectId: '',
       requestAssistantThreadArchive: { threadId: 'TH-2' },

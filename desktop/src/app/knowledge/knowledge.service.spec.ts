@@ -118,13 +118,13 @@ describe('KnowledgeService', () => {
   });
 
   it('save, create, and delete publish their commands', async () => {
-    await service.save('a.md', '---\ntitle: A\n---\n\nbody\n');
+    await service.saveEdit('a.md', '---\ntitle: A\n---\n\nbody\n');
     expect(events.lastCommand('requestKnowledgeSave')).toEqual({
       requestKnowledgeSave: { path: 'a.md', content: '---\ntitle: A\n---\n\nbody\n' },
     });
 
     events.respondWith({ ok: true });
-    await service.create('New note', ['tag'], 'body');
+    await service.createNote('New note', ['tag'], 'body');
     expect(events.lastCommand('requestKnowledgeSave')).toEqual({
       requestKnowledgeSave: { title: 'New note', tags: ['tag'], content: 'body' },
     });
@@ -137,7 +137,7 @@ describe('KnowledgeService', () => {
 
   it('selection and mode changes confirm before discarding unsaved work', async () => {
     const confirm = TestBed.inject((await import('../core/confirm/confirm.service')).ConfirmService);
-    service.editingDirty.set(true);
+    service.setEditingDirty(true);
 
     const selectPromise = service.select('a.md');
     expect(confirm.current()).not.toBeNull();

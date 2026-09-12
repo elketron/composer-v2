@@ -218,6 +218,194 @@ export class Diagram {
       updatedAt: json.updatedAt ?? '',
     });
   }
+
+  /**
+   * The field-order-insensitive content signature (the dirty compare).
+   * Nodes normalize through the label fit, so a load's grow-only frame
+   * correction never reads as an unsaved edit.
+   */
+  signature(): string {
+    return diagramContentSignature(this.data.name, this.data.nodes, this.data.edges, this.data.groups);
+  }
+}
+
+/** The field-order-insensitive content signature the dirty compare uses. */
+export function diagramContentSignature(
+  name: string,
+  nodes: readonly DiagramNodeData[],
+  edges: readonly DiagramEdgeData[],
+  groups: readonly DiagramGroupData[],
+): string {
+  return JSON.stringify([
+    name,
+    signatures(fitNodeLabels(nodes), nodeSignature),
+    signatures(edges, edgeSignature),
+    signatures(groups, groupSignature),
+  ]);
+}
+
+/** Field-order-insensitive content signature for one item list. */
+function signatures<T>(items: readonly T[], signature: (item: T) => string): string {
+  return JSON.stringify(items.map(signature).sort());
+}
+
+function nodeSignature(node: DiagramNodeData): string {
+  return JSON.stringify([
+    node.id,
+    node.type,
+    node.label,
+    node.description,
+    node.groupId,
+    node.x,
+    node.y,
+    node.w,
+    node.h,
+  ]);
+}
+
+function edgeSignature(edge: DiagramEdgeData): string {
+  return JSON.stringify([edge.from, edge.to, edge.label]);
+}
+
+function groupSignature(group: DiagramGroupData): string {
+  return JSON.stringify([group.id, group.label, group.x, group.y, group.w, group.h]);
+}
+
+// ---- Graph primitives (the two editors share these) ----
+
+/** The `${node}:source` connector id foblex binds. */
+export function connectorSourceId(nodeId: string): string {
+  return `${nodeId}:source`;
+}
+
+/** The `${node}:target` connector id foblex binds. */
+export function connectorTargetId(nodeId: string): string {
+  return `${nodeId}:target`;
+}
+
+/** The node id behind a foblex connector id (`A:source` → `A`). */
+export function nodeIdFromConnector(id: string): string {
+  return id.replace(/:(?:source|target)$/, '');
+}
+
+/** The topmost group whose frame contains the point (a node created there joins it). */
+export function groupIdContaining(
+  groups: readonly DiagramGroupData[],
+  x: number,
+  y: number,
+): string | null {
+  return (
+    groups.find(
+      (group) =>
+        x >= group.x && x <= group.x + group.w && y >= group.y && y <= group.y + group.h,
+    )?.id ?? null
+  );
+}
+
+/** Whether a frame at (x, y, w, h) covers any node (pad = breathing room). */
+export function overlapsAny(
+  nodes: readonly DiagramNodeData[],
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  pad = 12,
+): boolean {
+  return nodes.some(
+    (node) =>
+      x < node.x + node.w + pad &&
+      x + w + pad > node.x &&
+      y < node.y + node.h + pad &&
+      y + h + pad > node.y,
+  );
+}
+
+/**
+ * A fresh node's spot: from `base`, cascading diagonally until the frame
+ * covers no existing node (a finite walk, then the base as-is).
+ */
+export function freshNodeSpot(
+  nodes: readonly DiagramNodeData[],
+  base: { x: number; y: number },
+  size: { w: number; h: number },
+  cascade = 32,
+  steps = 24,
+): { x: number; y: number } {
+  for (let step = 0; step < steps; step += 1) {
+    const x = base.x + step * cascade;
+    const y = base.y + step * cascade;
+    if (!overlapsAny(nodes, x, y, size.w, size.h)) {
+      return { x: Math.round(x), y: Math.round(y) };
+    }
+  }
+  return { x: Math.round(base.x), y: Math.round(base.y) };
+}
+
+/** Whether an edge already runs from→to (the duplicate-connection guard). */
+export function edgeExists(
+  edges: readonly DiagramEdgeData[],
+  from: string,
+  to: string,
+): boolean {
+  return edges.some((edge) => edge.from === from && edge.to === to);
+}
+
+/** The selected nodes' bounding box (no padding; the editors add their own). */
+export function nodesBounds(nodes: readonly DiagramNodeData[]): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} | null {
+  if (nodes.length === 0) return null;
+  return {
+    left: Math.min(...nodes.map((node) => node.x)),
+    top: Math.min(...nodes.map((node) => node.y)),
+    right: Math.max(...nodes.map((node) => node.x + node.w)),
+    bottom: Math.max(...nodes.map((node) => node.y + node.h)),
+  };
+}
+
+/**
+ * The move rule: positioned nodes land at their targets (a node dragged
+ * out of its group's frame leaves the group — never when the group itself
+ * moved, since foblex reports the children's final positions too); a moved
+ * group drags its contained nodes by the same delta.
+ */
+export function applyNodeMoves(
+  nodes: readonly DiagramNodeData[],
+  groups: readonly DiagramGroupData[],
+  positions: ReadonlyMap<string, { x: number; y: number }>,
+  movedGroupIds: ReadonlySet<string>,
+): DiagramNodeData[] {
+  return nodes.map((node) => {
+    const own = positions.get(node.id);
+    if (own !== undefined) {
+      let moved = { ...node, x: own.x, y: own.y };
+      if (moved.groupId !== null && !movedGroupIds.has(moved.groupId)) {
+        const group = groups.find((candidate) => candidate.id === moved.groupId);
+        const cx = own.x + node.w / 2;
+        const cy = own.y + node.h / 2;
+        const inside =
+          group !== undefined &&
+          cx >= group.x &&
+          cx <= group.x + group.w &&
+          cy >= group.y &&
+          cy <= group.y + group.h;
+        if (!inside) moved = { ...moved, groupId: null };
+      }
+      return moved;
+    }
+    if (node.groupId === null || !movedGroupIds.has(node.groupId)) return node;
+    const group = groups.find((candidate) => candidate.id === node.groupId);
+    const target = group === undefined ? undefined : positions.get(group.id);
+    if (group === undefined || target === undefined) return node;
+    return {
+      ...node,
+      x: node.x + (target.x - group.x),
+      y: node.y + (target.y - group.y),
+    };
+  });
 }
 
 export interface DiagramData {

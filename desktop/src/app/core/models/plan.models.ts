@@ -1,3 +1,5 @@
+import { normalizeMessageRole, toIso } from './coerce';
+
 export type PlanningSessionStatus = 'DRAFTING' | 'DONE';
 
 export const PLANNING_SESSION_STATUSES: readonly PlanningSessionStatus[] = ['DRAFTING', 'DONE'];
@@ -118,7 +120,28 @@ export class PlanningSession {
       planDocument: changes.planDocument ?? this.planDocument,
     });
   }
+
+  /**
+   * The working box's contents for one turn (the user message it
+   * answers): the turn's durable intermediate messages in log order,
+   * then its tool calls.
+   */
+  turnActivityFor(message: ChatMessage): PlanningTurnActivity[] {
+    const messages = this.messages
+      .filter((entry) => entry.activity && entry.parentIndex === message.index)
+      .sort((a, b) => a.index - b.index)
+      .map((entry) => ({ kind: 'message' as const, id: `message-${entry.index}`, text: entry.text }));
+    const tools = this.toolCalls
+      .filter((entry) => entry.parentIndex === message.index)
+      .map((tool) => ({ kind: 'tool' as const, id: `tool-${tool.toolCallId}`, tool }));
+    return [...messages, ...tools];
+  }
 }
+
+/** One working-box row: an intermediate message or a tool call. */
+export type PlanningTurnActivity =
+  | { readonly kind: 'message'; readonly id: string; readonly text: string }
+  | { readonly kind: 'tool'; readonly id: string; readonly tool: PlanningToolEntry };
 
 export interface PlanningToolEntryData {
   readonly toolCallId: string;
@@ -197,7 +220,9 @@ export type PlanEvent =
       readonly id?: string;
       readonly type: 'CardsCommitted';
       readonly projectId: string;
-      readonly cards: readonly unknown[];
+      // The wire mapping coerced these already (plan.service's
+      // planEventFromWire runs cardFromWire) — committed cards, not raw.
+      readonly cards: import('./board.models').Card[];
     };
 
 export type PlanCommand =
@@ -217,15 +242,6 @@ export function normalizePlanningSessionStatus(
 ): PlanningSessionStatus {
   const normalized = status?.toUpperCase();
   return normalized === 'DONE' ? 'DONE' : 'DRAFTING';
-}
-
-function normalizeMessageRole(role: MessageRole | string): MessageRole {
-  return role.toLowerCase() === 'agent' ? 'agent' : 'user';
-}
-
-function toIso(value: string | Date | undefined): string {
-  if (value instanceof Date) return value.toISOString();
-  return value ?? new Date().toISOString();
 }
 
 // ---- Plan document representation ----

@@ -73,6 +73,9 @@ describe('DiffViewComponent', () => {
     fixture.componentRef.setInput('cardId', cardId);
     if (file !== null) fixture.componentRef.setInput('file', file);
     await fixture.whenStable();
+    // The patch fetch settles a microtask past whenStable (the read goes
+    // through PipelineService); one macrotask lets it land.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     return fixture;
   }
 

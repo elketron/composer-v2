@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { MermaidDirective } from '../core/mermaid/mermaid.directive';
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
+import { composerEnter, resizeComposer } from '../core/composer';
 import { KnowledgeListComponent } from '../knowledge/knowledge-list.component';
 import { KnowledgePaneComponent } from '../knowledge/knowledge-pane.component';
 import { KnowledgeService } from '../knowledge/knowledge.service';
@@ -12,14 +13,12 @@ import {
   AssistantToolEntry,
   ProposalDraft,
   assistantToolLabel,
+  turnActivityLabel,
+  type AssistantTurnActivity,
   type ProposalCardType,
 } from '../core/models/assistant.models';
 import { ProjectTab } from '../shell/shell.service';
 import { AssistantService } from './assistant.service';
-
-type AssistantTurnActivity =
-  | { readonly kind: 'message'; readonly id: string; readonly text: string }
-  | { readonly kind: 'tool'; readonly id: string; readonly tool: AssistantToolEntry };
 
 /**
  * The global assistant (Phase 6): a thread sidebar, the transcript with its
@@ -47,6 +46,7 @@ export class AssistantComponent {
   protected readonly messages = this.assistant.messages;
   protected readonly streamingMessage = this.assistant.streamingMessage;
   protected readonly sending = this.assistant.isSending;
+  /** The error banner reads the service's signal; the service owns its writes. */
   protected readonly error = this.assistant.error;
 
   protected readonly projects = this.shell.activeProjects;
@@ -128,7 +128,7 @@ export class AssistantComponent {
   protected async remember(message: AssistantMessage): Promise<void> {
     if (this.remembered().has(message.id)) return;
     const title = message.title;
-    const result = await this.knowledge.create(title, [], message.text);
+    const result = await this.knowledge.createNote(title, [], message.text);
     if (result.ok) {
       this.remembered.update((saved) => new Set(saved).add(message.id));
     }
@@ -198,8 +198,7 @@ export class AssistantComponent {
       danger: true,
     });
     if (!confirmed) return;
-    const failure = await this.assistant.archiveThread(threadId);
-    if (failure) this.error.set(failure);
+    await this.assistant.archiveThread(threadId);
   }
 
   protected restore(threadId: string): void {
@@ -243,18 +242,7 @@ export class AssistantComponent {
 
   /** Durable intermediate messages and tools of the turn this user message opened. */
   protected activityFor(message: AssistantMessage): AssistantTurnActivity[] {
-    const thread = this.thread();
-    if (!thread) return [];
-    const messages = thread.messages
-      .filter((entry) => entry.activity && entry.parentId === message.id)
-      .sort((a, b) => a.index - b.index)
-      .map((entry) => ({ kind: 'message' as const, id: `message-${entry.index}`, text: entry.text }));
-    const tools = thread.toolCallsFor(message.id).map((tool) => ({
-      kind: 'tool' as const,
-      id: `tool-${tool.toolCallId}`,
-      tool,
-    }));
-    return [...messages, ...tools];
+    return this.thread()?.turnActivityFor(message) ?? [];
   }
 
   /** A running turn whose reply hasn't landed: the box is open live. */
@@ -281,16 +269,9 @@ export class AssistantComponent {
     });
   }
 
-  /** The entry's row title: the tool name (unprefixed) + its first arg. */
-  protected toolLabel(entry: AssistantToolEntry): string {
-    return assistantToolLabel(entry);
-  }
-
-  protected activityLabel(activity: readonly AssistantTurnActivity[]): string {
-    const tools = activity.filter((entry) => entry.kind === 'tool').length;
-    if (tools === activity.length) return `used ${tools} ${tools === 1 ? 'tool' : 'tools'}`;
-    return `${activity.length} ${activity.length === 1 ? 'activity item' : 'activity items'}`;
-  }
+  // The model-level label helpers, re-exported for the template.
+  protected readonly toolLabel = assistantToolLabel;
+  protected readonly activityLabel = turnActivityLabel;
 
   /** Branch navigation: the sibling versions of a forked message. */
   protected branchOf(message: AssistantMessage): { position: number; count: number } | null {
@@ -302,18 +283,11 @@ export class AssistantComponent {
   protected switchBranch(message: AssistantMessage, direction: -1 | 1): void {
     const thread = this.thread();
     if (!thread) return;
-    const siblings = this.siblingsOf(thread.id, message);
+    const siblings = this.assistant.siblingsOf(thread.id, message);
     const at = siblings.findIndex((entry) => entry.id === message.id);
     const next = siblings[at + direction];
     if (next === undefined) return;
     this.assistant.switchBranch(thread.id, message.parentId, next.id);
-  }
-
-  private siblingsOf(threadId: string, message: AssistantMessage): AssistantMessage[] {
-    const all = this.assistant.threads().get(threadId)?.messages ?? [];
-    return all
-      .filter((entry) => !entry.activity && entry.parentId === message.parentId)
-      .sort((a, b) => a.index - b.index);
   }
 
   // ---- Proposal panel (Phase 8) ----
@@ -497,8 +471,7 @@ export class AssistantComponent {
 
   /** Grows the composer with its content (up to the CSS cap). */
   protected resize(area: HTMLTextAreaElement): void {
-    area.style.height = 'auto';
-    area.style.height = `${Math.min(area.scrollHeight, 180)}px`;
+    resizeComposer(area);
   }
 
   protected keydown(event: KeyboardEvent): void {
@@ -524,11 +497,7 @@ export class AssistantComponent {
       // No matches: Enter falls through and sends the literal text.
     }
     // Enter sends; shift+enter (and alt/ctrl+enter) keep editing.
-    if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) {
-      return;
-    }
-    event.preventDefault();
-    this.send();
+    if (composerEnter(event)) this.send();
   }
 }
 

@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
-import { EventsClient } from '../events/events-client';
+import { RestClient } from '../rest';
 
 export interface ProjectDirectorySelection {
   readonly name: string;
@@ -29,7 +29,7 @@ interface PickerRequest {
  */
 @Injectable({ providedIn: 'root' })
 export class DirectoryPickerService {
-  private readonly events = inject(EventsClient);
+  private readonly rest = inject(RestClient);
   private readonly pending = signal<PickerRequest | null>(null);
   private requestId = 0;
   private opener: HTMLElement | null = null;
@@ -64,19 +64,19 @@ export class DirectoryPickerService {
   }
 
   async browse(path = this.path()): Promise<void> {
-    const base = this.events.serverBase;
-    if (!base) {
-      this.error.set('backend unavailable');
-      return;
-    }
     const requestId = ++this.requestId;
     this.loading.set(true);
     this.error.set(null);
+    const query = path.trim() ? `?path=${encodeURIComponent(path.trim())}` : '';
+    const response = await this.rest.get<Partial<DirectoryListing> & { error?: string }>(
+      `/directories${query}`,
+    );
     try {
-      const query = path.trim() ? `?path=${encodeURIComponent(path.trim())}` : '';
-      const response = await fetch(`${base}/directories${query}`);
-      const body = (await response.json()) as Partial<DirectoryListing> & { error?: string };
-      if (!response.ok) throw new Error(body.error || `directory request failed (${response.status})`);
+      if (response === null) throw new Error('backend unavailable');
+      if (!response.ok) {
+        throw new Error(response.body.error || `directory request failed (${response.status})`);
+      }
+      const body = response.body;
       if (
         typeof body.directory !== 'string' ||
         typeof body.name !== 'string' ||

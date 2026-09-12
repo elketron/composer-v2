@@ -94,8 +94,8 @@ export class CardPanelComponent {
   protected readonly runStep = computed(() => {
     const run = this.run();
     const pipeline = this.pipeline();
-    if (run === undefined || pipeline === undefined || run.stepId === undefined) return null;
-    return pipeline.stepById(run.stepId) ?? null;
+    if (run === undefined || pipeline === undefined) return null;
+    return pipeline.stepForRun(run) ?? null;
   });
 
   protected readonly waitingAtGate = computed(() => this.run()?.status === 'waiting');
@@ -139,11 +139,7 @@ export class CardPanelComponent {
   protected stepRows(): { step: PipelineStep; status: StepStateStatus }[] {
     const pipeline = this.pipeline();
     if (pipeline === undefined) return [];
-    const states = this.card().stepStates;
-    return pipeline.steps.map((step) => ({
-      step,
-      status: states[step.id] ?? 'pending',
-    }));
+    return pipeline.stepRowsFor(this.card().stepStates);
   }
 
   protected close(): void {

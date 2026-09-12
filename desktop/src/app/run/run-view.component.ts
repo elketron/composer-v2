@@ -5,7 +5,14 @@ import { Router } from '@angular/router';
 import { LucideAngularModule, ArrowLeft, Bot, Square, Wrench } from 'lucide-angular';
 import { interval } from 'rxjs';
 
-import { RunProgress, RunOutcome, runElapsed } from '../core/models/pipeline.models';
+import {
+  RunProgress,
+  RunOutcome,
+  outcomeLabel,
+  runElapsed,
+  toolArgsPreview,
+  toolResultPreview,
+} from '../core/models/pipeline.models';
 import { Card } from '../core/models/board.models';
 import { RunTranscriptEntry, PipelineService } from '../pipelines/pipeline.service';
 import { BoardService } from '../board/board.service';
@@ -58,8 +65,8 @@ export class RunViewComponent {
   protected readonly runStep = computed(() => {
     const run = this.run();
     const pipeline = this.runPipeline();
-    if (run === undefined || pipeline === undefined || run.stepId === undefined) return undefined;
-    return pipeline.stepById(run.stepId);
+    if (run === undefined || pipeline === undefined) return undefined;
+    return pipeline.stepForRun(run);
   });
 
   /** The active/historical agent session the output pane reads. */
@@ -102,10 +109,7 @@ export class RunViewComponent {
     const cardState = this.card();
     const pipeline = this.runPipelineOf();
     if (cardState === undefined || pipeline === undefined) return [];
-    return pipeline.steps.map((step) => ({
-      step,
-      status: cardState.stepStates[step.id] ?? 'pending',
-    }));
+    return pipeline.stepRowsFor(cardState.stepStates);
   });
 
   protected readonly toolCount = computed(
@@ -164,16 +168,13 @@ export class RunViewComponent {
     });
   }
 
-  protected toolArgs(args: unknown): string {
-    if (args === undefined || args === null) return '';
-    const text = typeof args === 'string' ? args : JSON.stringify(args);
-    return text.length > 160 ? text.slice(0, 157) + '…' : text;
-  }
-
   /** Formats a dollar cost (a zero cost is real, not "missing"). */
-  protected costLabel(cost: number): string {
-    return `$${cost.toFixed(4)}`;
-  }
+  protected readonly costLabel = (cost: number): string => `$${cost.toFixed(4)}`;
+
+  // The model-level formatters, re-exported for the template.
+  protected readonly toolArgsPreview = toolArgsPreview;
+  protected readonly toolResultPreview = toolResultPreview;
+  protected readonly outcomeLabel = outcomeLabel;
 
   protected fileAdditions(): number {
     return this.sessionFiles().reduce((total, file) => total + file.additions, 0);
@@ -183,22 +184,4 @@ export class RunViewComponent {
     return this.sessionFiles().reduce((total, file) => total + file.deletions, 0);
   }
 
-  protected toolResult(entry: RunTranscriptEntry & { kind: 'tool' }): string {
-    const content = entry.result?.content ?? '';
-    const firstLine = content.split('\n').find((line) => line.trim() !== '') ?? '';
-    return firstLine.length > 200 ? firstLine.slice(0, 197) + '…' : firstLine;
-  }
-
-  protected outcomeLabel(outcome: RunOutcome): string {
-    switch (outcome.status) {
-      case 'failed':
-        return `the run failed${outcome.error ? ' — ' + outcome.error : ''}`;
-      case 'returned':
-        return `${outcome.outcome ?? 'changes needed'}${outcome.feedback ? ' — ' + outcome.feedback : ''}`;
-      case 'cancelled':
-        return 'the run was cancelled';
-      default:
-        return 'the run completed';
-    }
-  }
 }

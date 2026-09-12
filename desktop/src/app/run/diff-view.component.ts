@@ -4,9 +4,9 @@ import { Router } from '@angular/router';
 import { LucideAngularModule, ArrowLeft } from 'lucide-angular';
 import { html as diffHtml, parse as diffParse } from 'diff2html';
 
+import { trustHtml } from '../core/trusted-html';
 import { PipelineService } from '../pipelines/pipeline.service';
 import { ShellService } from '../shell/shell.service';
-import { RestClient } from '../core/rest';
 
 /**
  * The diff page: one changed file's working-tree diff, read-only —
@@ -26,7 +26,6 @@ export class DiffViewComponent {
   private readonly pipelines = inject(PipelineService);
   private readonly router = inject(Router);
   private readonly shell = inject(ShellService);
-  private readonly rest = inject(RestClient);
   private readonly sanitizer = inject(DomSanitizer);
 
   /** The route params (the file rides the query string: paths contain slashes). */
@@ -44,7 +43,8 @@ export class DiffViewComponent {
     const patch = this.patch();
     if (patch === null || patch === '') return null;
     try {
-      return this.sanitizer.bypassSecurityTrustHtml(
+      return trustHtml(
+        this.sanitizer,
         diffHtml(diffParse(patch), { outputFormat: 'line-by-line', drawFileList: false, matching: 'lines' }),
       );
     } catch {
@@ -67,21 +67,17 @@ export class DiffViewComponent {
 
   private async load(path: string): Promise<void> {
     this.patch.set(null);
-    const sessionId = this.session()?.sessionId;
+    const session = this.session();
     const projectId = this.shell.activeTabId();
-    if (sessionId === undefined || projectId === null) {
+    if (session?.sessionId === undefined || projectId === null) {
       this.patch.set('');
       return;
     }
-    const response = await this.rest.get<{ files: readonly { path: string; patch: string }[] }>(
-      `/sessions/${sessionId}/diff?projectId=${projectId}`,
-    );
+    const patch = await this.pipelines.diffFor(session.sessionId, path, projectId);
+    // The view shows the picked file's patch only (a slower read for an
+    // earlier selection must not land).
     if (this.file() !== path) return;
-    if (response === null || !response.ok) {
-      this.patch.set('');
-      return;
-    }
-    this.patch.set(response.body.files.find((file) => file.path === path)?.patch ?? '');
+    this.patch.set(patch);
   }
 
   protected back(): void {

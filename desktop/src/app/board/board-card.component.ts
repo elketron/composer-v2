@@ -57,8 +57,8 @@ export class BoardCardComponent {
   protected readonly hiddenStepLabel = computed(() => {
     const run = this.run();
     const pipeline = this.pipeline();
-    if (run === undefined || pipeline === undefined || run.stepId === undefined) return null;
-    return pipeline.stepById(run.stepId)?.label ?? null;
+    if (run === undefined || pipeline === undefined) return null;
+    return pipeline.stepForRun(run)?.label ?? null;
   });
 
   protected readonly runLabel = computed(() => runLabel(this.run()));

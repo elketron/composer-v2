@@ -46,6 +46,14 @@ export class ProjectWorkspaceComponent {
         filter((event): event is NavigationEnd => event instanceof NavigationEnd),
         takeUntilDestroyed(),
       )
-      .subscribe((event) => this.shell.rememberWorkspaceUrl(event.urlAfterRedirects));
+      .subscribe((event) => {
+        // Tab switches reattach this workspace without re-running the
+        // route effect: re-assert the active context on every landing.
+        const myId = this.projectId();
+        if (myId && event.urlAfterRedirects.startsWith(`/projects/${encodeURIComponent(myId)}/`)) {
+          this.shell.selectProject(myId);
+        }
+        this.shell.rememberWorkspaceUrl(event.urlAfterRedirects);
+      });
   }
 }

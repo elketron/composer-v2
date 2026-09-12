@@ -1,0 +1,78 @@
+.project-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+
+  // The scrollbar stays hidden; the tabs scroll with wheel/drag.
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.project-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 0 6px 0 10px;
+  border-radius: 6px 6px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: var(--text-faint);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  flex: none;
+
+  &:hover {
+    color: var(--text-dim);
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+
+    .tab-close {
+      color: var(--text-dim);
+    }
+  }
+
+  &.active {
+    background: var(--bg);
+    border-color: var(--border);
+    color: var(--text);
+
+    .tab-name {
+      color: var(--text);
+    }
+  }
+}
+
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tab-close {
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex: none;
+
+  &:hover {
+    color: var(--err);
+    background: color-mix(in srgb, var(--err) 12%, transparent);
+  }
+}

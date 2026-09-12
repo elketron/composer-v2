@@ -66,6 +66,25 @@ export class KnowledgeService {
     return true;
   }
 
+  /** Opens edit mode for the selected note (the pane populates its draft). */
+  beginEdit(path: string): void {
+    if (path === '' || path !== this.selected()) return;
+    this.editingDirty.set(false);
+    this.mode.set('edit');
+  }
+
+  /** The pane's editor mirrors its dirty state here (the guard reads it). */
+  setEditingDirty(dirty: boolean): void {
+    this.editingDirty.set(dirty);
+  }
+
+  /** Leaves edit/create back to view; unsaved edits confirm first. */
+  async cancelEdit(): Promise<void> {
+    if (!(await this.confirmDiscard())) return;
+    this.editingDirty.set(false);
+    this.mode.set('view');
+  }
+
   /** Unsaved work confirms before anything discards it. */
   async confirmDiscard(): Promise<boolean> {
     if (!this.editingDirty()) return true;
@@ -147,34 +166,57 @@ export class KnowledgeService {
     });
   }
 
-  /** Writes the exact file (the edit flow's save). */
-  async save(path: string, content: string): Promise<{ ok: boolean; error?: string }> {
+  /** Writes the exact file (the edit flow's save); success leaves edit mode. */
+  async saveEdit(path: string, content: string): Promise<{ ok: boolean; error?: string }> {
     const response = await this.events.publish({
       requestKnowledgeSave: { path, content },
     });
-    return response.ok
-      ? { ok: true }
-      : { ok: false, error: response.rejectionMessage ?? `note '${path}' could not be saved` };
+    if (!response.ok) {
+      return { ok: false, error: response.rejectionMessage ?? `note '${path}' could not be saved` };
+    }
+    this.finishEditing();
+    return { ok: true };
   }
 
-  /** Creates a note from parts (the agent's flow; unique slug server-side). */
-  async create(title: string, tags: string[], content: string): Promise<{ ok: boolean; error?: string }> {
+  /**
+   * Creates a note from parts (the agent's flow; unique slug server-side);
+   * the response names the path the note landed in, so the caller can
+   * select it — no event-echo wait.
+   */
+  async createNote(
+    title: string,
+    tags: string[],
+    content: string,
+  ): Promise<{ ok: boolean; error?: string; savedPath?: string }> {
     const response = await this.events.publish({
       requestKnowledgeSave: { title, tags, content },
     });
-    return response.ok
-      ? { ok: true }
-      : { ok: false, error: response.rejectionMessage ?? 'the note could not be saved' };
+    if (!response.ok) {
+      return { ok: false, error: response.rejectionMessage ?? 'the note could not be saved' };
+    }
+    this.finishEditing();
+    return { ok: true, ...(response.savedPath !== undefined ? { savedPath: response.savedPath } : {}) };
   }
 
-  /** Deletes one note; destructive, confirm before calling. */
+  /** Deletes one note; destructive, confirm before calling. Success resets the pane's selection. */
   async delete(path: string): Promise<{ ok: boolean; error?: string }> {
     const response = await this.events.publish({
       requestKnowledgeDelete: { path },
     });
-    return response.ok
-      ? { ok: true }
-      : { ok: false, error: response.rejectionMessage ?? `note '${path}' could not be deleted` };
+    if (response.ok) {
+      // The fold clears the selection too; do it here so the pane resets
+      // even when the library list was never loaded in this session.
+      this.selected.set(null);
+      this.mode.set('view');
+      this.editingDirty.set(false);
+      return { ok: true };
+    }
+    return { ok: false, error: response.rejectionMessage ?? `note '${path}' could not be deleted` };
+  }
+
+  private finishEditing(): void {
+    this.editingDirty.set(false);
+    this.mode.set('view');
   }
 
   private fold(event: DomainEventJson): void {

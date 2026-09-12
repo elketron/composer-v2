@@ -13,15 +13,26 @@ import { CodingViewComponent } from './pipelines/coding-view.component';
 import { RunViewComponent } from './run/run-view.component';
 import { SettingsComponent } from './settings/settings.component';
 import { ProjectWorkspaceComponent } from './shell/project-workspace.component';
+import { ShellService } from './shell/shell.service';
 import { KnowledgeService } from './knowledge/knowledge.service';
+
+/**
+ * Tabs keep detached project views alive, so leaving a view for another
+ * tab (or another view of the same project) preserves its state — only
+ * closing the tab drops it. The unsaved-work guards confirm exactly then.
+ */
+const onlyWhenClosingTab = (confirm: () => Promise<boolean>): Promise<boolean> => {
+  if (!inject(ShellService).closingTab) return Promise.resolve(true);
+  return confirm();
+};
 
 /** Leaving the docs view with unsaved edits confirms first (Phase 9). */
 export const docsUnsavedGuard: CanDeactivateFn<DocsComponent> = (component) =>
-  component.confirmLeave();
+  onlyWhenClosingTab(() => component.confirmLeave());
 
 /** Leaving the canvas with unsaved diagram edits confirms first (Phase 11). */
 export const canvasUnsavedGuard: CanDeactivateFn<CanvasComponent> = (component) =>
-  component.confirmLeave();
+  onlyWhenClosingTab(() => component.confirmLeave());
 
 /** Leaving the assistant with an unsaved knowledge note confirms first. */
 export const knowledgeUnsavedGuard: CanDeactivateFn<AssistantComponent> = () => {

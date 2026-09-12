@@ -1,4 +1,5 @@
 import { renderMarkdown } from '../markdown';
+import { normalizeMessageRole, toIso } from './coerce';
 
 export type AssistantThreadStatus = 'IDLE' | 'RUNNING' | 'FAILED' | 'STOPPED';
 
@@ -139,6 +140,35 @@ export class AssistantThread {
   toolCallsFor(parentId: string | null): AssistantToolEntry[] {
     return this.toolCalls.filter((entry) => entry.parentId === parentId);
   }
+
+  /**
+   * The working box's contents for one turn (S25): the turn's durable
+   * intermediate messages in log order, then its tool calls.
+   */
+  turnActivityFor(message: AssistantMessage): AssistantTurnActivity[] {
+    const messages = this.messages
+      .filter((entry) => entry.activity && entry.parentId === message.id)
+      .sort((a, b) => a.index - b.index)
+      .map((entry) => ({ kind: 'message' as const, id: `message-${entry.index}`, text: entry.text }));
+    const tools = this.toolCallsFor(message.id).map((tool) => ({
+      kind: 'tool' as const,
+      id: `tool-${tool.toolCallId}`,
+      tool,
+    }));
+    return [...messages, ...tools];
+  }
+}
+
+/** One working-box row: an intermediate message or a tool call. */
+export type AssistantTurnActivity =
+  | { readonly kind: 'message'; readonly id: string; readonly text: string }
+  | { readonly kind: 'tool'; readonly id: string; readonly tool: AssistantToolEntry };
+
+/** The working box's collapsed label (all-tools turns read "used N tools"). */
+export function turnActivityLabel(activity: readonly { kind: string }[]): string {
+  const tools = activity.filter((entry) => entry.kind === 'tool').length;
+  if (tools === activity.length) return `used ${tools} ${tools === 1 ? 'tool' : 'tools'}`;
+  return `${activity.length} ${activity.length === 1 ? 'activity item' : 'activity items'}`;
 }
 
 export function normalizeThreadStatus(
@@ -149,10 +179,6 @@ export function normalizeThreadStatus(
   if (normalized === 'FAILED') return 'FAILED';
   if (normalized === 'STOPPED') return 'STOPPED';
   return 'IDLE';
-}
-
-function normalizeMessageRole(role: MessageRole | string): MessageRole {
-  return role.toLowerCase() === 'agent' ? 'agent' : 'user';
 }
 
 /**
@@ -189,11 +215,6 @@ export function toolEntryFromWire(value: unknown): AssistantToolEntry | null {
     summary: typeof record['summary'] === 'string' ? record['summary'] : undefined,
     isError: record['isError'] === true ? true : undefined,
   };
-}
-
-function toIso(value: string | Date | undefined): string {
-  if (value instanceof Date) return value.toISOString();
-  return value ?? new Date().toISOString();
 }
 
 // ---- Work proposals (Phase 8) ----
@@ -310,7 +331,7 @@ export class ProposalDraft {
 }
 
 /** A tool row's label: the unprefixed name + its first string argument. */
-export function assistantToolLabel(entry: AssistantToolEntry): string {
+export function assistantToolLabel(entry: { toolName: string; args?: unknown }): string {
   const name = entry.toolName.replace(/^composer_/, '');
   const digest = argDigest(entry.args);
   return digest !== '' ? `${name} · ${digest}` : name;

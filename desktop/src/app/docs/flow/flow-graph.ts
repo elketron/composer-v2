@@ -494,18 +494,6 @@ function sanitizeEdgeLabel(label: string): string {
 }
 
 /** The next free single-letter id (A, B, … Z, A1, B1, …). */
-export function nextNodeId(existing: readonly string[]): string {
-  const taken = new Set(existing);
-  for (let round = 0; round < 100; round += 1) {
-    const suffix = round === 0 ? "" : String(round);
-    for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
-      const candidate = `${letter}${suffix}`;
-      if (!taken.has(candidate)) return candidate;
-    }
-  }
-  return `N${Date.now()}`;
-}
-
 /** The first ```mermaid fence of a document (the flow editor edits one). */
 const FENCE = /```mermaid[ \t]*\r?\n([\s\S]*?)```/;
 

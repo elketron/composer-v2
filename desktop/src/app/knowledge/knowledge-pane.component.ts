@@ -9,6 +9,7 @@ import {
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 
 import { renderMarkdown } from '../core/markdown';
+import { trustHtml } from '../core/trusted-html';
 import { MermaidDirective } from '../core/mermaid/mermaid.directive';
 import { DocEditorComponent } from '../docs/doc-editor.component';
 import { ConfirmService } from '../core/confirm/confirm.service';
@@ -85,7 +86,7 @@ export class KnowledgePaneComponent {
     });
     // Mirror the dirty state for the tab switch + route guard.
     effect(() => {
-      this.knowledge.editingDirty.set(this.dirty());
+      this.knowledge.setEditingDirty(this.dirty());
     });
   }
 
@@ -104,7 +105,7 @@ export class KnowledgePaneComponent {
     this.editTagsOriginal.set(result.tags.join(', '));
     this.editBody = result.body;
     this.draft.set(null);
-    this.knowledge.mode.set('edit');
+    this.knowledge.beginEdit(path);
   }
 
   protected async save(): Promise<void> {
@@ -121,9 +122,7 @@ export class KnowledgePaneComponent {
   }
 
   protected async cancel(): Promise<void> {
-    if (!(await this.knowledge.confirmDiscard())) return;
-    this.knowledge.editingDirty.set(false);
-    this.knowledge.mode.set('view');
+    await this.knowledge.cancelEdit();
     if (this.mode() === 'view' && this.selectedPath() === null) {
       // A cancelled create leaves nothing selected.
       this.rendered.set(null);
@@ -146,12 +145,7 @@ export class KnowledgePaneComponent {
       const result = await this.knowledge.delete(path);
       if (!result.ok) {
         this.readError.set(result.error ?? 'the note could not be deleted');
-        return;
       }
-      // The fold clears the selection too; do it here so the pane resets
-      // even when the library list was never loaded in this session.
-      this.knowledge.selected.set(null);
-      this.knowledge.mode.set('view');
     } finally {
       this.busy.set(false);
     }
@@ -160,18 +154,16 @@ export class KnowledgePaneComponent {
   private async saveEdit(): Promise<void> {
     const path = this.selectedPath();
     if (!path) return;
-    const result = await this.knowledge.save(path, this.serialize());
+    const result = await this.knowledge.saveEdit(path, this.serialize());
     if (!result.ok) {
       this.saveError.set(result.error ?? 'the note could not be saved');
       return;
     }
     this.showResult(path, this.body());
-    this.knowledge.editingDirty.set(false);
-    this.knowledge.mode.set('view');
   }
 
   private async saveCreate(): Promise<void> {
-    const result = await this.knowledge.create(
+    const result = await this.knowledge.createNote(
       this.title().trim(),
       this.parseTags(),
       this.body(),
@@ -180,30 +172,9 @@ export class KnowledgePaneComponent {
       this.saveError.set(result.error ?? 'the note could not be saved');
       return;
     }
-    this.knowledge.editingDirty.set(false);
-    this.knowledge.mode.set('view');
-    // The savedPath lands in the knowledgeSaved event; the fold adds the
-    // entry — select the newest one by title match when it arrives.
-    this.savedNote.set(this.title().trim());
-    void this.selectSavedNote();
-  }
-
-  private async selectSavedNote(): Promise<void> {
-    const title = this.savedNote();
-    if (!title) return;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const entry = this.knowledge
-        .entries()
-        .find((note) => note.title.toLowerCase() === title.toLowerCase());
-      if (entry && entry.path === this.selectedPath()) return;
-      if (entry) {
-        this.knowledge.selected.set(entry.path);
-        this.savedNote.set(null);
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    this.savedNote.set(null);
+    // The save response names the note's path; select it (the list carries
+    // it once the echo lands — the fold, not a poll).
+    if (result.savedPath !== undefined) await this.knowledge.select(result.savedPath);
   }
 
   /** The file text a save writes: frontmatter rebuilt, body as edited. */
@@ -236,7 +207,7 @@ export class KnowledgePaneComponent {
     this.readError.set(null);
     const html = renderMarkdown(body);
     this.rendered.set(html);
-    this.content.set(this.sanitizer.bypassSecurityTrustHtml(html));
+    this.content.set(trustHtml(this.sanitizer, html));
   }
 
   private editBody = '';

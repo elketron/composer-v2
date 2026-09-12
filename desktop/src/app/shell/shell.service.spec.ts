@@ -1,4 +1,6 @@
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
+
 
 import {
   DirectoryPickerService,
@@ -9,6 +11,7 @@ import {
   provideFakeEventsClient,
   wireEvent,
 } from '../core/events/events-client.fake';
+import { ProjectTabReuseStrategy } from './project-tab-reuse';
 import { ShellService } from './shell.service';
 
 function projectCreated(id: string, name: string) {
@@ -219,5 +222,86 @@ describe('ShellService', () => {
 
     expect(service.activeProjects().map((project) => project.id)).toEqual(['P-1']);
     expect(service.archivedProjects()).toEqual([]);
+  });
+
+  describe('open project tabs', () => {
+    beforeEach(() => {
+      events.emit(projectCreated('P-1', 'alpha'));
+      events.emit(projectCreated('P-2', 'beta'));
+      events.emit(projectCreated('P-3', 'gamma'));
+      // The fold lands on the first project; open two more.
+      service.openProject('P-2');
+      service.openProject('P-3');
+    });
+
+    it('openProject registers tabs in open order and activates', () => {
+      expect(service.openTabs().map((t) => t.id)).toEqual(['P-1', 'P-2', 'P-3']);
+      expect(service.activeTabId()).toBe('P-3');
+      // Opening an already-open tab only activates it (no duplicate).
+      service.openProject('P-1');
+      expect(service.openTabs().map((t) => t.id)).toEqual(['P-1', 'P-2', 'P-3']);
+    });
+
+    it('beginTabClose of an inactive tab commits immediately, dropping only its stored views', () => {
+      // The active tab is P-3; close P-2.
+      const url = service.beginTabClose('P-2');
+      expect(url).toBeNull();
+      expect(service.openTabs().map((t) => t.id)).toEqual(['P-1', 'P-3']);
+      expect(service.activeTabId()).toBe('P-3');
+      expect(service.closingTab).toBe(false);
+    });
+
+    it('beginTabClose of the active tab returns the next remaining tab, completeTabClose commits', () => {
+      const url = service.beginTabClose('P-3');
+      expect(url).toBe('/projects/P-2/coding/board');
+      expect(service.openTabs().map((t) => t.id)).toEqual(['P-1', 'P-2', 'P-3']); // not yet
+
+      service.completeTabClose(true);
+
+      expect(service.openTabs().map((t) => t.id)).toEqual(['P-1', 'P-2']);
+      expect(service.activeTabId()).toBe('P-2');
+  });
+
+    it('completeTabClose(false) rolls the close back (the guard declined)', () => {
+      service.beginTabClose('P-3');
+      service.completeTabClose(false);
+      expect(service.openTabs().map((t) => t.id)).toEqual(['P-1', 'P-2', 'P-3']);
+      expect(service.activeTabId()).toBe('P-3');
+    });
+
+    it('beginTabClose arms the guards until the navigation settles', () => {
+      expect(service.closingTab).toBe(false);
+      service.beginTabClose('P-3');
+      expect(service.closingTab).toBe(true);
+      service.completeTabClose(false);
+      expect(service.closingTab).toBe(false);
+    });
+
+    it('closing the last tab leaves no active tab', () => {
+      service.beginTabClose('P-1');
+      service.beginTabClose('P-2');
+      const url = service.beginTabClose('P-3');
+      expect(url).toBe('/dashboard');
+      service.completeTabClose(true);
+      expect(service.openTabs()).toEqual([]);
+      expect(service.activeTabId()).toBeNull();
+    });
+
+    it('an archived project leaves the strip and drops its stored views', () => {
+      events.emit(wireEvent('projectArchived', { projectId: 'P-2', archivedAt: new Date().toISOString() }, 'P-2'));
+      expect(service.openTabs().map((t) => t.id)).toEqual(['P-1', 'P-3']);
+    });
+
+    it('the reuse strategy discards a closed project\'s views', () => {
+      const discard = spyOnStrategyDiscard();
+      service.beginTabClose('P-2');
+      service.completeTabClose(true);
+      expect(discard).toHaveBeenCalledWith('P-2');
+    });
+
+    function spyOnStrategyDiscard(): ReturnType<typeof vi.fn> {
+      const strategy = TestBed.inject(ProjectTabReuseStrategy);
+      return vi.spyOn(strategy, 'discard');
+    }
   });
 });

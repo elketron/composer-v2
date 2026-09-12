@@ -1,9 +1,9 @@
+import { nextNodeId } from "../../core/models/diagram.models";
 import {
   FlowParseError,
   edgeGeometry,
   extractMermaidFence,
   appendMermaidFence,
-  nextNodeId,
   nodeSize,
   parseFlow,
   replaceMermaidFence,

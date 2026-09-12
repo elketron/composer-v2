@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
 import { EventsClient } from '../core/events/events-client';
+import { EventDeduper } from '../core/events/dedupe-events';
 import {
   DomainEventJson,
   WireRejectionCode,
@@ -59,9 +60,9 @@ interface PendingRejection {
  */
 @Injectable({ providedIn: 'root' })
 export class BoardService {
-  private static readonly SEEN_IDS_CAP = 4096;
 
   private readonly events = inject(EventsClient);
+  private readonly dedupe = new EventDeduper();
   private readonly shell = inject(ShellService);
   private readonly pipelines = inject(PipelineService);
 
@@ -110,7 +111,6 @@ export class BoardService {
   /** Set while a create is in flight; the next cardCreated echo opens the panel. */
   private openAfterCreate = false;
 
-  private readonly seenEventIds = new Map<string, true>();
 
   constructor() {
     this.events.events$.subscribe((event) => this.fold(event));
@@ -353,15 +353,7 @@ export class BoardService {
   // ---- Event fold (stream → signals; idempotent) ----
 
   private fold(event: DomainEventJson): void {
-    if (event.id) {
-      if (this.seenEventIds.has(event.id)) return;
-      this.seenEventIds.set(event.id, true);
-      if (this.seenEventIds.size > BoardService.SEEN_IDS_CAP) {
-        const oldest = this.seenEventIds.keys().next().value;
-        if (oldest !== undefined) this.seenEventIds.delete(oldest);
-      }
-    }
-    const projectId = event.projectId ?? '';
+    if (!this.dedupe.first(event)) return;    const projectId = event.projectId ?? '';
     switch (domainEventKind(event)) {
       case 'cardCreated': {
         const json = event.cardCreated?.card;

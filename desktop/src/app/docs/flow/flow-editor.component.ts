@@ -16,6 +16,7 @@ import {
   FSelectionChangeEvent,
 } from "@foblex/flow";
 
+import { connectorSourceId, connectorTargetId, nextNodeId, nodeIdFromConnector } from "../../core/models/diagram.models";
 import {
   FlowEdge,
   FlowDirection,
@@ -23,7 +24,6 @@ import {
   FlowNode,
   FlowParseError,
   FlowShape,
-  nextNodeId,
   nodeSize,
   parseFlow,
   serializeFlow,
@@ -217,8 +217,8 @@ export class FlowEditorComponent {
 
   protected createConnection(event: FCreateConnectionEvent): void {
     if (event.targetId === undefined) return;
-    const from = this.nodeIdFromConnector(event.sourceId);
-    const to = this.nodeIdFromConnector(event.targetId);
+    const from = nodeIdFromConnector(event.sourceId);
+    const to = nodeIdFromConnector(event.targetId);
     if (
       from === to ||
       !this.nodes().some((node) => node.id === from) ||
@@ -328,13 +328,9 @@ export class FlowEditorComponent {
     return `edge-${index}`;
   }
 
-  protected sourceId(nodeId: string): string {
-    return `${nodeId}:source`;
-  }
+  protected readonly sourceId = connectorSourceId;
 
-  protected targetId(nodeId: string): string {
-    return `${nodeId}:target`;
-  }
+  protected readonly targetId = connectorTargetId;
 
   private updateSelectedNode(update: (node: FlowNode) => FlowNode): void {
     const id = this.selectedNodeIds()[0];
@@ -356,9 +352,6 @@ export class FlowEditorComponent {
     return Number.isInteger(index) ? index : -1;
   }
 
-  private nodeIdFromConnector(id: string): string {
-    return id.replace(/:(?:source|target)$/, "");
-  }
 
   private nextGroupId(): string {
     const ids = new Set([

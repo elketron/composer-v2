@@ -797,6 +797,8 @@ export interface PublishResponseJson {
   readonly pipelineId?: string;
   /** Rides diagram saves: the allocated id (a fresh canvas adopts it). */
   readonly diagramId?: string;
+  /** Rides knowledge saves: the path the note landed in (create flow). */
+  readonly savedPath?: string;
 }
 
 /** Convert a command DTO onto its action route. Null for unknown commands. */

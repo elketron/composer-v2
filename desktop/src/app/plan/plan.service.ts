@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
 import { EventsClient } from '../core/events/events-client';
+import { EventDeduper } from '../core/events/dedupe-events';
 import {
   DomainEventJson,
   PublishRequestJson,
@@ -34,9 +35,9 @@ import { Assignee, Card, CardType } from '../core/models/board.models';
  */
 @Injectable({ providedIn: 'root' })
 export class PlanService {
-  private static readonly SEEN_IDS_CAP = 4096;
 
   private readonly events = inject(EventsClient);
+  private readonly dedupe = new EventDeduper();
 
   private readonly sessionsSignal = signal<ReadonlyMap<string, PlanningSession>>(new Map());
   private readonly streamingMessagesSignal = signal<ReadonlyMap<string, ChatMessage>>(new Map());
@@ -44,7 +45,6 @@ export class PlanService {
   private readonly committedCardsSignal = signal<ReadonlyMap<string, readonly Card[]>>(new Map());
   private readonly activeProjectSignal = signal<string | null>(null);
   private readonly pendingSessions = new Map<string, Promise<PlanningSession | null>>();
-  private readonly seenEventIds = new Map<string, true>();
   /** Projects with a deliberate session-create in flight (the echo replaces). */
   private readonly pendingCreate = new Set<string>();
 
@@ -153,15 +153,7 @@ export class PlanService {
   }
 
   applyEvent(event: PlanEvent): void {
-    if (event.id) {
-      if (this.seenEventIds.has(event.id)) return;
-      this.seenEventIds.set(event.id, true);
-      if (this.seenEventIds.size > PlanService.SEEN_IDS_CAP) {
-        const oldest = this.seenEventIds.keys().next().value;
-        if (oldest !== undefined) this.seenEventIds.delete(oldest);
-      }
-    }
-
+    if (!this.dedupe.first(event)) return;
     switch (event.type) {
       case 'PlanningSessionCreated': {
         const incoming = asSession(event.session);
@@ -271,9 +263,8 @@ export class PlanService {
         break;
       }
       case 'CardsCommitted': {
-        const cards = event.cards
-          .map(asCommittedCard)
-          .filter((card): card is Card => card !== null);
+        // The wire mapping coerced the cards already; the fold is a pass-through.
+        const cards = event.cards;
         this.committedCardsSignal.update((cardsByProject) => {
           const next = new Map(cardsByProject);
           next.set(event.projectId, cards);
@@ -560,101 +551,3 @@ function upsertMessage(
   );
 }
 
-interface CardDto {
-  readonly id?: unknown;
-  readonly type?: unknown;
-  readonly pipelineId?: unknown;
-  readonly laneId?: unknown;
-  readonly createdAt?: unknown;
-  readonly updatedAt?: unknown;
-  readonly tags?: unknown;
-  readonly blockedBy?: unknown;
-  readonly stepStates?: unknown;
-  readonly title?: unknown;
-  readonly description?: unknown;
-  readonly assignee?: unknown;
-  readonly sessionId?: unknown;
-  readonly branch?: unknown;
-  readonly fileStats?: unknown;
-}
-
-interface AssigneeDto {
-  readonly role?: unknown;
-  readonly model?: unknown;
-  readonly effort?: unknown;
-}
-
-interface FileStatsDto {
-  readonly added?: unknown;
-  readonly removed?: unknown;
-  readonly files?: unknown;
-}
-
-function asCommittedCard(value: unknown): Card | null {
-  if (value instanceof Card) return value;
-  if (!isRecord(value)) return null;
-  const dto = value as CardDto;
-  if (typeof dto.id !== 'string') return null;
-  const type = cardType(dto.type);
-  const timestamp = typeof dto.createdAt === 'string' ? dto.createdAt : new Date().toISOString();
-  const updatedAt = typeof dto.updatedAt === 'string' ? dto.updatedAt : timestamp;
-  const tags = arrayOfStrings(dto.tags);
-  const blockedBy = arrayOfStrings(dto.blockedBy);
-  const stepStates = isRecord(dto.stepStates) ? dto.stepStates : {};
-
-  return new Card({
-    id: dto.id,
-    type,
-    title: typeof dto.title === 'string' ? dto.title : 'Untitled card',
-    description: typeof dto.description === 'string' ? dto.description : '',
-    tags,
-    pipelineId: typeof dto.pipelineId === 'string' ? dto.pipelineId : '',
-    laneId: typeof dto.laneId === 'string' ? dto.laneId : '',
-    blockedBy,
-    assignee: asAssignee(dto.assignee),
-    sessionId: typeof dto.sessionId === 'string' ? dto.sessionId : undefined,
-    branch: typeof dto.branch === 'string' ? dto.branch : undefined,
-    fileStats: asFileStats(dto.fileStats),
-    stepStates: stepStates as Card['stepStates'],
-    createdAt: timestamp,
-    updatedAt,
-  });
-}
-
-function asAssignee(value: unknown): Assignee | undefined {
-  if (!isRecord(value)) return undefined;
-  const dto = value as AssigneeDto;
-  if (typeof dto.role !== 'string') return undefined;
-  if (dto.role === 'human') return Assignee.human();
-  return Assignee.for(
-    dto.role as Parameters<typeof Assignee.for>[0],
-    typeof dto.model === 'string' ? dto.model : '',
-    typeof dto.effort === 'string' ? dto.effort : '',
-  );
-}
-
-function asFileStats(
-  value: unknown,
-): { added: number; removed: number; files: number } | undefined {
-  if (!isRecord(value)) return undefined;
-  const dto = value as FileStatsDto;
-  return {
-    added: typeof dto.added === 'number' ? dto.added : 0,
-    removed: typeof dto.removed === 'number' ? dto.removed : 0,
-    files: typeof dto.files === 'number' ? dto.files : 0,
-  };
-}
-
-function cardType(value: unknown): CardType {
-  return value === 'design' || value === 'docs' || value === 'coding' ? value : 'coding';
-}
-
-function arrayOfStrings(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : [];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}

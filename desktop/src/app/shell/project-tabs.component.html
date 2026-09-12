@@ -1,0 +1,25 @@
+@if (tabs().length > 0) {
+  <div class="project-tabs" role="tablist" aria-label="open projects">
+    @for (tab of tabs(); track tab.id) {
+      <div
+        class="project-tab"
+        role="tab"
+        [class.active]="tab.id === activeId()"
+        [attr.aria-selected]="tab.id === activeId()"
+        [title]="tab.directory ?? tab.name"
+        (click)="open(tab.id)"
+      >
+        <span class="tab-name">{{ tab.name }}</span>
+        <button
+          type="button"
+          class="tab-close"
+          aria-label="close {{ tab.name }}"
+          title="close {{ tab.name }}"
+          (click)="close(tab.id, $event)"
+        >
+          ×
+        </button>
+      </div>
+    }
+  </div>
+}

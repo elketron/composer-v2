@@ -4,20 +4,17 @@ import {
   computed,
   effect,
   inject,
-  signal,
 } from '@angular/core';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { BookOpen, FilePlus, FolderPlus, LucideAngularModule, Pencil, Trash2 } from 'lucide-angular';
 
 import { ShellService } from '../shell/shell.service';
-import { renderMarkdown } from '../core/markdown';
+import { routedProjectId } from '../shell/route-project-id';
 import { MermaidDirective } from '../core/mermaid/mermaid.directive';
 import { ConfirmService } from '../core/confirm/confirm.service';
 import { FlowEditorComponent } from './flow/flow-editor.component';
-import { DocInfoJson } from '../core/events/wire';
 import { DocEditorComponent } from './doc-editor.component';
 import { DocsService } from './docs.service';
-import { Doc, DocEditSession } from '../core/models/docs.models';
+import { DocEditSession } from '../core/models/docs.models';
 
 /** The starter text a new doc opens with. */
 const CREATE_STARTER = '\n';
@@ -26,8 +23,10 @@ const CREATE_STARTER = '\n';
  * Docs view (Phase 9): the project's markdown files under `docs/` — read,
  * and since S27 created, edited, renamed, and deleted. Files are the
  * truth; every mutation rides the validated processor and lands back as
- * metadata events. The editor's state machine lives on `DocEditSession`
- * and the markdown rendering on `Doc`; this component renders and forwards.
+ * metadata events. The viewer state machine lives in `DocsService` (the
+ * selection, its fetch, and its renders), the editor's state machine on
+ * `DocEditSession`, and the markdown rendering on `Doc`-level helpers —
+ * this component renders and forwards intents.
  */
 @Component({
   selector: 'app-docs',
@@ -40,21 +39,23 @@ export class DocsComponent {
   private readonly shell = inject(ShellService);
   private readonly docs = inject(DocsService);
   private readonly confirm = inject(ConfirmService);
-  private readonly sanitizer = inject(DomSanitizer);
 
   protected readonly icons = { docs: BookOpen, link: FolderPlus, newDoc: FilePlus, edit: Pencil, delete: Trash2 };
 
-  protected readonly projectId = computed(() => this.shell.activeTabId());
+  // This instance always serves one project (the tab reuse strategy keys
+  // instances by project) — a stable id, not the active tab's.
+  protected readonly projectId = computed(() => this.myProjectId || this.shell.activeTabId());
+  private readonly myProjectId = routedProjectId();
   protected readonly directory = computed(() => this.shell.activeTab()?.directory ?? null);
   protected readonly entries = computed(() =>
     [...this.docs.docs(this.projectId() ?? '')].sort((a, b) => a.path.localeCompare(b.path)),
   );
 
-  protected readonly selected = signal<string | null>(null);
-  /** The rendered markdown HTML (pre-bypass); `content` is its safe form. */
-  protected readonly rendered = signal<string | null>(null);
-  protected readonly content = signal<SafeHtml | null>(null);
-  protected readonly readError = signal<string | null>(null);
+  // The read pane reads the service's viewer state (pass-throughs).
+  protected readonly selected = computed(() => this.docs.viewer().path);
+  protected readonly rendered = computed(() => this.docs.viewer().html);
+  protected readonly content = computed(() => this.docs.viewer().content);
+  protected readonly readError = computed(() => this.docs.viewer().error);
 
   /** The editor's working copy (mode, draft, path field, edit surface). */
   readonly session = new DocEditSession(CREATE_STARTER);
@@ -85,17 +86,21 @@ export class DocsComponent {
     this.session.applyFence(code);
   }
 
+  private openedFor: string | null = null;
+
   constructor() {
-    // Each project entry refreshes the index from disk (files are the
-    // truth) and drops any open editor with it.
+    // The index refreshes on view entry; the editor and reader reset with
+    // it. This instance serves one project (the tab reuse strategy keys
+    // instances by project; it detaches — not dies — while another tab is
+    // on screen), so the open is keyed on the resolved project: a tab
+    // switch re-runs this effect for a detached view but never re-opens.
     effect(() => {
       const projectId = this.projectId();
-      this.resetEditor();
-      this.selected.set(null);
-      this.rendered.set(null);
-      this.content.set(null);
-      this.readError.set(null);
-      if (projectId) void this.docs.open(projectId);
+      if (!projectId || projectId === this.openedFor) return;
+      this.openedFor = projectId;
+      this.session.reset();
+      this.docs.clear();
+      void this.docs.open(projectId);
     });
   }
 
@@ -113,36 +118,24 @@ export class DocsComponent {
     });
   }
 
-  protected async select(entry: DocInfoJson): Promise<void> {
+  protected selectPath(path: string): void {
     const projectId = this.projectId();
-    if (!projectId || entry.path === this.selected()) return;
-    if (!(await this.confirmDiscard())) return;
-    this.resetEditor();
-    this.selected.set(entry.path);
-    this.readError.set(null);
-    this.content.set(null);
-    const result = await this.docs.read(projectId, entry.path);
-    if (this.selected() !== entry.path || this.session.mode() !== 'view') return;
-    if (result.ok) {
-      this.showDoc(Doc.fromWire(entry, result.content));
-    } else {
-      this.readError.set(result.error);
-    }
+    if (!projectId || path === this.selected()) return;
+    void (async () => {
+      if (!(await this.confirmDiscard())) return;
+      this.session.reset();
+      this.docs.select(projectId, path);
+    })();
   }
 
   // ---- Modes ----
 
-  protected async beginEdit(): Promise<void> {
-    const projectId = this.projectId();
-    const path = this.selected();
-    if (!projectId || !path) return;
-    // The editor edits raw markdown, not the rendered HTML: refetch.
-    const result = await this.docs.read(projectId, path);
-    if (!result.ok) {
-      this.readError.set(result.error);
-      return;
-    }
-    this.session.beginEdit(result.content);
+  protected beginEdit(): void {
+    // The viewer carries the file's raw markdown — the editor begins from
+    // it (no refetch; the viewer fetched exactly this file).
+    const viewer = this.docs.viewer();
+    if (viewer.path === null || viewer.text === null) return;
+    this.session.beginEdit(viewer.text);
   }
 
   protected beginCreate(): void {
@@ -156,7 +149,7 @@ export class DocsComponent {
   /** Cancel: unsaved work confirms first. */
   protected async cancel(): Promise<void> {
     if (!(await this.confirmDiscard())) return;
-    this.resetEditor();
+    this.session.reset();
   }
 
   /**
@@ -196,8 +189,8 @@ export class DocsComponent {
       this.session.saveError.set(result.error ?? 'the doc could not be saved');
       return;
     }
-    this.showText(path, text);
-    this.resetEditor();
+    this.docs.show(path, text);
+    this.session.reset();
   }
 
   private async saveCreate(projectId: string): Promise<void> {
@@ -217,15 +210,15 @@ export class DocsComponent {
       this.session.saveError.set(result.error ?? 'the doc could not be saved');
       return;
     }
-    this.resetEditor();
-    await this.selectPath(path);
+    this.session.reset();
+    this.docs.select(projectId, path);
   }
 
   private async saveRename(projectId: string): Promise<void> {
     const from = this.selected();
     const to = this.session.pathField().trim();
     if (!from || from === to) {
-      this.resetEditor();
+      this.session.reset();
       return;
     }
     const result = await this.docs.rename(projectId, from, to);
@@ -233,8 +226,8 @@ export class DocsComponent {
       this.session.saveError.set(result.error ?? 'the doc could not be renamed');
       return;
     }
-    this.resetEditor();
-    await this.selectPath(to);
+    this.session.reset();
+    this.docs.select(projectId, to);
   }
 
   protected async deleteSelected(): Promise<void> {
@@ -251,54 +244,13 @@ export class DocsComponent {
     this.session.busy.set(true);
     try {
       const result = await this.docs.delete(projectId, path);
-      if (!result.ok) {
-        this.readError.set(result.error ?? 'the doc could not be deleted');
-        return;
+      if (result.ok) {
+        this.session.reset();
+        this.docs.clear();
       }
-      this.resetEditor();
-      this.selected.set(null);
-      this.rendered.set(null);
-      this.content.set(null);
     } finally {
       this.session.busy.set(false);
     }
-  }
-
-  // ---- Helpers ----
-
-  private showDoc(doc: Doc): void {
-    this.readError.set(null);
-    const html = doc.markup();
-    this.rendered.set(html);
-    this.content.set(this.sanitizer.bypassSecurityTrustHtml(html));
-  }
-
-  /** Shows saved text in the viewer without refetching (the file is it). */
-  private showText(path: string, text: string): void {
-    this.selected.set(path);
-    this.readError.set(null);
-    const html = renderMarkdown(text);
-    this.rendered.set(html);
-    this.content.set(this.sanitizer.bypassSecurityTrustHtml(html));
-  }
-
-  private async selectPath(path: string): Promise<void> {
-    const projectId = this.projectId();
-    if (!projectId) return;
-    this.selected.set(path);
-    this.content.set(null);
-    this.readError.set(null);
-    const result = await this.docs.read(projectId, path);
-    if (this.selected() !== path) return;
-    if (result.ok) {
-      this.showText(path, result.content);
-    } else {
-      this.readError.set(result.error);
-    }
-  }
-
-  private resetEditor(): void {
-    this.session.reset();
   }
 
   protected async linkDirectory(): Promise<void> {

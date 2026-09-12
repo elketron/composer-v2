@@ -38,10 +38,8 @@ import {
 
 import { ShellService } from '../shell/shell.service';
 import { ConfirmService } from '../core/confirm/confirm.service';
-import { RestClient } from '../core/rest';
 import {
   Pipeline,
-  PipelineCatalog,
   PipelineStepKind,
   PIPELINE_AGENT_KINDS,
   PIPELINE_CATEGORIES,
@@ -54,7 +52,6 @@ import { EditorDraft, StepDraft } from './editor-draft';
 import {
   paletteModel,
   STEP_KIND_BADGES,
-  type JustRecipeEntry,
   type StepPreset,
   type StepTypeMeta,
 } from './step-types';
@@ -128,16 +125,15 @@ export class PipelineEditorComponent {
   private readonly shell = inject(ShellService);
   private readonly pipelines = inject(PipelineService);
   private readonly confirm = inject(ConfirmService);
-  private readonly rest = inject(RestClient);
 
   protected readonly projectId = computed(() => this.shell.activeTabId());
   protected readonly list = computed(() => this.pipelines.pipelines());
 
-  /** The server's executor catalog (agents + runtime steps + categories); empty until loaded. */
-  protected readonly catalog = signal<PipelineCatalog>({ agents: [], runtimeSteps: [], categories: [] });
+  /** The server's executor catalog (agents + runtime steps + categories; loaded by PipelineService). */
+  protected readonly catalog = this.pipelines.catalog;
 
-  /** The active project's justfile recipes (the Set step's presets). */
-  protected readonly justRecipes = signal<readonly JustRecipeEntry[]>([]);
+  /** The active project's justfile recipes (the Set step's presets; loaded by PipelineService). */
+  protected readonly justRecipes = this.pipelines.justRecipes;
 
   protected readonly kinds: readonly PipelineStepKind[] = ['agent', 'command', 'human', 'backlog'];
 
@@ -239,13 +235,13 @@ export class PipelineEditorComponent {
       if (draft !== null && draft.projectId !== this.projectId()) this.cancel();
     });
     effect(() => {
-      if (this.rest.serverBase !== null) void this.loadCatalog();
+      if (this.pipelines.connected()) this.pipelines.ensureCatalog();
     });
     // The project's justfile recipes (the Set step palette's presets and
     // the command inspector's dropdown) reload with the project.
     effect(() => {
       const projectId = this.projectId();
-      if (projectId !== null && this.rest.serverBase !== null) void this.loadRecipes(projectId);
+      if (projectId !== null) this.pipelines.ensureRecipes(projectId);
     });
     // The route overlay measures the rendered nodes after each layout pass
     // (draft edits and the inspector opening/closing both shift geometry;
@@ -262,23 +258,6 @@ export class PipelineEditorComponent {
       this.measureBackwardEdges();
     });
     inject(DestroyRef).onDestroy(() => this.resizeObserver?.disconnect());
-  }
-
-  private async loadCatalog(): Promise<void> {
-    const response = await this.rest.get<PipelineCatalog>('/catalog');
-    if (response === null || !response.ok) return;
-    const agents = Array.isArray(response.body.agents) ? response.body.agents : [];
-    const runtimeSteps = Array.isArray(response.body.runtimeSteps) ? response.body.runtimeSteps : [];
-    const categories = Array.isArray(response.body.categories) ? response.body.categories : [];
-    this.catalog.set({ agents, runtimeSteps, categories });
-  }
-
-  private async loadRecipes(projectId: string): Promise<void> {
-    const response = await this.rest.get<{ recipes: readonly JustRecipeEntry[] }>(
-      `/justfile?projectId=${projectId}`,
-    );
-    const recipes = response !== null && response.ok ? (response.body.recipes ?? []) : [];
-    this.justRecipes.set(recipes.filter((recipe) => typeof recipe?.name === 'string' && recipe.name !== ''));
   }
 
   // ---- Executor catalog ----
