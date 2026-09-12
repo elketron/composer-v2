@@ -11,11 +11,18 @@ import {
   SECURITY_DEFINITION,
   TESTER_DEFINITION,
 } from "../agents/worker/definitions.js";
+import { piCustomTools } from "./pi-tools.js";
+import {
+  changedFilesSince,
+  snapshotWorkingTree,
+  type WorkingTreeSnapshot,
+} from "../filesystem/git-changes.js";
 import type {
   AgentEngine,
   AgentTurnEvent,
   AgentTurnOutcome,
   AgentTurnSpec,
+  FileObservation,
   UsageTokens,
 } from "./types.js";
 
@@ -27,6 +34,8 @@ export interface PiSession {
     text: string,
     options?: { expandPromptTemplates?: boolean },
   ): Promise<void>;
+  /** Re-points the session's model (a settings change between turns). */
+  setModel?(configured: string | undefined): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;
 }
@@ -57,14 +66,28 @@ interface PiMessage {
 
 export type PiSessionFactory = (spec: AgentTurnSpec) => Promise<PiSession>;
 
+/**
+ * The git seam: working-tree change detection around a turn, so
+ * shell-created files are observed alongside native edit/write results.
+ */
+export interface PiGitChanges {
+  /** Snapshot the directory's working tree; null when git is unavailable. */
+  snapshot(directory: string): Promise<unknown>;
+  /** The files changed since the snapshot (git-computed counts). */
+  changes(directory: string, snapshot: unknown): Promise<FileObservation[]>;
+}
+
 export interface PiEngineOptions {
   createSession?: PiSessionFactory;
+  git?: PiGitChanges;
   defaultTimeoutMs?: number;
 }
 
 interface SessionEntry {
   session: PiSession;
   nextMessage: number;
+  /** The configured model the session currently runs (the last applied). */
+  model?: string;
 }
 
 /**
@@ -75,10 +98,12 @@ export class PiEngine implements AgentEngine {
   readonly name = "pi";
   private readonly sessions = new Map<string, SessionEntry>();
   private readonly createSession: PiSessionFactory;
+  private readonly git: PiGitChanges;
   private readonly defaultTimeoutMs: number;
 
   constructor(options: PiEngineOptions = {}) {
     this.createSession = options.createSession ?? createSdkPiSessionFactory();
+    this.git = options.git ?? createExecGitChanges();
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 600_000;
   }
 
@@ -86,13 +111,27 @@ export class PiEngine implements AgentEngine {
     spec: AgentTurnSpec,
     onEvent: (event: AgentTurnEvent) => void,
   ): Promise<AgentTurnOutcome> {
-    let entry = this.sessions.get(spec.sessionId);
+    const key = sessionKey(spec);
+    let entry = this.sessions.get(key);
     if (entry === undefined) {
       try {
-        entry = { session: await this.createSession(spec), nextMessage: 0 };
-        this.sessions.set(spec.sessionId, entry);
+        entry = { session: await this.createSession(spec), nextMessage: 0, model: spec.model };
+        this.sessions.set(key, entry);
       } catch (error) {
         return { ok: false, error: `pi session failed: ${errorText(error)}` };
+      }
+    } else if (spec.model !== entry.model) {
+      // A settings change between turns rides the next prompt: re-point the
+      // live session (a model the runtime cannot resolve fails the turn).
+      try {
+        await entry.session.setModel?.(spec.model);
+        entry.model = spec.model;
+      } catch (error) {
+        return {
+          ok: false,
+          error: `pi model failed: ${errorText(error)}`,
+          engineSessionId: entry.session.sessionId,
+        };
       }
     }
 
@@ -100,6 +139,29 @@ export class PiEngine implements AgentEngine {
     let cost = 0;
     let activeMessageId: string | undefined;
     let activeText = "";
+    // The turn's file observations: completed edit/write calls announce
+    // their path immediately, and the working-tree diff around the turn
+    // adds shell-created files (the run view's diff list reads these).
+    const edited = new Map<string, FileObservation>();
+    // Pi's tool start events carry the call's args; its end events carry
+    // only the result — the path rides the start event.
+    const toolArgs = new Map<string, unknown>();
+    const before =
+      spec.projectDirectory !== undefined
+        ? await this.git.snapshot(spec.projectDirectory).catch(() => null)
+        : null;
+    const emitChanges = async (): Promise<void> => {
+      if (spec.projectDirectory === undefined || before === null) return;
+      let observed: FileObservation[] = [];
+      try {
+        observed = await this.git.changes(spec.projectDirectory, before);
+      } catch {
+        return;
+      }
+      const merged = new Map(edited);
+      for (const file of observed) merged.set(file.path, file);
+      if (merged.size > 0) onEvent({ kind: "files", files: [...merged.values()] });
+    };
     const messageId = (): string => {
       if (activeMessageId === undefined) {
         activeMessageId = `${entry.session.sessionId}:message:${++entry.nextMessage}`;
@@ -144,6 +206,7 @@ export class PiEngine implements AgentEngine {
           return;
         case "tool_execution_start":
           if (event.toolCallId !== undefined) {
+            toolArgs.set(event.toolCallId, event.args);
             onEvent({
               kind: "toolCall",
               toolCallId: event.toolCallId,
@@ -160,6 +223,22 @@ export class PiEngine implements AgentEngine {
               content: resultText(event.result),
               isError: event.isError ?? false,
             });
+            // A settled native edit/write names its file for the diff
+            // list; failed calls did not write anything.
+            if (
+              (event.toolName === "edit" || event.toolName === "write") &&
+              !event.isError
+            ) {
+              const path = editedPath(
+                toolArgs.get(event.toolCallId),
+                spec.projectDirectory,
+              );
+              if (path !== undefined && !edited.has(path)) {
+                edited.set(path, { path, additions: 0, deletions: 0 });
+                onEvent({ kind: "files", files: [...edited.values()] });
+              }
+            }
+            toolArgs.delete(event.toolCallId);
           }
           return;
       }
@@ -199,7 +278,7 @@ export class PiEngine implements AgentEngine {
         });
       }
       if (error === TURN_ABORTED) {
-        this.releaseSession(spec.sessionId);
+        this.releaseSession(spec);
         return {
           ok: false,
           error: "aborted",
@@ -215,31 +294,29 @@ export class PiEngine implements AgentEngine {
       clearTimeout(timeout);
       spec.signal?.removeEventListener("abort", abortTurn);
       unsubscribe();
+      await emitChanges();
     }
   }
 
-  releaseSession(sessionId: string): void {
-    const entry = this.sessions.get(sessionId);
+  releaseSession(spec: AgentTurnSpec): void {
+    const key = sessionKey(spec);
+    const entry = this.sessions.get(key);
     if (entry === undefined) return;
-    this.sessions.delete(sessionId);
+    this.sessions.delete(key);
     entry.session.dispose();
   }
 
   close(): void {
-    for (const sessionId of [...this.sessions.keys()])
-      this.releaseSession(sessionId);
+    for (const entry of this.sessions.values()) entry.session.dispose();
+    this.sessions.clear();
   }
 }
 
 /** Real SDK factory; production boot can opt into it after parity gates pass. */
 export function createSdkPiSessionFactory(): PiSessionFactory {
-  let runtimePromise: Promise<
-    import("@earendil-works/pi-coding-agent").ModelRuntime
-  > | null = null;
   return async (spec) => {
     const sdk = await import("@earendil-works/pi-coding-agent");
-    runtimePromise ??= sdk.ModelRuntime.create();
-    const modelRuntime = await runtimePromise;
+    const modelRuntime = await piModelRuntime();
     const cwd = spec.projectDirectory ?? process.cwd();
     const settingsManager = sdk.SettingsManager.inMemory();
     const resourceLoader = new sdk.DefaultResourceLoader({
@@ -251,15 +328,16 @@ export function createSdkPiSessionFactory(): PiSessionFactory {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      systemPrompt: sdk.stripFrontmatter(agentDefinition(spec.agentName)),
+      systemPrompt: agentDefinition(spec.agentName),
     });
     await resourceLoader.reload();
-    const model = resolveModel(modelRuntime, spec.model);
+    const configuredModel = resolveModel(modelRuntime, spec.model);
+    const customTools = piCustomTools(spec);
     const result = await sdk.createAgentSession({
       cwd,
       modelRuntime,
-      ...(model !== undefined ? { model } : {}),
-      ...toolOptions(spec.agentName),
+      ...toolOptions(spec.agentName, customTools),
+      customTools,
       resourceLoader,
       settingsManager,
       sessionManager: sdk.SessionManager.inMemory(
@@ -270,14 +348,68 @@ export function createSdkPiSessionFactory(): PiSessionFactory {
       ),
     });
     const session = result.session;
+    const defaultModel = session.model;
+    if (configuredModel !== undefined) await session.setModel(configuredModel);
     return {
       sessionId: session.sessionId,
       subscribe: (listener) =>
         session.subscribe((event) => listener(event as PiSessionEvent)),
       prompt: (text, options) => session.prompt(text, options),
+      setModel: async (configured) => {
+        const model = resolveModel(modelRuntime, configured) ?? defaultModel;
+        if (model === undefined) throw new Error("Pi default model unavailable");
+        await session.setModel(model);
+      },
       abort: () => session.abort(),
       dispose: () => session.dispose(),
     };
+  };
+}
+
+/** Composer session IDs are local to their project and orchestration surface. */
+function sessionKey(spec: AgentTurnSpec): string {
+  return JSON.stringify([
+    spec.projectId ?? null,
+    spec.mcpTools ?? "none",
+    spec.agentName,
+    spec.sessionId,
+  ]);
+}
+
+/** The process-shared Pi model runtime (the catalog, credentials, models). */
+let modelRuntimePromise: Promise<
+  import("@earendil-works/pi-coding-agent").ModelRuntime
+> | null = null;
+export function piModelRuntime(): Promise<
+  import("@earendil-works/pi-coding-agent").ModelRuntime
+> {
+  modelRuntimePromise ??= import(
+    "@earendil-works/pi-coding-agent"
+  ).then((sdk) => sdk.ModelRuntime.create());
+  return modelRuntimePromise;
+}
+
+/**
+ * The Pi model catalog (gate 5): the models the runtime can actually use —
+ * its credential resolution covers stored credentials, environment
+ * variables, and custom providers' own keys, the same resolution a turn
+ * performs. The flat `provider/model` spelling the settings model already
+ * persists.
+ */
+export async function listPiModels(): Promise<string[]> {
+  const runtime = await piModelRuntime();
+  const available = await runtime.getAvailable();
+  return [
+    ...new Set(available.map((model) => `${model.provider}/${model.id}`)),
+  ].sort((left, right) => left.localeCompare(right));
+}
+
+/** The real git observation: working-tree snapshots via a throwaway index. */
+function createExecGitChanges(): PiGitChanges {
+  return {
+    snapshot: (directory) => snapshotWorkingTree(directory),
+    changes: (directory, snapshot) =>
+      changedFilesSince(directory, snapshot as WorkingTreeSnapshot),
   };
 }
 
@@ -320,21 +452,30 @@ function agentDefinition(name: string): string {
   }
 }
 
-function toolOptions(name: string): {
-  tools?: string[];
-  noTools?: "all";
-} {
+function toolOptions(
+  name: string,
+  customTools: ReturnType<typeof piCustomTools>,
+): { tools: string[] } {
+  return { tools: [...builtinTools(name), ...customTools.map((tool) => tool.name)] };
+}
+
+/** The built-in surface per shipped agent (the custom tools ride on top). */
+function builtinTools(name: string): string[] {
   switch (name) {
     case CODER_AGENT_NAME:
     case "composer-tester":
-      return { tools: ["read", "bash", "edit", "write", "grep", "find", "ls"] };
+      return ["read", "bash", "edit", "write", "grep", "find", "ls"];
     case "composer-reviewer":
     case "composer-security":
-      return { tools: ["read", "bash", "grep", "find", "ls"] };
+      return ["read", "bash", "grep", "find", "ls"];
+    case PLANNER_AGENT_NAME:
+      // The plan document is the planner's one artifact; its edits go
+      // through the path-fixed composer_edit_plan tool.
+      return ["read"];
+    case ASSISTANT_AGENT_NAME:
+      return [];
     default:
-      // Planner and assistant await their path-restricted/Composer custom
-      // tools before Pi is eligible for production boot.
-      return { noTools: "all" };
+      return ["read"];
   }
 }
 
@@ -370,6 +511,24 @@ function resultText(result: unknown): string {
   } catch {
     return String(result);
   }
+}
+
+/**
+ * The file path a Pi edit/write call targets (defensive on the input
+ * shape), relative to the turn's directory when it lives inside it — the
+ * same spelling git's --relative observation uses, so the two merge.
+ */
+function editedPath(
+  args: unknown,
+  directory: string | undefined,
+): string | undefined {
+  if (typeof args !== "object" || args === null) return undefined;
+  const candidate = (args as Record<string, unknown>)["path"];
+  if (typeof candidate !== "string" || candidate.trim() === "") return undefined;
+  const path = candidate.trim();
+  if (directory === undefined) return path;
+  const prefix = `${directory.replace(/[\\/]+$/, "")}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
 
 function emptyUsage(): UsageTokens {

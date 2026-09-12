@@ -357,18 +357,37 @@
       }
 
       <form class="composer" (submit)="$event.preventDefault(); send()">
+        @if (mention() !== null) {
+          <ul class="mention-menu" role="listbox" aria-label="mention a project">
+            @for (project of mentionMatches(); track project.id; let index = $index) {
+              <li
+                role="option"
+                class="mention-option"
+                [class.active]="index === mentionIndex()"
+                [attr.aria-selected]="index === mentionIndex()"
+                (mousedown)="$event.preventDefault()"
+                (click)="chooseMention(project)"
+              >
+                @{{ project.name }}
+              </li>
+            } @empty {
+              <li class="mention-none">no matching projects</li>
+            }
+          </ul>
+        }
         <textarea
           #composer
           name="message"
           rows="1"
           autocomplete="off"
           [ngModel]="draft()"
-          (ngModelChange)="draft.set($event); resize(composer)"
+          (ngModelChange)="composerChange($event, composer)"
           (keydown)="keydown($event)"
+          (blur)="closeMention()"
           [placeholder]="editing() ? 'edit your message — resend opens an alternate branch…' : 'ask across the selected projects…'"
           [disabled]="sending() || scopeSaving()"
         ></textarea>
-        <span class="hint">enter to {{ editing() ? 'resend' : 'send' }} · shift+enter for a newline</span>
+        <span class="hint">enter to {{ editing() ? 'resend' : 'send' }} · shift+enter for a newline · @ for projects</span>
         <button type="submit" class="send" [disabled]="sending() || scopeSaving() || !draft().trim()">
           {{ editing() ? 'resend' : 'send' }}
         </button>

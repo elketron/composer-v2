@@ -75,6 +75,47 @@
   }
 }
 
+// The header's right cluster: model / calls / elapsed / build.
+.run-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+
+  .stat-label {
+    color: var(--text-faint);
+    letter-spacing: 0.6px;
+  }
+
+  .stat-value {
+    color: var(--text-dim);
+  }
+
+  &.passing .stat-value {
+    color: var(--ok);
+  }
+
+  &.failing .stat-value {
+    color: var(--err);
+  }
+
+  &.running .stat-value {
+    color: var(--run);
+  }
+}
+
+.mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
 .stop {
   display: inline-flex;
   align-items: center;
@@ -140,8 +181,13 @@
   font-size: 14px;
   line-height: 1.6;
 
-  &.message.streaming {
-    color: var(--text-dim);
+  &.message {
+    border-left: 2px solid var(--accent-soft);
+    padding-left: 10px;
+
+    &.streaming {
+      color: var(--text-dim);
+    }
   }
 }
 
@@ -151,6 +197,8 @@
   gap: 4px 10px;
   align-items: baseline;
   font-size: 12px;
+  border-left: 2px solid var(--border-strong);
+  padding-left: 10px;
 
   .tool-name {
     display: inline-flex;
@@ -278,22 +326,18 @@
   }
 }
 
-// The inline working-tree diff (diff2html markup, restyled to the tokens).
-.file-diff {
-  margin: 2px 0 6px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  overflow-x: auto;
-  font-size: 11px;
-}
-
 .pipeline-row {
   display: flex;
   align-items: baseline;
   gap: 8px;
   font-size: 12px;
   padding: 3px 0;
+
+  .todo-box {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    color: var(--text-faint);
+    flex: none;
+  }
 
   .pipeline-label {
     color: var(--text-dim);
@@ -308,24 +352,24 @@
     color: var(--text);
   }
 
+  &.running .todo-box {
+    color: var(--run);
+  }
+
+  &.ok .todo-box {
+    color: var(--ok);
+  }
+
   &.ok .pipeline-status {
     color: var(--ok);
   }
 
-  &.failed .pipeline-status {
+  &.failed .todo-box {
     color: var(--err);
   }
-}
 
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--border-strong);
-  flex: none;
-
-  &.pulse {
-    background: var(--accent-soft);
+  &.failed .pipeline-status {
+    color: var(--err);
   }
 }
 

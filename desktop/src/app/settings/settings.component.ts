@@ -6,8 +6,8 @@ import { ModelPickerComponent } from './model-picker.component';
 
 /**
  * Settings view: the default model plus per-agent overrides (planner,
- * coder, and custom kinds added here). Empty = opencode's own default.
- * The provider endpoint stays in opencode's config — composer only
+ * coder, and custom kinds added here). Empty = the runtime's own default.
+ * Provider endpoints and credentials stay in Pi's agent config — composer only
  * overrides models.
  */
 @Component({

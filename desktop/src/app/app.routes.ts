@@ -62,6 +62,12 @@ export const routes: Routes = [
         canDeactivate: [canvasUnsavedGuard],
       },
       { path: 'run/:cardId', component: RunViewComponent },
+      {
+        // The read-only diff page (the run view's changed files link here);
+        // lazy: diff2html would otherwise ride the initial bundle.
+        path: 'run/:cardId/diff',
+        loadComponent: () => import('./run/diff-view.component').then((m) => m.DiffViewComponent),
+      },
       { path: '**', redirectTo: 'board' },
     ],
   },

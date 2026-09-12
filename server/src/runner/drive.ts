@@ -18,6 +18,9 @@ export async function drivePipeline(
 ): Promise<void> {
   const { projectId, runId, cardId } = task;
   let gate: GateDecision | null = null;
+  // A backlog step parks the card: the run ends there without the terminal
+  // move, and a human promotes the card onward.
+  let parked = false;
   const card = bus.state.byProject.get(projectId)?.cards.get(cardId);
   if (card === undefined) return;
   // A returned card reruns from its current lane; earlier steps are skipped.
@@ -26,9 +29,31 @@ export async function drivePipeline(
 
   for (const step of steps) {
     if (task.stopped) return;
+    if (step.kind === 'backlog') {
+      // The card parks in the backlog lane: the step starts (the card
+      // follows it) and settles, and the run ends here without the
+      // terminal move — a human promotes the card onward.
+      await bus.publish(projectId, 'pipelineStepStarted', {
+        runId,
+        cardId,
+        pipelineId: pipeline.id,
+        stepId: step.id,
+        kind: step.kind,
+      });
+      await bus.publish(projectId, 'pipelineStepFinished', {
+        runId,
+        cardId,
+        pipelineId: pipeline.id,
+        stepId: step.id,
+        ok: true,
+      });
+      parked = true;
+      break;
+    }
 
     // Arm the gate before publishing the waiting transition so an immediate
-    // response always finds its resolver.
+    // response always finds its resolver. Human gates always park — lane
+    // automation starts runs, it never answers for a human.
     const gatePromise = step.kind === 'human' ? prepareGate(task) : null;
     await bus.publish(projectId, 'pipelineStepStarted', {
       runId,
@@ -107,7 +132,9 @@ export async function drivePipeline(
     revision: pipeline.revision,
     status: 'completed',
   });
-  const terminalLaneId = pipeline.terminalLaneId;
+  // The terminal move belongs to a run that finished its path; a card
+  // parked at a backlog step stays where it is.
+  const terminalLaneId = parked ? undefined : pipeline.terminalLaneId;
   if (terminalLaneId !== undefined) {
     await bus.publish(projectId, 'cardLaneMoved', {
       cardId,

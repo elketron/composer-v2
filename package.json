@@ -2,7 +2,7 @@
   "name": "composer-v2",
   "private": true,
   "version": "0.1.0",
-  "description": "Composer v2: the board and pipeline layer over the opencode agent runtime.",
+  "description": "Composer v2: the board and pipeline layer over the embedded Pi agent runtime.",
   "engines": {
     "node": ">=22"
   },

@@ -354,6 +354,8 @@ function laneLabelOf(step: StepDraft): string {
       return step.description.trim() || 'command';
     case 'human':
       return 'approval';
+    case 'backlog':
+      return step.description.trim() || 'backlog';
   }
 }
 

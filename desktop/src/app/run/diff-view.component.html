@@ -1,0 +1,32 @@
+<section class="diff-page">
+  <header class="diff-head">
+    <button class="back" (click)="back()" title="back to the run">
+      <lucide-icon [img]="icons.back" [size]="12" />
+      run
+    </button>
+
+    @if (file(); as path) {
+      <span class="diff-path mono">{{ path }}</span>
+      <span class="diff-hint">working-tree diff · read-only</span>
+    } @else {
+      <span class="diff-path muted">no file picked</span>
+    }
+  </header>
+
+  <div class="diff-body">
+    @if (file(); as path) {
+      @if (patch() === null) {
+        <p class="state-empty inline">loading diff…</p>
+      } @else if (markup(); as rendered) {
+        <div class="file-diff" [innerHTML]="rendered"></div>
+      } @else {
+        <p class="state-empty inline">no working-tree diff for "{{ path }}"</p>
+      }
+    } @else {
+      <div class="state-empty">
+        <span class="state-label">diff</span>
+        <span>open one from the run view's changed files</span>
+      </div>
+    }
+  </div>
+</section>

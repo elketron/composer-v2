@@ -168,7 +168,7 @@ describe('PipelineEditorComponent', () => {
     await fixture.whenStable();
 
     const columns = [...el.querySelectorAll('.palette .palette-title')].map((node) => node.textContent?.trim());
-    expect(columns).toEqual(['Agent step', 'Approval step', 'Set step', 'Completion step']);
+    expect(columns).toEqual(['Agent step', 'Approval step', 'Set step', 'Backlog step', 'Completion step']);
 
     const reviewer = [...el.querySelectorAll<HTMLButtonElement>('.palette-item')].find(
       (item) => item.querySelector('.palette-item-label')?.textContent?.trim() === 'reviewer',

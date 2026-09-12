@@ -1,6 +1,6 @@
-// The planner's MCP command route (D8): the composer MCP child process
-// issues plan-domain commands here. Whitelisted to the planning commands —
-// it is not a second generic action surface.
+// The planner's composer-tool command route (D8): the planner's custom
+// tools issue plan-domain commands here. Whitelisted to the planning
+// commands — it is not a second generic action surface.
 
 import type { Hono } from 'hono';
 import type { Command } from '../../wire/commands.js';

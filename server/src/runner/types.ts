@@ -3,18 +3,21 @@
 // report (S36).
 
 export interface RunnerOptions {
-  /** Composer's HTTP base (the MCP tools' callback target). */
+  /** Composer's HTTP base (the Composer tools' callback target). */
   serverUrl?: string;
-  /** Absolute path to the worker MCP server script (dist/mcp/worker.js). */
-  mcpScriptPath?: string;
   /** Wall-clock cap per command step (default 10 minutes). */
   commandTimeoutMs?: number;
   /** Wall-clock cap per agent step (default 10 minutes). */
   agentTimeoutMs?: number;
   /** The settings provider — the model override rides each agent step's spec. */
   getModel?: () => Promise<{ model?: string }> | { model?: string };
-  /** Ships the worker agent definitions into the project (defaults to `ensureAgentFiles`). */
+  /** Runs before each agent step (extra provisioning; none by default). */
   provision?: (directory: string) => void;
+  /**
+   * Kicks a validated pipeline run for a card (the lane automation's
+   * auto-run); absent when no automation behavior is wanted.
+   */
+  runCard?: (projectId: string, cardId: string) => Promise<unknown>;
 }
 
 export interface GateDecision {

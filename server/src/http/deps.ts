@@ -12,7 +12,7 @@ export interface HttpDeps {
   processor: Processor;
   store?: EventStore;
   knowledge?: KnowledgeStore;
-  /** The model catalog (the settings route lists it); defaults to the OpenCode adapter. */
+  /** The model catalog (the settings route lists it); defaults to the Pi runtime's credentialed models. */
   models?: () => Promise<string[]>;
 }
 

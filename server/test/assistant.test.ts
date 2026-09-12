@@ -652,7 +652,7 @@ describe('the assistant turn', () => {
     expect(second?.engineSessionId).toBe(`fake-${id}`);
   });
 
-  it('the_assistant_workspace_ships_the_agent_definition_and_rocks_the_cwd', async () => {
+  it('the_assistant_workspace_is_the_turns_cwd', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'composer-assistant-ws-'));
     try {
       orchestrator.stop(); // the default orchestrator steps aside
@@ -671,8 +671,6 @@ describe('the assistant turn', () => {
       await waitUntil(() => engine.toolCalls.length >= 1);
       const spec = engine.toolCalls[0];
       expect(spec?.projectDirectory).toBe(workspace);
-      const { existsSync } = await import('node:fs');
-      expect(existsSync(join(workspace, '.opencode', 'agent', 'composer-assistant.md'))).toBe(true);
       withWorkspace.stop();
     } finally {
       rmSync(workspace, { recursive: true, force: true });

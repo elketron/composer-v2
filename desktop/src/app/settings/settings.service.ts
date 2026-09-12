@@ -8,7 +8,8 @@ import { RestClient } from '../core/rest';
  * per-agent overrides (planner, coder, the pipeline workers, and any
  * custom agent kind). The shell's model badge shows the default (via
  * `effectiveModel`); the pipeline editor's agent picker offers the known
- * kinds. The provider endpoint stays opencode's own config.
+ * kinds. Provider endpoints and credentials live in Pi's agent config
+ * (~/.pi/agent) — composer only persists the model ids.
  */
 @Injectable({ providedIn: 'root' })
 export class SettingsService {

@@ -276,6 +276,7 @@
                               <option value="agent">Agent step</option>
                               <option value="command">Set step</option>
                               <option value="human">Approval step</option>
+                              <option value="backlog">Backlog step</option>
                             </select>
                           </label>
                           <p class="panel-hint">{{ stepTypeHint(step.kind) }}</p>
@@ -356,6 +357,18 @@
                                   (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
                                 ></textarea>
                               </label>
+                            }
+                            @case ('backlog') {
+                              <label class="field">
+                                <span class="field-label">label</span>
+                                <input
+                                  type="text"
+                                  placeholder="a short label (Parked)"
+                                  [ngModel]="step.description"
+                                  (ngModelChange)="updateStep(selectedStepIndex()!, { description: $event })"
+                                />
+                              </label>
+                              <p class="panel-hint">the card parks in this lane; a run ends here and a human promotes the card onward</p>
                             }
                           }
                         </section>

@@ -20,14 +20,36 @@
           · {{ elapsed() }}
         }
       </span>
-      <button class="stop" (click)="stop()" title="stop the run">
-        <lucide-icon [img]="icons.stop" [size]="12" />
-        stop
-      </button>
     } @else if (outcome(); as ended) {
       <span class="pill" [class.failed]="ended.status === 'failed'">
         {{ outcomeLabel(ended) }}
       </span>
+    }
+
+    <div class="run-stats">
+      <span class="stat">
+        <span class="stat-label">model</span>
+        <span class="stat-value mono">{{ cardModel() ?? '—' }}</span>
+      </span>
+      <span class="stat">
+        <span class="stat-label">calls</span>
+        <span class="stat-value mono">{{ toolCount() }}</span>
+      </span>
+      <span class="stat">
+        <span class="stat-label">elapsed</span>
+        <span class="stat-value mono">{{ elapsed() || '—' }}</span>
+      </span>
+      <span class="stat" [class.failed]="buildStatus() === 'failing'" [class.passing]="buildStatus() === 'passing'" [class.running]="buildStatus() === 'running'">
+        <span class="stat-label">build</span>
+        <span class="stat-value">{{ buildStatus() === 'idle' ? '—' : buildStatus() }}</span>
+      </span>
+    </div>
+
+    @if (run()) {
+      <button class="stop" (click)="stop()" title="stop the run">
+        <lucide-icon [img]="icons.stop" [size]="12" />
+        stop
+      </button>
     }
   </header>
 
@@ -125,11 +147,13 @@
           </div>
 
           <div class="context-block">
-            <span class="context-label">pipeline</span>
+            <span class="context-label">todo · pipeline</span>
             <div class="pipeline-rows">
               @for (entry of steps(); track entry.step.id) {
                 <div class="pipeline-row {{ entry.status }}">
-                  <span class="status-dot" [class.pulse]="entry.status === 'running'"></span>
+                  <span class="todo-box" aria-hidden="true">
+                    {{ entry.status === 'ok' ? '☑' : entry.status === 'failed' ? '☒' : '☐' }}
+                  </span>
                   <span class="pipeline-label">{{ entry.step.description ?? entry.step.instructions ?? entry.step.agentKind ?? entry.step.kind }}</span>
                   <span class="pipeline-status">{{ entry.status }}</span>
                 </div>
@@ -140,7 +164,7 @@
           </div>
 
           <div class="context-block">
-            <span class="context-label">edited files</span>
+            <span class="context-label">edited files · click to open the diff</span>
             @if (sessionFiles().length > 0) {
               <div class="files-rows">
                 <div class="usage-row">
@@ -154,25 +178,15 @@
                   <button
                     type="button"
                     class="file-row"
-                    [class.open]="expandedFile() === file.path"
-                    (click)="toggleFile(file.path)"
-                    title="toggle the working-tree diff"
+                    (click)="openDiff(file.path)"
+                    title="open the working-tree diff (read-only)"
                   >
-                    <span class="file-path">{{ file.path }}</span>
+                    <span class="file-path mono">{{ file.path }}</span>
                     <span class="files-delta">
                       <span class="add">+{{ file.additions }}</span>
                       <span class="del">−{{ file.deletions }}</span>
                     </span>
                   </button>
-                  @if (expandedFile() === file.path) {
-                    @if (filePatch() === null) {
-                      <p class="state-empty inline">loading diff…</p>
-                    } @else if (fileDiffMarkup(); as markup) {
-                      <div class="file-diff" [innerHTML]="markup"></div>
-                    } @else {
-                      <p class="state-empty inline">no working-tree diff for this file</p>
-                    }
-                  }
                 }
               </div>
             } @else {

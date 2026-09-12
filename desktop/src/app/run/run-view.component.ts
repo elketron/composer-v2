@@ -1,25 +1,25 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ElementRef, viewChild } from '@angular/core';
-import { DomSanitizer, type SafeHtml } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { LucideAngularModule, ArrowLeft, Bot, Square, Wrench } from 'lucide-angular';
 import { interval } from 'rxjs';
-import { html as diffHtml, parse as diffParse } from 'diff2html';
 
 import { RunProgress, RunOutcome, runElapsed } from '../core/models/pipeline.models';
 import { Card } from '../core/models/board.models';
 import { RunTranscriptEntry, PipelineService } from '../pipelines/pipeline.service';
 import { BoardService } from '../board/board.service';
 import { ShellService } from '../shell/shell.service';
-import { RestClient } from '../core/rest';
 
 /**
  * The run view (design mock 2026-09-05): a full page for one card's
  * pipeline run — the agent's output streaming beside the context column
  * (usage, the card's checklist, changed files) and the command steps'
- * live output. Reachable from a board card's run chip and the card panel;
- * a finished run stays readable (durable history, outcome banner).
+ * live output. Header stats carry the model, call count, elapsed clock
+ * and build state; a changed file opens its working-tree diff on the
+ * diff page (`run/:cardId/diff?file=…`, read-only). Reachable from a
+ * board card's run chip and the card panel; a finished run stays
+ * readable (durable history, outcome banner).
  */
 @Component({
   selector: 'app-run-view',
@@ -33,8 +33,6 @@ export class RunViewComponent {
   private readonly pipelines = inject(PipelineService);
   private readonly router = inject(Router);
   private readonly shell = inject(ShellService);
-  private readonly rest = inject(RestClient);
-  private readonly sanitizer = inject(DomSanitizer);
 
   /** The route param (also set directly in specs). */
   readonly cardId = input.required<string>();
@@ -64,71 +62,27 @@ export class RunViewComponent {
     return pipeline.stepById(run.stepId);
   });
 
-  protected readonly sessionId = computed<string | undefined>(
-    () =>
-      this.run()?.sessionId ??
-      this.outcome()?.sessionId ??
-      // After a restart the run and its outcome are gone; the newest agent
-      // session for the card (durable, snapshot-replayed) is the history.
-      this.pipelines
-        .agentSessions()
-        .find((session) => session.cardId === this.cardId())?.sessionId,
-  );
-
   /** The active/historical agent session the output pane reads. */
-  protected readonly session = computed(() => {
-    const id = this.sessionId();
-    if (id === undefined) return undefined;
-    return this.pipelines.agentSessions().find((session) => session.sessionId === id);
-  });
+  protected readonly session = computed(() => this.pipelines.sessionForCard(this.cardId()));
+
+  /** The session's id (the transcript and the diff page key on it). */
+  protected readonly sessionId = computed<string | undefined>(() => this.session()?.sessionId);
 
   protected readonly sessionUsage = computed(() => this.session()?.usage);
   protected readonly sessionFiles = computed(() => this.session()?.files ?? []);
 
-  /** The expanded file's row (one diff open at a time). */
-  protected readonly expandedFile = signal<string | null>(null);
+  /** The assigned agent's model (the header stat; '—' when unassigned). */
+  protected readonly cardModel = computed(() => this.card()?.assignee?.model);
 
-  /** The expanded file's patch: null while loading, '' when unavailable. */
-  protected readonly filePatch = signal<string | null>(null);
-
-  /** The expanded file's rendered diff (diff2html markup, trusted). */
-  protected readonly fileDiffMarkup = computed<SafeHtml | null>(() => {
-    const patch = this.filePatch();
-    if (patch === null || patch === '') return null;
-    try {
-      return this.sanitizer.bypassSecurityTrustHtml(
-        diffHtml(diffParse(patch), { outputFormat: 'line-by-line', drawFileList: false, matching: 'lines' }),
-      );
-    } catch {
-      return null;
-    }
+  /** The build stat: any active step is running, a failed one fails, all done pass. */
+  protected readonly buildStatus = computed<'running' | 'failing' | 'passing' | 'idle'>(() => {
+    const rows = this.steps();
+    if (rows.length === 0) return 'idle';
+    if (rows.some((row) => row.status === 'running')) return 'running';
+    if (rows.some((row) => row.status === 'failed')) return 'failing';
+    if (rows.every((row) => row.status === 'ok')) return 'passing';
+    return 'idle';
   });
-
-  /** Toggles a file's working-tree diff (fetched on demand, always fresh). */
-  protected async toggleFile(path: string): Promise<void> {
-    if (this.expandedFile() === path) {
-      this.expandedFile.set(null);
-      this.filePatch.set(null);
-      return;
-    }
-    this.expandedFile.set(path);
-    this.filePatch.set(null);
-    const sessionId = this.sessionId();
-    const projectId = this.shell.activeTabId();
-    if (sessionId === undefined || projectId === null) {
-      this.filePatch.set('');
-      return;
-    }
-    const response = await this.rest.get<{ files: readonly { path: string; patch: string }[] }>(
-      `/sessions/${sessionId}/diff?projectId=${projectId}`,
-    );
-    if (this.expandedFile() !== path) return;
-    if (response === null || !response.ok) {
-      this.filePatch.set('');
-      return;
-    }
-    this.filePatch.set(response.body.files.find((file) => file.path === path)?.patch ?? '');
-  }
 
   protected readonly transcript = computed<readonly RunTranscriptEntry[]>(() =>
     this.pipelines.transcriptFor(this.sessionId()),
@@ -199,6 +153,15 @@ export class RunViewComponent {
     this.board.openCard(this.cardId());
     const projectId = this.shell.activeTabId();
     if (projectId) void this.router.navigate(['/projects', projectId, 'coding', 'board']);
+  }
+
+  /** Opens a changed file's working-tree diff on the read-only diff page. */
+  protected openDiff(path: string): void {
+    const projectId = this.shell.activeTabId();
+    if (!projectId) return;
+    void this.router.navigate(['/projects', projectId, 'coding', 'run', this.cardId(), 'diff'], {
+      queryParams: { file: path },
+    });
   }
 
   protected toolArgs(args: unknown): string {

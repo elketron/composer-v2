@@ -6,7 +6,7 @@ import { SettingsComponent } from './settings.component';
 import { SettingsService } from './settings.service';
 
 describe('SettingsComponent', () => {
-  it('offers the opencode model catalog from every model field', async () => {
+  it('offers the runtime model catalog from every model field', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string) => {
       const body = url.endsWith('/models')
         ? { models: ['llama.cpp/qwen3.6', 'openai/gpt-5.6-sol'] }

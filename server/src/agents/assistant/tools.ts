@@ -1,4 +1,4 @@
-import type { McpToolDefinition } from '../../mcp/stdio.js';
+import type { McpToolDefinition } from '../../mcp/protocol.js';
 
 /** The assistant's MCP tool definitions (reads plus the two routed writes). */
 export const ASSISTANT_MCP_TOOLS: McpToolDefinition[] = [

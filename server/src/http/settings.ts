@@ -1,16 +1,16 @@
 // Global settings (config, not domain history): the desktop's settings view
 // reads and writes these; the runner/planner read them per spawn. The models
-// route lists the runtime's available models. The write path only parses and
-// rejects malformed transport types (`parseSettingsPatch`); normalization
+// route lists the runtime's credentialed models. The write path only parses
+// and rejects malformed transport types (`parseSettingsPatch`); normalization
 // and persistence live in the settings repository.
 import type { Hono } from 'hono';
 import type { HttpDeps } from './deps.js';
 import { parseSettingsPatch } from '../store/settings.js';
-import { listOpenCodeModels } from '../models.js';
+import { listPiModels } from '../engine/pi.js';
 
 export function registerSettingsRoutes(app: Hono, deps: HttpDeps): void {
   const { store } = deps;
-  const catalog = deps.models ?? listOpenCodeModels;
+  const catalog = deps.models ?? listPiModels;
   app.get('/settings', async (context) => {
     const settings = store ? await store.getSettings() : {};
     return context.json(settings);

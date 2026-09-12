@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import type { Bus } from './bus.js';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
-import { ASSISTANT_AGENT_NAME, ensureAssistantWorkspace } from './agents/index.js';
+import { ASSISTANT_AGENT_NAME } from './agents/index.js';
 import { resolveModel, type ComposerSettings } from './store/settings.js';
 import type { AgentEngine, AgentTurnSpec } from './engine/types.js';
 import type { AssistantThread } from './wire/models.js';
@@ -28,15 +28,13 @@ export interface AssistantOptions {
   agentName?: string;
   /** Wall-clock cap per turn. */
   timeoutMs?: number;
-  /** Composer's HTTP base (the MCP tools' callback target). */
+  /** Composer's HTTP base (the Composer tools' callback target). */
   serverUrl?: string;
-  /** Absolute path to composer's assistant MCP server script (dist/assistant-mcp.js). */
-  mcpScriptPath?: string;
-  /** Composer's assistant workspace (the agent definition's home; the runtime's cwd). */
+  /** Composer's assistant workspace (the runtime's cwd for global turns). */
   workspaceDir?: string;
   /** The settings provider — the model override rides each turn's spec. */
   getModel?: () => Promise<ComposerSettings> | ComposerSettings;
-  /** Ships the assistant's agent definition (defaults to `ensureAssistantWorkspace`). */
+  /** Runs before each turn (extra workspace provisioning; none by default). */
   provision?: (directory: string) => void;
 }
 
@@ -86,9 +84,9 @@ export class AssistantOrchestrator {
       provision: () => {
         if (this.options.workspaceDir === undefined) return;
         try {
-          (this.options.provision ?? ensureAssistantWorkspace)(this.options.workspaceDir);
+          this.options.provision?.(this.options.workspaceDir);
         } catch (error) {
-          console.error('assistant: could not ship the agent definition:', error);
+          console.error('assistant: workspace provisioning failed:', error);
         }
       },
       beforeRun: (threadId) => this.projector.begin(threadId),
@@ -103,7 +101,6 @@ export class AssistantOrchestrator {
           prompt: buildAssistantPrompt(thread, text),
           ...(engineSessionId !== undefined ? { engineSessionId } : {}),
           serverUrl: this.options.serverUrl ?? '',
-          mcpScriptPath: this.options.mcpScriptPath ?? '',
           agentName: this.options.agentName ?? ASSISTANT_AGENT_NAME,
           ...(modelFor(settings) ? { model: modelFor(settings) } : {}),
           timeoutMs: this.options.timeoutMs,

@@ -1,25 +1,26 @@
 // Composer v2 server: one process, many projects. Boot order: open the
 // store → rehydrate every registered project's log into the fold → serve.
-// The chosen address: $COMPOSER_HTTP_ADDR, else 127.0.0.1:5214 (the v1
-// default). Data: $COMPOSER_DATA_DIR, else ~/.local/share/composer-v2.
+// The agent runtime is the embedded Pi SDK; Composer's own tool surfaces
+// ride its custom tools. The chosen address: $COMPOSER_HTTP_ADDR, else
+// 127.0.0.1:5214 (the v1 default). Data: $COMPOSER_DATA_DIR, else
+// ~/.local/share/composer-v2.
 
 import { serve } from '@hono/node-server';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { Bus } from './bus.js';
 import { EventStore } from './store/index.js';
 import { Processor } from './processor/index.js';
 import { router } from './http/index.js';
 import { KnowledgeStore } from './knowledge.js';
-import { listOpenCodeModels } from './models.js';
+import { listPiModels, PiEngine } from './engine/pi.js';
 import { PlanningOrchestrator, resumeStrandedTurns } from './planning.js';
 import { AssistantOrchestrator, resumeStrandedThreads } from './assistant.js';
 import { PipelineRunner } from './runner/index.js';
 import { cancelInterruptedRuns, seedDefaultPipelines } from './pipelines.js';
 import { FakeEngine } from './engine/fake.js';
-import { OpenCodeServeEngine } from './engine/serve.js';
 import type { AgentEngine } from './engine/types.js';
 import type { ComposerCaller } from './agents/planner/index.js';
 
@@ -80,8 +81,10 @@ export async function boot(config: Config): Promise<{
   const [hostname, port] = config.addr.includes(':')
     ? (config.addr.split(':') as [string, string])
     : ['127.0.0.1', config.addr];
+  // The Pi seam (see the engine block below): its model catalog rides the
+  // settings route, so the pickers list what the runtime can actually use.
   const server = serve({
-    fetch: router(bus, processor, store, knowledge, listOpenCodeModels).fetch,
+    fetch: router(bus, processor, store, knowledge, listPiModels).fetch,
     hostname,
     port: Number(port),
   });
@@ -93,9 +96,10 @@ export async function boot(config: Config): Promise<{
   const boundPort = typeof address === 'object' && address !== null ? address.port : Number(port);
   const url = `http://${hostname === '0.0.0.0' ? '127.0.0.1' : hostname}:${boundPort}`;
 
-  // The engine (real opencode, or the scripted fake) is shared by the
-  // planning turn and the pipeline runner. The kill switches gate only the
-  // planners; user-authored pipelines always run.
+  // The engine (the embedded Pi runtime, or the scripted fake in tests)
+  // is shared by the planning turn, the assistant, and the pipeline
+  // runner — all three stream in-process. The kill switches gate only
+  // the planners; user-authored pipelines always run.
   const plannerEnabled = config.plannerEnabled ?? process.env['COMPOSER_PLANNER_ENABLED'] !== '0';
   const assistantEnabled =
     config.assistantEnabled ?? process.env['COMPOSER_ASSISTANT_ENABLED'] !== '0';
@@ -103,11 +107,10 @@ export async function boot(config: Config): Promise<{
     config.engineFactory?.(processor) ??
     (process.env['COMPOSER_FAKE_ENGINE'] === '1'
       ? new FakeEngine(processor)
-      : new OpenCodeServeEngine());
+      : new PiEngine());
   let stopPlanning: () => void = () => undefined;
   let stopAssistant: () => void = () => undefined;
   let stopRunner: () => void = () => undefined;
-  let closeAssistantEngine: (() => void) | undefined;
   let closeEngine: (() => void) | undefined;
   {
     const engine = makeEngine();
@@ -115,36 +118,27 @@ export async function boot(config: Config): Promise<{
     if (plannerEnabled) {
       const orchestrator = new PlanningOrchestrator(bus, engine, {
         serverUrl: url,
-        mcpScriptPath: mcpScriptPath(),
         getModel: () => store.getSettings(),
       });
       orchestrator.start();
       stopPlanning = () => orchestrator.stop();
     }
     if (assistantEnabled) {
-      // The assistant streams: its turn runs on a long-lived `opencode
-      // serve` per thread whose SSE feed carries token deltas (the `run`
-      // command buffers a turn's text). The kill switch falls back to the
-      // shared run engine.
-      const assistantEngine: AgentEngine =
-        config.engineFactory !== undefined || process.env['COMPOSER_ASSISTANT_SERVE'] === '0'
-          ? engine
-          : new OpenCodeServeEngine();
       const workspaceDir = join(config.dataDir, 'assistant');
-      const assistant = new AssistantOrchestrator(bus, assistantEngine, {
+      const assistant = new AssistantOrchestrator(bus, engine, {
         serverUrl: url,
-        mcpScriptPath: assistantMcpScriptPath(),
         workspaceDir,
         getModel: () => store.getSettings(),
       });
       assistant.start();
       stopAssistant = () => assistant.stop();
-      closeAssistantEngine = () => assistantEngine.close?.();
     }
     const runner = new PipelineRunner(bus, engine, {
       serverUrl: url,
-      mcpScriptPath: workerMcpScriptPath(),
       getModel: () => store.getSettings(),
+      // Lane automation: a card entering an automated lane starts a run.
+      runCard: (projectId, cardId) =>
+        processor.execute(projectId, { type: 'requestPipelineRun', cardId }),
     });
     runner.start();
     stopRunner = () => runner.stop();
@@ -166,7 +160,6 @@ export async function boot(config: Config): Promise<{
       stopRunner();
       stopPlanning();
       stopAssistant();
-      closeAssistantEngine?.();
       closeEngine?.();
       // Open SSE streams count as connections; drop them so close resolves.
       (server as { closeAllConnections?: () => void }).closeAllConnections?.();
@@ -175,34 +168,6 @@ export async function boot(config: Config): Promise<{
     },
     stopPlanning,
   };
-}
-
-/** The planner's MCP child script (dist/mcp/planner.js) — resolved from the src or dist layout. */
-function mcpScriptPath(): string {
-  return process.env['COMPOSER_MCP_SCRIPT'] ?? bundledMcpPath('planner');
-}
-
-/** The assistant's MCP child script (dist/mcp/assistant.js). */
-function assistantMcpScriptPath(): string {
-  return (
-    process.env['COMPOSER_ASSISTANT_MCP_SCRIPT'] ??
-    bundledMcpPath('assistant')
-  );
-}
-
-/** The workers' MCP child script (dist/mcp/worker.js). */
-function workerMcpScriptPath(): string {
-  return (
-    process.env['COMPOSER_WORKER_MCP_SCRIPT'] ??
-    bundledMcpPath('worker')
-  );
-}
-
-function bundledMcpPath(name: string): string {
-  const packaged = fileURLToPath(new URL(`./mcp/${name}.mjs`, import.meta.url));
-  return existsSync(packaged)
-    ? packaged
-    : fileURLToPath(new URL(`../dist/mcp/${name}.js`, import.meta.url));
 }
 
 const isMain =

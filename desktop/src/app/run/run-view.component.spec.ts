@@ -1,4 +1,6 @@
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
+import { Router } from '@angular/router';
 
 import {
   FakeEventsClient,
@@ -105,6 +107,14 @@ describe('RunViewComponent', () => {
 
     expect(el.querySelector('.pane.build')!.textContent).toContain('npm test');
     expect(el.querySelector('.pane.context')!.textContent).toContain('pipeline');
+
+    // The header stats: the model (unassigned here), the call count, the
+    // elapsed clock and the build state (st-1 is running).
+    const stats = [...el.querySelectorAll('.run-stats .stat')].map((stat) => stat.textContent ?? '');
+    expect(stats.some((text) => /^model/.test(text))).toBe(true);
+    expect(stats.some((text) => /^calls1$/.test(text.replace(/\s/g, '')))).toBe(true);
+    expect(stats.some((text) => /^elapsed/.test(text))).toBe(true);
+    expect(el.querySelector('.stat.running')!.textContent).toContain('running');
   });
 
   it('stop publishes requestPipelineStop for the card', async () => {
@@ -136,51 +146,29 @@ describe('RunViewComponent', () => {
     expect((fixture.nativeElement as HTMLElement).textContent).toContain('no card "T-404"');
   });
 
-  it('expands an edited file into its working-tree diff', async () => {
+  it('navigates to the diff page for a changed file', async () => {
     events.emit(
       wireEvent('agentSessionObserved', {
         sessionId: 'A-1',
         files: [{ path: 'a.ts', additions: 1, deletions: 1 }],
       }),
     );
-    restResponse = { ok: true, body: { files: [{ path: 'a.ts', patch: A_TS_DIFF }] } };
+    const router = TestBed.inject(Router);
+    const navigate = vi.spyOn(router, 'navigate').mockResolvedValue(true);
     const fixture = await render();
     const el = fixture.nativeElement as HTMLElement;
 
-    // The file list renders with its delta; the diff is closed at first.
+    // The file list renders with its delta.
     const row = el.querySelector<HTMLButtonElement>('.file-row')!;
     expect(row?.textContent).toContain('a.ts');
     expect(row?.textContent).toContain('+1');
-    expect(el.querySelector('.file-diff')).toBeNull();
 
     row.click();
     await fixture.whenStable();
 
-    expect(restCalls).toEqual(['/sessions/A-1/diff?projectId=P-1']);
-    const diff = el.querySelector('.file-diff');
-    expect(diff).not.toBeNull();
-    expect(diff!.innerHTML).toContain('CHANGED');
-
-    // A second click collapses the diff.
-    el.querySelector<HTMLButtonElement>('.file-row')!.click();
-    await fixture.whenStable();
-    expect(el.querySelector('.file-diff')).toBeNull();
-  });
-
-  it('falls back to the no-diff note when the endpoint fails', async () => {
-    events.emit(
-      wireEvent('agentSessionObserved', {
-        sessionId: 'A-1',
-        files: [{ path: 'a.ts', additions: 1, deletions: 1 }],
-      }),
+    expect(navigate).toHaveBeenCalledWith(
+      ['/projects', 'P-1', 'coding', 'run', 'T-1', 'diff'],
+      expect.objectContaining({ queryParams: { file: 'a.ts' } }),
     );
-    const fixture = await render();
-    const el = fixture.nativeElement as HTMLElement;
-
-    el.querySelector<HTMLButtonElement>('.file-row')!.click();
-    await fixture.whenStable();
-
-    expect(el.querySelector('.file-diff')).toBeNull();
-    expect(el.textContent).toContain('no working-tree diff for this file');
   });
 });

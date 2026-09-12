@@ -86,6 +86,18 @@ export function validateDraft(draft: PipelineJson): NormalizedDraft {
 
   for (const [index, step] of steps.entries()) {
     const label = `Step ${index + 1}`;
+    if (step.kind === 'backlog') {
+      // A backlog step is a passive parking marker: no executable fields.
+      if (
+        step.agentKind !== undefined ||
+        step.command !== undefined ||
+        step.outcomes !== undefined ||
+        step.errorReturnToLaneId !== undefined
+      ) {
+        throw rejection(`${label}: a backlog step carries no executable fields`);
+      }
+      continue;
+    }
     if (step.kind === 'agent') {
       const agentKind = step.agentKind?.trim() ?? '';
       if (agentKind !== '' && !PIPELINE_AGENT_KINDS.includes(agentKind)) {
@@ -204,6 +216,8 @@ export function missingStepField(step: PipelineStepJson): string | null {
       if (step.description === undefined || step.description.trim() === '') {
         return 'a human step needs a description (the approval prompt)';
       }
+      return null;
+    case 'backlog':
       return null;
   }
 }

@@ -18,7 +18,7 @@ let nextPickerId = 1;
 export class ModelPickerComponent {
   readonly value = input('');
   readonly models = input<readonly string[]>([]);
-  readonly placeholder = input('opencode default');
+  readonly placeholder = input('runtime default');
   readonly disabled = input(false);
   readonly valueChange = output<string>();
 

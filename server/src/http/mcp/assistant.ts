@@ -1,5 +1,5 @@
-// The assistant's MCP read route (Phase 6): the MCP child issues reads
-// here; the thread's scope is re-validated per call inside the tool
+// The assistant's read route (Phase 6): the assistant's custom tools issue
+// reads here; the thread's scope is re-validated per call inside the tool
 // executor. The two write tools route through the validated processor: a
 // proposal draft lands on the processor (never creates cards directly), a
 // knowledge save lands on the knowledge store via the processor (metadata

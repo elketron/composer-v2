@@ -83,6 +83,8 @@ export class PipelineStep {
         return this.description?.trim() || 'command';
       case 'human':
         return 'approval';
+      case 'backlog':
+        return 'backlog';
     }
   }
 
@@ -114,6 +116,8 @@ export class PipelineStep {
         return null;
       case 'human':
         if (!this.description?.trim()) return 'a human step needs a description (the approval prompt)';
+        return null;
+      case 'backlog':
         return null;
     }
   }

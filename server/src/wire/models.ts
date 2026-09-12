@@ -281,7 +281,7 @@ export interface AgentSession {
 // A step that is board-visible becomes its own board swimlane (column);
 // hidden steps run inside the previous visible step's swimlane. ----
 
-export type PipelineStepKind = 'agent' | 'command' | 'human';
+export type PipelineStepKind = 'agent' | 'command' | 'human' | 'backlog';
 
 /**
  * One board lane (a swimlane/column) of a pipeline — the presentation

@@ -1,7 +1,7 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { LucideAngularModule } from 'lucide-angular';
-import { Bot, ExternalLink } from 'lucide-angular';
+import { Bot } from 'lucide-angular';
 import { RouterLink } from '@angular/router';
 
 import { AgePipe } from '../core/age.pipe';
@@ -12,8 +12,8 @@ import { PipelineService } from './pipeline.service';
  * The coding tab: the project's agent-session history, newest first. Each
  * row links to the card's run view (the transcript lives there); a session
  * without a card (planner-adjacent runs) renders without a link. The
- * runtime's own session remains the source of truth — opencode can attach
- * directly; this view is the pointer, not a second transcript.
+ * runtime's own session remains the source of truth; this view is the
+ * pointer, not a second transcript.
  */
 @Component({
   selector: 'app-coding-view',
@@ -30,7 +30,7 @@ export class CodingViewComponent {
   protected readonly sessions = computed(() => this.pipelines.agentSessions());
   protected readonly hasRunning = computed(() => this.sessions().some((s) => s.status === 'running'));
 
-  protected readonly icons = { bot: Bot, attach: ExternalLink };
+  protected readonly icons = { bot: Bot };
 
   protected cardLabel(cardId: string): string {
     return cardId === '' ? '—' : cardId;

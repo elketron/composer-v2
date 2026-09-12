@@ -24,13 +24,20 @@ export class RunPolicy {
     return { card, pipeline };
   }
 
-  /** The run-start preconditions that follow the directory check: an idle card, not completed. */
+  /** The run-start preconditions that follow the directory check: an idle card, not completed, not parked. */
   requireStartable(cardId: string, pipeline: Pipeline): void {
     if (this.board.activeRun(cardId) !== undefined) {
       throw new CommandRejection('runActive', `Card ${cardId} already has a running pipeline`);
     }
-    if (pipeline.isTerminalLane(this.board.requireCard(cardId).laneId)) {
+    const card = this.board.requireCard(cardId);
+    if (pipeline.isTerminalLane(card.laneId)) {
       throw new CommandRejection('invalidCommand', `Card ${cardId} is completed — reopen it to run again`);
+    }
+    if (pipeline.steps.some((step) => step.laneId === card.laneId && step.kind === 'backlog')) {
+      throw new CommandRejection(
+        'invalidCommand',
+        `Card ${cardId} is parked in backlog — move it onward to run`,
+      );
     }
   }
 

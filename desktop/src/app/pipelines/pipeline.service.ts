@@ -150,6 +150,23 @@ export class PipelineService {
     return this.transcripts().get(sessionId) ?? [];
   }
 
+  /**
+   * The agent session a card's run view reads: the active run's session,
+   * else the last outcome's, else the newest session for the card
+   * (durable, snapshot-replayed — it survives a restart).
+   */
+  sessionForCard(cardId: string): AgentSessionView | undefined {
+    const run = this.runs().get(cardId);
+    if (run?.sessionId !== undefined) {
+      return this.agentSessions().find((session) => session.sessionId === run.sessionId);
+    }
+    const outcome = this.lastRuns().get(cardId);
+    if (outcome?.sessionId !== undefined) {
+      return this.agentSessions().find((session) => session.sessionId === outcome.sessionId);
+    }
+    return this.agentSessions().find((session) => session.cardId === cardId);
+  }
+
   /** The command steps' live output for a card (the run view's build pane). */
   commandOutputFor(cardId: string): readonly CommandOutputLine[] {
     return this.commandOutput().get(cardId) ?? [];

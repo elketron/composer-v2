@@ -30,6 +30,7 @@ import {
   Save,
   Server,
   SquareCheck,
+  Pause,
   Terminal,
   Trash2,
   Workflow,
@@ -138,7 +139,7 @@ export class PipelineEditorComponent {
   /** The active project's justfile recipes (the Set step's presets). */
   protected readonly justRecipes = signal<readonly JustRecipeEntry[]>([]);
 
-  protected readonly kinds: readonly PipelineStepKind[] = ['agent', 'command', 'human'];
+  protected readonly kinds: readonly PipelineStepKind[] = ['agent', 'command', 'human', 'backlog'];
 
   /** The working copy being authored; null shows the empty main area. */
   protected readonly editing = signal<EditorDraft | null>(null);
@@ -342,6 +343,8 @@ export class PipelineEditorComponent {
         return Terminal;
       case 'human':
         return SquareCheck;
+      case 'backlog':
+        return Pause;
       default:
         return Bot;
     }
@@ -361,6 +364,8 @@ export class PipelineEditorComponent {
         return step.description?.trim() || 'command';
       case 'human':
         return 'approval';
+      case 'backlog':
+        return step.description?.trim() || 'backlog';
     }
   }
 
@@ -373,6 +378,8 @@ export class PipelineEditorComponent {
         return step.command || 'shell command';
       case 'human':
         return step.description || 'approval prompt';
+      case 'backlog':
+        return step.description || 'parks the card until moved onward';
     }
   }
 

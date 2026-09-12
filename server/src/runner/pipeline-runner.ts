@@ -4,8 +4,9 @@
 import type { Bus } from '../bus.js';
 import { Board } from '../domain/board.js';
 import type { AgentEngine } from '../engine/types.js';
+import { AUTO_RUN_CAP, laneAutomated, laneIsBacklog } from './automation.js';
 import { drivePipeline } from './drive.js';
-import { handleFrame } from './frame-handler.js';
+import { handleFrame, type AutomationHooks } from './frame-handler.js';
 import type { RunTask, RunnerOptions } from './types.js';
 
 export type { RunnerOptions } from './types.js';
@@ -15,6 +16,8 @@ export class PipelineRunner {
   private readonly engine: AgentEngine;
   private readonly options: Required<Pick<RunnerOptions, 'commandTimeoutMs' | 'agentTimeoutMs'>> & RunnerOptions;
   private readonly tasks = new Map<string, RunTask>();
+  /** Per card (projectId/cardId): consecutive automated runs without a completion. */
+  private readonly autoRuns = new Map<string, number>();
   private unsubscribe: (() => void) | null = null;
 
   constructor(
@@ -38,6 +41,16 @@ export class PipelineRunner {
         this.tasks,
         (projectId, runId, cardId, pipelineId, revision) =>
           this.startRun(projectId, runId, cardId, pipelineId, revision),
+        {
+          automated: (projectId, pipelineId, laneId) =>
+            laneAutomated(this.bus, projectId, pipelineId, laneId),
+          parked: (projectId, pipelineId, laneId) =>
+            laneIsBacklog(this.bus, projectId, pipelineId, laneId),
+          kick: (projectId, cardId) => this.scheduleAutoRun(projectId, cardId),
+          reset: (projectId, cardId) => {
+            this.autoRuns.delete(`${projectId}/${cardId}`);
+          },
+        },
         frame,
       ).catch((error) => console.error('runner:', error));
     });
@@ -46,6 +59,7 @@ export class PipelineRunner {
   stop(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.autoRuns.clear();
     for (const task of this.tasks.values()) {
       task.stopped = true;
       task.abort.abort();
@@ -96,5 +110,30 @@ export class PipelineRunner {
     } finally {
       this.tasks.delete(runId);
     }
+  }
+
+  /**
+   * The lane automation's auto-run: a validated run for the card, deferred
+   * one tick so a routed return's `pipelineRunEnded` lands first (the
+   * previous run must not still hold the card). A per-card budget caps a
+   * rework loop that never converges; a completed run re-arms it.
+   */
+  private scheduleAutoRun(projectId: string, cardId: string): void {
+    const kick = this.options.runCard;
+    if (kick === undefined) return;
+    const key = `${projectId}/${cardId}`;
+    const next = (this.autoRuns.get(key) ?? 0) + 1;
+    if (next > AUTO_RUN_CAP) {
+      console.warn(
+        `runner: automation cap (${AUTO_RUN_CAP} runs) reached for card ${cardId} in ${projectId} — waiting for a completed run or a manual nudge`,
+      );
+      return;
+    }
+    this.autoRuns.set(key, next);
+    setTimeout(() => {
+      void Promise.resolve(kick(projectId, cardId)).catch((error) =>
+        console.error('runner: automated run failed:', error),
+      );
+    }, 0);
   }
 }

@@ -14,6 +14,7 @@ import {
   assistantToolLabel,
   type ProposalCardType,
 } from '../core/models/assistant.models';
+import { ProjectTab } from '../shell/shell.service';
 import { AssistantService } from './assistant.service';
 
 type AssistantTurnActivity =
@@ -84,6 +85,25 @@ export class AssistantComponent {
   protected readonly nameDraft = signal('');
   /** The user message being edited in the composer (edit-and-resend). */
   protected readonly editing = signal<AssistantMessage | null>(null);
+
+  /**
+   * The @-mention menu: the token after the caret's '@', or null (closed).
+   * Typing filters the active projects; a chosen mention rides the message
+   * and joins the thread's scope when it sends.
+   */
+  protected readonly mention = signal<string | null>(null);
+  protected readonly mentionIndex = signal(0);
+  /** Active projects matching the mention filter (prefix matches first). */
+  protected readonly mentionMatches = computed<readonly ProjectTab[]>(() => {
+    const query = (this.mention() ?? '').trim().toLowerCase();
+    const projects = this.projects();
+    const starts = projects.filter((project) => project.name.toLowerCase().startsWith(query));
+    const includes = projects.filter(
+      (project) =>
+        !project.name.toLowerCase().startsWith(query) && project.name.toLowerCase().includes(query),
+    );
+    return [...starts, ...includes].slice(0, 8);
+  });
 
   /** Tool-activity boxes the user opened manually (past turns). */
   private readonly openedBoxes = signal<ReadonlySet<string>>(new Set());
@@ -345,6 +365,7 @@ export class AssistantComponent {
   protected startEdit(message: AssistantMessage): void {    if (this.sending()) return;
     this.editing.set(message);
     this.draft.set(message.text);
+    this.closeMention();
     const area = this.composerArea()?.nativeElement;
     if (area) {
       area.focus();
@@ -409,14 +430,69 @@ export class AssistantComponent {
     }
     const text = this.draft();
     this.pinned.set(true);
-    const projectIds = [...(this.scopeDraft() ?? new Set(this.thread()?.projectIds ?? []))];
-    void this.assistant.sendMessage(text, projectIds).then((sent) => {
+    // Mentioned projects join the thread's scope on send (applied atomically
+    // with the message, server-side).
+    const scope = new Set(this.scopeDraft() ?? this.thread()?.projectIds ?? []);
+    for (const id of mentionedProjectIds(text, this.projects())) scope.add(id);
+    void this.assistant.sendMessage(text, [...scope]).then((sent) => {
       if (sent) {
         this.draft.set('');
+        this.closeMention();
         const area = this.composerArea()?.nativeElement;
         if (area) area.style.height = 'auto';
       }
     });
+  }
+
+  /** The composer's input: grows the box and tracks the caret's @-token. */
+  protected composerChange(text: string, area: HTMLTextAreaElement): void {
+    this.draft.set(text);
+    this.resize(area);
+    this.trackMention(text, area);
+  }
+
+  /** Tracks the '@token before the caret: opens the menu, filters it. */
+  private trackMention(text: string, area: HTMLTextAreaElement): void {
+    const caret = area.selectionStart ?? text.length;
+    const upto = text.slice(0, caret);
+    const at = upto.lastIndexOf('@');
+    if (at < 0 || (at > 0 && !/\s/.test(upto[at - 1]!))) {
+      this.closeMention();
+      return;
+    }
+    const query = upto.slice(at + 1);
+    if (/\s/.test(query)) {
+      this.closeMention();
+      return;
+    }
+    this.mention.set(query);
+    this.mentionIndex.set(0);
+  }
+
+  protected closeMention(): void {
+    this.mention.set(null);
+    this.mentionIndex.set(0);
+  }
+
+  /** Inserts the chosen mention in place of the '@token before the caret. */
+  protected chooseMention(project: ProjectTab): void {
+    const area = this.composerArea()?.nativeElement;
+    const text = this.draft();
+    const caret = area?.selectionStart ?? text.length;
+    const upto = text.slice(0, caret);
+    const at = upto.lastIndexOf('@');
+    this.closeMention();
+    if (at < 0) return;
+    const inserted = `@${project.name} `;
+    this.draft.set(upto.slice(0, at) + inserted + text.slice(caret));
+    const nextCaret = at + inserted.length;
+    if (area) {
+      // The ngModel write paints the same value; place the caret after it.
+      area.value = this.draft();
+      area.setSelectionRange(nextCaret, nextCaret);
+      area.focus();
+      this.resize(area);
+    }
   }
 
   /** Grows the composer with its content (up to the CSS cap). */
@@ -426,6 +502,27 @@ export class AssistantComponent {
   }
 
   protected keydown(event: KeyboardEvent): void {
+    if (this.mention() !== null) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.closeMention();
+        return;
+      }
+      const matches = this.mentionMatches();
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        if (matches.length === 0) return;
+        event.preventDefault();
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        this.mentionIndex.update((index) => (index + delta + matches.length) % matches.length);
+        return;
+      }
+      if (matches.length > 0 && (event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+        event.preventDefault();
+        this.chooseMention(matches[this.mentionIndex()] ?? matches[0]!);
+        return;
+      }
+      // No matches: Enter falls through and sends the literal text.
+    }
     // Enter sends; shift+enter (and alt/ctrl+enter) keep editing.
     if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) {
       return;
@@ -433,4 +530,22 @@ export class AssistantComponent {
     event.preventDefault();
     this.send();
   }
+}
+
+/** The ids of projects @-mentioned by full name (case-insensitive, tab order). */
+function mentionedProjectIds(text: string, projects: readonly ProjectTab[]): string[] {
+  const ids: string[] = [];
+  for (const project of projects) {
+    if (!ids.includes(project.id) && mentionsProject(text, project.name)) ids.push(project.id);
+  }
+  return ids;
+}
+
+/** A whole-token `@name` mention: bounded by whitespace/string edges. */
+function mentionsProject(text: string, name: string): boolean {
+  return new RegExp(`(^|\\s)@${escapeRegExp(name)}(?=$|[\\s,.;:!?])`, 'i').test(text);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

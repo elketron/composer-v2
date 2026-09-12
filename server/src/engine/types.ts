@@ -1,8 +1,8 @@
 // The engine boundary (D2): agent execution delegates to a runtime
-// (opencode in production, a scripted fake in tests). The planning
-// orchestrator builds a turn spec, streams the runtime's output through
-// `onEvent`, and gets one outcome. Everything runtime-specific stays
-// behind this interface.
+// (the embedded Pi SDK in production, a scripted fake in tests). The
+// planning orchestrator builds a turn spec, streams the runtime's output
+// through `onEvent`, and gets one outcome. Everything runtime-specific
+// stays behind this interface.
 
 /** One agent turn the orchestrator asks the runtime to run. */
 export interface AgentTurnSpec {
@@ -14,27 +14,25 @@ export interface AgentTurnSpec {
   projectDirectory?: string;
   /** The turn's message: the user's text plus the in-context document. */
   prompt: string;
-  /** Planner-only native-edit artifact synchronized into durable state. */
+  /** Planner-only artifact synchronized into durable state (the plan editor's fixed path). */
   planDocumentPath?: string;
   /** The runtime's own session id, for continuity across turns. */
   engineSessionId?: string;
-  /** Composer's HTTP base — the MCP tools' callback target. */
+  /** Composer's HTTP base — the Composer tools' callback target. */
   serverUrl: string;
-  /** Absolute path to composer's MCP server script (dist/mcp.js). */
-  mcpScriptPath: string;
-  /** The shipped agent the runtime loads (`--agent <name>`). */
+  /** The shipped agent the turn runs. */
   agentName: string;
   /** The configured model override (settings); absent = the runtime's default. */
   model?: string;
   /** Wall-clock cap for the turn (ms). */
   timeoutMs: number;
-  /** Aborted when the run is stopped — the runtime's process is killed. */
+  /** Aborted when the run is stopped — the runtime aborts the turn. */
   signal?: AbortSignal;
   /**
-   * Which composer MCP tool surface the runtime gets: the planner's write
-   * tools (planning turns), the assistant's read-only tools (global
-   * turns), the workers' workflow tools (pipeline agent steps), or none.
-   * The script path each mode uses rides `mcpScriptPath`.
+   * Which composer tool surface the runtime gets: the planner's
+   * path-restricted plan editor and ticket emission (planning turns), the
+   * assistant's read-only tools (global turns), the workers' workflow
+   * tools (pipeline agent steps), or none.
    */
   mcpTools?: 'planner' | 'assistant' | 'worker' | 'none';
 }
@@ -79,6 +77,6 @@ export interface AgentEngine {
   ): Promise<AgentTurnOutcome>;
   /** Releases engine-held resources (serve processes); best-effort. */
   close?(): void | Promise<void>;
-  /** Releases one session's engine process (a finished turn); best-effort. */
-  releaseSession?(sessionId: string): void | Promise<void>;
+  /** Releases one session's engine resources (a finished turn); best-effort. */
+  releaseSession?(spec: AgentTurnSpec): void | Promise<void>;
 }

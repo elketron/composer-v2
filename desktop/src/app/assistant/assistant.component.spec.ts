@@ -191,6 +191,108 @@ describe('AssistantComponent', () => {
     });
   });
 
+  it('typing @ opens the project menu and enter inserts the mention', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    seedProject(events, 'P-1', 'moped_router');
+    seedProject(events, 'P-2', 'beta');
+    emitThread({ projectIds: ['P-1'] });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const area = el.querySelector<HTMLTextAreaElement>('.composer textarea')!;
+    area.value = '@mo';
+    area.selectionStart = area.value.length;
+    area.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // The menu lists the matching project only (prefix match first).
+    const options = [...el.querySelectorAll('.mention-menu [role=option]')];
+    expect(options.map((item) => item.textContent?.trim())).toEqual(['@moped_router']);
+    expect(el.querySelector('.mention-menu .mention-none')).toBeNull();
+
+    area.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // The mention is inserted and the menu closes; nothing sent yet.
+    expect(area.value).toBe('@moped_router ');
+    expect(el.querySelector('.mention-menu')).toBeNull();
+    expect(events.published).toEqual([]);
+  });
+
+  it('a mentioned project joins the thread scope on send', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    seedProject(events, 'P-1', 'moped_router');
+    seedProject(events, 'P-2', 'beta');
+    emitThread({ projectIds: ['P-1'] });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const area = el.querySelector<HTMLTextAreaElement>('.composer textarea')!;
+    area.value = 'check @beta please';
+    area.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    el.querySelector<HTMLButtonElement>('.composer .send')?.click();
+    await fixture.whenStable();
+
+    expect(events.lastCommand('requestAssistantMessage')).toMatchObject({
+      requestAssistantMessage: { threadId: 'TH-1', text: 'check @beta please', projectIds: ['P-1', 'P-2'] },
+    });
+  });
+
+  it('an unmatched @ token sends literally and keeps the scope', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    seedProject(events, 'P-1', 'moped_router');
+    emitThread({ projectIds: ['P-1'] });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const area = el.querySelector<HTMLTextAreaElement>('.composer textarea')!;
+    area.value = '@nobody';
+    area.selectionStart = area.value.length;
+    area.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // The menu is open but empty: the none hint shows.
+    expect(el.querySelectorAll('.mention-menu [role=option]')).toHaveLength(0);
+    expect(el.querySelector('.mention-menu .mention-none')).toBeTruthy();
+
+    el.querySelector<HTMLButtonElement>('.composer .send')?.click();
+    await fixture.whenStable();
+    expect(events.lastCommand('requestAssistantMessage')).toMatchObject({
+      requestAssistantMessage: { threadId: 'TH-1', text: '@nobody', projectIds: ['P-1'] },
+    });
+  });
+
+  it('escape closes the mention menu', async () => {
+    const fixture = TestBed.createComponent(AssistantComponent);
+    seedProject(events, 'P-1', 'moped_router');
+    emitThread({ projectIds: ['P-1'] });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const area = el.querySelector<HTMLTextAreaElement>('.composer textarea')!;
+    area.value = '@';
+    area.selectionStart = area.value.length;
+    area.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(el.querySelector('.mention-menu')).toBeTruthy();
+
+    area.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(el.querySelector('.mention-menu')).toBeNull();
+    expect(area.value).toBe('@');
+  });
+
   it('archiving waits on the confirmation dialog before publishing', async () => {
     const fixture = TestBed.createComponent(AssistantComponent);
     emitThread();

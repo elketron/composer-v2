@@ -7,7 +7,7 @@
 // file may hardcode step-kind switches for authoring purposes.
 
 import type { LucideIconData } from 'lucide-angular';
-import { Bot, Check, SquareCheck, Terminal } from 'lucide-angular';
+import { Bot, Check, Pause, SquareCheck, Terminal } from 'lucide-angular';
 
 import type { PipelineAgentCatalogEntry, PipelineStepKind, RuntimeStepCatalogEntry } from '../core/models/pipeline.models';
 
@@ -46,6 +46,7 @@ export const STEP_KIND_BADGES: Readonly<Record<PipelineStepKind | 'completion', 
   agent: 'Agent',
   command: 'Set',
   human: 'Approval',
+  backlog: 'Backlog',
   completion: 'Completion',
 };
 
@@ -135,6 +136,20 @@ export function paletteModel(
       description: 'Predefined operations.',
       icon: Terminal,
       presets: commandPresets,
+    },
+    {
+      kind: 'backlog',
+      label: 'Backlog step',
+      description: 'Park the card here until a human moves it onward.',
+      icon: Pause,
+      presets: [
+        {
+          id: 'preset-backlog-park',
+          label: 'Park card',
+          description: 'The card waits in this lane until it is moved onward.',
+          patch: { kind: 'backlog', description: 'Parked until promoted.' },
+        },
+      ],
     },
     {
       kind: 'completion',

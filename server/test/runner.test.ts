@@ -14,6 +14,7 @@ import { Processor } from '../src/processor/index.js';
 import { apply, newState, type State } from '../src/fold/index.js';
 import { snapshotEvents } from '../src/snapshot.js';
 import { PipelineRunner } from '../src/runner/index.js';
+import { AUTO_RUN_CAP } from '../src/runner/automation.js';
 import { cancelInterruptedRuns, seedDefaultPipeline } from '../src/pipelines.js';
 import { FakeEngine } from '../src/engine/fake.js';
 import type { EventFrame } from '../src/wire/envelope.js';
@@ -107,6 +108,14 @@ const humanStep = (id = STEP_APPROVE, patch: Partial<PipelineStep> = {}): Pipeli
   kind: 'human',
   laneId: LANE_APPROVE,
   description: 'Approval',
+  ...patch,
+});
+/** A passive parking marker: the run ends when it reaches this step. */
+const backlogStep = (id: string, patch: Partial<PipelineStep> = {}): PipelineStep => ({
+  id,
+  kind: 'backlog',
+  laneId: LANE_IMPL,
+  description: 'Parked until promoted.',
   ...patch,
 });
 /** A terminal-lane marker (removed from the step list by `pipelineFixture`). */
@@ -461,6 +470,58 @@ describe('the pipeline runner', () => {
       ok: false,
       rejection: { code: 'unknownAgentKind', message: "Agent kind 'designer' has no implementation yet" },
     });
+  });
+
+  it('a_backlog_step_parks_the_card_until_it_moves_onward', async () => {
+    // A backlog step carries no executable fields.
+    const invalid = await processor.execute(projectId, {
+      type: 'requestPipelineSave',
+      pipeline: pipelineFixture('PL-H', [{ id: 'st-x', kind: 'backlog', laneId: LANE_IMPL, command: 'true' }, doneStep()]),
+    });
+    expect(invalid).toEqual({
+      ok: false,
+      rejection: { code: 'invalidCommand', message: 'Step 1: a backlog step carries no executable fields' },
+    });
+
+    const pipelineId = await savePipeline(projectId, pipelineFixture('PL-F', [
+      commandStep('st-0', 'true', { laneId: LANE_IMPL }),
+      backlogStep('st-1', { laneId: LANE_CHECK }),
+      coderStep('st-2', { laneId: LANE_APPROVE }),
+      doneStep(),
+    ]));
+    const assigned = await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    expect(assigned.ok).toBe(true);
+    const run = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
+    expect(run.ok).toBe(true);
+    await waitUntil(() => runEndedBody(projectId)?.status === 'completed');
+
+    // The card parked in the backlog lane: the run ended without the
+    // terminal move.
+    expect(cardOf(projectId, cardId).laneId).toBe(LANE_CHECK);
+    expect(
+      recorded.some(
+        (frame) =>
+          frame.eventType === 'cardLaneMoved' &&
+          (frame.body as { toLaneId?: string }).toLaneId === LANE_DONE,
+      ),
+    ).toBe(false);
+
+    // A parked card rejects a run until it is promoted.
+    const parked = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
+    expect(parked).toMatchObject({
+      ok: false,
+      rejection: { message: expect.stringContaining('parked in backlog') },
+    });
+
+    // The human promotes the card onward; the backlog step is behind it and
+    // the run finishes its path.
+    const moved = await processor.execute(projectId, { type: 'requestCardLaneMove', cardId, toLaneId: LANE_APPROVE });
+    expect(moved.ok).toBe(true);
+    engine.enqueue(async () => 'implemented after promotion');
+    const again = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
+    expect(again.ok).toBe(true);
+    await waitUntil(() => cardOf(projectId, cardId).laneId === LANE_DONE);
+    expect(runEndedBody(projectId)?.status).toBe('completed');
   });
 
   it('a_run_allocates_a_record_pins_the_revision_and_walks_to_done', async () => {
@@ -1108,5 +1169,141 @@ describe('the outcome report command', () => {
       ok: false,
       rejection: { code: 'invalidCommand', message: 'Step st-1 defines no outcomes to report' },
     });
+  });
+});
+
+describe('lane automation (full auto)', () => {
+  let projectId: string;
+  let cardId: string;
+  let engine: FakeEngine;
+  let runner: PipelineRunner;
+
+  beforeEach(async () => {
+    projectId = await createProject();
+    cardId = await createCard(projectId);
+    engine = new FakeEngine(processor);
+    runner = new PipelineRunner(bus, engine, {
+      serverUrl: 'http://127.0.0.1:0',
+      runCard: (pid, cid) => processor.execute(pid, { type: 'requestPipelineRun', cardId: cid }),
+    });
+    runner.start();
+  });
+
+  afterEach(async () => {
+    runner.stop();
+    await runner.drain();
+  });
+
+  async function toggleAutomation(pipelineId: string, laneId: string, on: boolean): Promise<void> {
+    const result = await processor.execute(projectId, { type: 'requestAutomationToggle', pipelineId, laneId, on });
+    if (!result.ok) throw new Error(result.rejection.message);
+  }
+
+  function runStarteds(): EventFrame[] {
+    return recorded.filter((frame) => frame.eventType === 'pipelineRunStarted');
+  }
+
+  it('a card entering an automated lane runs without a nudge', async () => {
+    const pipelineId = await savePipeline(projectId, pipelineFixture('PL-A', [coderStep('st-1'), doneStep()]));
+    await toggleAutomation(pipelineId, LANE_IMPL, true);
+    engine.enqueue(async () => 'implemented');
+
+    // The assignment places the card in the automated first lane: the run
+    // starts on its own (no requestPipelineRun).
+    const assigned = await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    expect(assigned.ok).toBe(true);
+    await waitUntil(() => cardOf(projectId, cardId).laneId === LANE_DONE);
+
+    expect(runStarteds()).toHaveLength(1);
+    expect((runStarteds()[0]?.body as { pipelineId: string }).pipelineId).toBe(pipelineId);
+  });
+
+  it('a completed run re-arms the card; reopening reruns it', async () => {
+    const pipelineId = await savePipeline(projectId, pipelineFixture('PL-E', [coderStep('st-1'), doneStep()]));
+    await toggleAutomation(pipelineId, LANE_IMPL, true);
+    engine.enqueue(async () => 'first pass');
+    const assigned = await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    expect(assigned.ok).toBe(true);
+    await waitUntil(() => cardOf(projectId, cardId).laneId === LANE_DONE);
+
+    // The completion reset the auto-run budget: reopening (a lane move back
+    // into the automated lane) kicks a fresh run.
+    engine.enqueue(async () => 'second pass');
+    const reopened = await processor.execute(projectId, { type: 'requestCardReopen', cardId });
+    expect(reopened.ok).toBe(true);
+    await waitUntil(
+      () => runStarteds().length >= 2 && cardOf(projectId, cardId).laneId === LANE_DONE,
+    );
+  });
+
+  it('a human gate parks even when its lane is automated', async () => {
+    const pipelineId = await savePipeline(projectId, pipelineFixture('PL-B', [coderStep('st-1'), humanStep(STEP_APPROVE), doneStep()]));
+    await toggleAutomation(pipelineId, LANE_APPROVE, true);
+    engine.enqueue(async () => 'work done');
+    const assigned = await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    expect(assigned.ok).toBe(true);
+    const run = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
+    expect(run.ok).toBe(true);
+
+    // The run reaches the gate and parks; automation never answers for a
+    // human.
+    await waitUntil(() =>
+      recorded.some(
+        (frame) =>
+          frame.eventType === 'pipelineStepStarted' &&
+          (frame.body as { stepId?: string }).stepId === STEP_APPROVE,
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(recorded.filter((frame) => frame.eventType === 'pipelineGateResponded')).toHaveLength(0);
+    expect(runEndedBody(projectId)?.status).toBeUndefined();
+
+    const responded = await processor.execute(projectId, { type: 'requestPipelineGateRespond', cardId, approved: true });
+    expect(responded.ok).toBe(true);
+    await waitUntil(() => cardOf(projectId, cardId).laneId === LANE_DONE);
+  });
+
+  it('the automation cap stops a rework loop that never converges', async () => {
+    // A passing command step in the automated lane, then the failing agent
+    // step whose error return goes back to it — a loop with no scripted
+    // turns that runs until the cap.
+    const pipelineId = await savePipeline(projectId, pipelineFixture('PL-C', [
+      commandStep('st-0', 'true', { laneId: LANE_IMPL }),
+      coderStep('st-1', { laneId: LANE_CHECK, errorReturnToLaneId: LANE_IMPL }),
+      doneStep(),
+    ]));
+    await toggleAutomation(pipelineId, LANE_IMPL, true);
+    const assigned = await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    expect(assigned.ok).toBe(true);
+    await waitUntil(() => runStarteds().length >= AUTO_RUN_CAP);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(runStarteds()).toHaveLength(AUTO_RUN_CAP);
+  }, 15_000);
+
+  it('without the lane toggle nothing runs automatically', async () => {
+    const pipelineId = await savePipeline(projectId, pipelineFixture('PL-D', [coderStep('st-1'), doneStep()]));
+    engine.enqueue(async () => 'would run');
+
+    const assigned = await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    expect(assigned.ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(runStarteds()).toHaveLength(0);
+
+    // Automation only adds triggers: the manual run still works.
+    const manual = await processor.execute(projectId, { type: 'requestPipelineRun', cardId });
+    expect(manual.ok).toBe(true);
+    await waitUntil(() => cardOf(projectId, cardId).laneId === LANE_DONE);
+  });
+
+  it('a backlog lane never auto-runs, even when toggled', async () => {
+    const pipelineId = await savePipeline(projectId, pipelineFixture('PL-G', [backlogStep('st-1'), doneStep()]));
+    await toggleAutomation(pipelineId, LANE_IMPL, true);
+
+    // The assignment places the card in the automated backlog lane: no run.
+    const assigned = await processor.execute(projectId, { type: 'requestCardPipelineAssign', cardId, pipelineId });
+    expect(assigned.ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(runStarteds()).toHaveLength(0);
   });
 });

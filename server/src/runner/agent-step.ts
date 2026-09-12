@@ -4,7 +4,6 @@
 
 import { allocateId } from '../processor/helpers.js';
 import { nowIso } from '../wire/envelope.js';
-import { ensureAgentFiles } from '../agents/index.js';
 import { resolveModel } from '../store/settings.js';
 import { ReservedIndexes } from '../domain/transcript.js';
 import { observeFileChanges } from '../filesystem/git-changes.js';
@@ -34,11 +33,11 @@ export async function runAgentStep(
   if (card === undefined) {
     return { ok: false, error: `Card ${task.cardId} vanished` };
   }
-  // The shipped agent the step names; ship it if absent.
+  // Workspace provisioning hook (extra setup before the step's turn).
   try {
-    (options.provision ?? ensureAgentFiles)(directory);
+    options.provision?.(directory);
   } catch (error) {
-    return { ok: false, error: `could not ship agent files: ${String(error)}` };
+    console.error(`runner: workspace provisioning failed for ${directory}:`, error);
   }
   // The outcome report belongs to this step only: anything a previous
   // step's agent reported is stale by definition.
@@ -67,7 +66,6 @@ export async function runAgentStep(
     projectDirectory: directory,
     prompt: promptFor(agentKind, card, step, outcomeBrief),
     serverUrl: options.serverUrl ?? '',
-    mcpScriptPath: options.mcpScriptPath ?? '',
     agentName: `composer-${agentKind}`,
     ...(model ? { model } : {}),
     timeoutMs: options.agentTimeoutMs,
@@ -149,9 +147,9 @@ export async function runAgentStep(
       .catch((error) => console.error('runner: failed to publish an agent event:', error));
   };
   const outcome = await engine.run(spec, onEvent);
-  // The step's runtime session is done — release its serve process (the
+  // The step's runtime session is done — release its engine resources (the
   // assistant's chat reuse keeps theirs; a worker step's is one-shot).
-  void engine.releaseSession?.(sessionId);
+  void engine.releaseSession?.(spec);
 
   await bus.publish(task.projectId, 'agentSessionEnded', {
     cardId: task.cardId,

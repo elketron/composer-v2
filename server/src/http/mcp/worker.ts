@@ -1,7 +1,7 @@
-// The worker agents' MCP route (S34): the recording tools land on the
+// The workers' composer-tool route (S34): the recording tools land on the
 // validated processor (the session binding rides the command); the
 // retrieval tools read the project's workflow files. Every call re-validates
-// the project and session — the child carries no authority.
+// the project and session — the client carries no authority.
 
 import type { Hono } from 'hono';
 import type { HttpDeps } from '../deps.js';

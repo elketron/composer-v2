@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EventFrame } from './wire/envelope.js';
 import { nowIso } from './wire/envelope.js';
-import { ensureAgentFiles, PLANNER_AGENT_NAME } from './agents/index.js';
+import { PLANNER_AGENT_NAME } from './agents/index.js';
 import { resolveModel, type ComposerSettings } from './store/settings.js';
 import type { AgentEngine, AgentTurnEvent, AgentTurnSpec } from './engine/types.js';
 import { nextMessageIndex, userMessageCount } from './domain/transcript.js';
@@ -38,15 +38,13 @@ function modelFor(settings: ComposerSettings, agentName: string): string | undef
 export interface PlanningOptions {
   /** The shipped agent the turn loads. */
   agentName?: string;
-  /** Wall-clock cap per turn. */
+/** Wall-clock cap per turn. */
   timeoutMs?: number;
-  /** Composer's HTTP base (the MCP tools' callback target). */
+  /** Composer's HTTP base (the Composer tools' callback target). */
   serverUrl?: string;
-  /** Absolute path to composer's MCP server script. */
-  mcpScriptPath?: string;
   /** The settings provider — the model override rides each turn's spec. */
   getModel?: () => Promise<{ model?: string }> | { model?: string };
-  /** Ships the agent definitions into the project (defaults to `ensureAgentFiles`). */
+  /** Runs before each turn (extra workspace provisioning; none by default). */
   provision?: (directory: string) => void;
 }
 
@@ -92,9 +90,9 @@ export class PlanningOrchestrator {
         if (found === undefined) return;
         const directory = this.workspaceFor(key, found.session.planDocument);
         try {
-          (this.options.provision ?? ensureAgentFiles)(directory);
+          this.options.provision?.(directory);
         } catch (error) {
-          console.error(`planner: could not ship agent files to ${directory}:`, error);
+          console.error(`planner: workspace provisioning failed for ${directory}:`, error);
         }
       },
       buildSpec: async (key, text, engineSessionId) => {
@@ -109,7 +107,6 @@ export class PlanningOrchestrator {
           prompt: buildPrompt(text, pipelineInventory(this.bus, projectId)),
           ...(engineSessionId !== undefined ? { engineSessionId } : {}),
           serverUrl: this.options.serverUrl ?? '',
-          mcpScriptPath: this.options.mcpScriptPath ?? '',
           agentName: this.options.agentName ?? PLANNER_AGENT_NAME,
           mcpTools: 'planner',
           ...(modelFor(settings, this.options.agentName ?? PLANNER_AGENT_NAME)

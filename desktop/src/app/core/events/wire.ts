@@ -224,6 +224,7 @@ export const WirePipelineStepKind = {
   PIPELINE_STEP_KIND_AGENT: 'agent',
   PIPELINE_STEP_KIND_COMMAND: 'command',
   PIPELINE_STEP_KIND_HUMAN: 'human',
+  PIPELINE_STEP_KIND_BACKLOG: 'backlog',
 } as const;
 export type WirePipelineStepKind =
   (typeof WirePipelineStepKind)[keyof typeof WirePipelineStepKind];
